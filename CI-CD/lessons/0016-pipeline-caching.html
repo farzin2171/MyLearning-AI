@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 16 — Pipeline Caching: Faster Builds</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    /* ── Lesson-specific ────────────────────────────────────── */
+    .concept {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1.1rem 1.4rem;
+      margin-bottom: 1.1rem;
+    }
+    .concept h3 {
+      font-size: 0.97rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+    }
+    .concept p {
+      color: var(--text-muted);
+      font-size: 0.93rem;
+    }
+
+    /* Before / After comparison */
+    .ba-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin: 1.25rem 0;
+    }
+    .ba-col {
+      border-radius: 6px;
+      padding: 1rem 1.1rem;
+      font-size: 0.88rem;
+    }
+    .ba-col.before {
+      background: #fde8e8;
+      border: 1px solid #f5b8b8;
+    }
+    .ba-col.after {
+      background: #e6f4ea;
+      border: 1px solid #b7dfb8;
+    }
+    .ba-col h4 {
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .ba-col.before h4 { color: var(--error); }
+    .ba-col.after  h4 { color: var(--success); }
+    .ba-col ul {
+      margin: 0 0 0 1rem;
+      color: var(--text-muted);
+      line-height: 1.7;
+    }
+
+    /* Key anatomy */
+    .key-anatomy {
+      background: var(--code-bg);
+      border-radius: 6px;
+      padding: 1.1rem 1.4rem;
+      margin: 1.1rem 0;
+      font-family: var(--font-mono);
+      font-size: 0.88rem;
+    }
+    .key-part {
+      display: inline-block;
+      padding: 0.2em 0.5em;
+      border-radius: 3px;
+      margin: 0.1em;
+      font-weight: 600;
+    }
+    .key-part.task   { background: #cce4ff; color: #003f8a; }
+    .key-part.os     { background: #fff3cd; color: #856404; }
+    .key-part.lock   { background: #d4edda; color: #155724; }
+    .key-legend {
+      margin-top: 0.75rem;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      font-family: var(--font-body);
+    }
+    .key-legend span {
+      display: inline-block;
+      margin-right: 1rem;
+    }
+
+    /* Callouts */
+    .callout {
+      padding: 0.9rem 1.1rem;
+      border-radius: 6px;
+      margin: 1rem 0;
+      font-size: 0.93rem;
+      border-left: 4px solid;
+    }
+    .callout.info  { background: #e8f4fd; border-color: var(--accent);  color: #003f6b; }
+    .callout.warn  { background: #fff8e1; border-color: var(--warn);    color: #5a3a00; }
+    .callout.ok    { background: #e6f4ea; border-color: var(--success);  color: #1a4a1a; }
+
+    /* Section tabs */
+    .stack-tabs {
+      display: flex;
+      gap: 0;
+      border-bottom: 2px solid var(--border);
+      margin-bottom: 1.25rem;
+    }
+    .stack-tab {
+      padding: 0.5em 1.2em;
+      background: none;
+      border: none;
+      border-bottom: 3px solid transparent;
+      cursor: pointer;
+      font-family: var(--font-body);
+      font-size: 0.93rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: -2px;
+      transition: all 0.12s;
+    }
+    .stack-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .stack-panel { display: none; }
+    .stack-panel.active { display: block; }
+  </style>
+</head>
+<body>
+<main>
+
+  <!-- ── HEADER ─────────────────────────────────────────────── -->
+  <header class="lesson-header">
+    <p class="breadcrumb">Azure CI/CD · Lesson 16</p>
+    <h1>Pipeline Caching: Faster Builds</h1>
+    <p style="color:var(--text-muted); margin-top:0.5rem;">
+      Every time your pipeline runs, it re-downloads npm or NuGet packages from the internet.
+      Caching eliminates that. A 3-minute build becomes a 45-second build with one task.
+    </p>
+  </header>
+
+  <!-- ── THE PROBLEM ───────────────────────────────────────── -->
+  <section style="margin-bottom:2rem;">
+    <h2 style="margin-bottom:0.75rem;">Why builds are slow without caching</h2>
+    <p>
+      Azure Pipelines runs every job on a <strong>fresh agent VM</strong>. There is no
+      package cache from previous runs. On every build, your pipeline:
+    </p>
+    <div class="ba-grid">
+      <div class="ba-col before">
+        <h4>Without cache</h4>
+        <ul>
+          <li>Downloads all packages from the internet</li>
+          <li>npm ci on a medium project: 60–120 s</li>
+          <li>dotnet restore on a large solution: 40–90 s</li>
+          <li>Slow on every run, even with no dependency changes</li>
+        </ul>
+      </div>
+      <div class="ba-col after">
+        <h4>With Cache@2</h4>
+        <ul>
+          <li>Restores packages from Azure Pipelines cache storage</li>
+          <li>Cache hit: npm packages restored in 5–15 s</li>
+          <li>Cache hit: NuGet packages restored in 3–10 s</li>
+          <li>Cache miss only when lock file changes</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── HOW Cache@2 WORKS ──────────────────────────────────── -->
+  <section style="margin-bottom:2rem;">
+    <h2 style="margin-bottom:0.75rem;">How <code>Cache@2</code> works</h2>
+
+    <div class="concept">
+      <h3>Step 1 — Azure computes a cache key</h3>
+      <p>
+        You define a <code>key</code> expression. Azure hashes the values you provide
+        (typically including the content of your lock file). The result is a fingerprint for
+        that exact set of dependencies.
+      </p>
+    </div>
+
+    <div class="concept">
+      <h3>Step 2 — Cache hit or miss</h3>
+      <p>
+        If a cache entry with that fingerprint exists from a previous run, Azure restores the
+        <code>path</code> directory from it. The variable <code>CACHE_RESTORED</code> is set
+        to <code>true</code>. If there is no match, the path starts empty — a cache miss.
+      </p>
+    </div>
+
+    <div class="concept">
+      <h3>Step 3 — Post-run save</h3>
+      <p>
+        After the job completes, Azure automatically saves the <code>path</code> directory back
+        to the cache (only on a miss). You do not write a "save" step — it happens automatically
+        at the end of the job.
+      </p>
+    </div>
+
+    <h3 style="margin:1.25rem 0 0.5rem;">Anatomy of a cache key</h3>
+    <div class="key-anatomy">
+      key: '<span class="key-part task">npm</span> | "<span class="key-part os">$(Agent.OS)</span>" | <span class="key-part lock">package-lock.json</span>'
+    </div>
+    <div class="key-legend">
+      <span><span class="key-part task" style="font-size:0.78rem;">npm</span> — human label (arbitrary string)</span>
+      <span><span class="key-part os" style="font-size:0.78rem;">$(Agent.OS)</span> — Linux vs Windows caches are separate</span>
+      <span><span class="key-part lock" style="font-size:0.78rem;">package-lock.json</span> — its content is hashed; when it changes, cache is busted</span>
+    </div>
+
+    <div class="callout info" style="margin-top:1rem;">
+      <strong>The lock file is the cache key signal.</strong> When you add or upgrade a package,
+      the lock file changes, the hash changes, the key changes — you get a cache miss, fresh
+      packages download, and the new cache is saved. No stale dependencies.
+    </div>
+  </section>
+
+  <!-- ── IMPLEMENTATION ─────────────────────────────────────── -->
+  <section style="margin-bottom:2rem;">
+    <h2 style="margin-bottom:0.75rem;">Implementation</h2>
+
+    <div class="stack-tabs">
+      <button class="stack-tab active" onclick="switchTab(this,'node')">Node.js / npm</button>
+      <button class="stack-tab" onclick="switchTab(this,'dotnet')">.NET / NuGet</button>
+    </div>
+
+    <!-- NODE.JS PANEL -->
+    <div class="stack-panel active" id="tab-node">
+      <p style="color:var(--text-muted); font-size:0.93rem; margin-bottom:1rem;">
+        Add <code>Cache@2</code> <strong>before</strong> <code>npm ci</code>. The npm cache
+        directory is controlled by the <code>npm_config_cache</code> environment variable.
+      </p>
+
+      <pre><code>variables:
+  npm_config_cache: $(Pipeline.Workspace)/.npm   # ← store cache here
+
+steps:
+  - checkout: self
+    fetchDepth: 0
+
+  - task: NodeTool@0
+    displayName: 'Install Node.js 20.x'
+    inputs:
+      versionSpec: '20.x'
+
+  - task: Cache@2
+    displayName: 'Cache npm packages'
+    inputs:
+      key: 'npm | "$(Agent.OS)" | package-lock.json'
+      restoreKeys: |
+        npm | "$(Agent.OS)"
+      path: $(npm_config_cache)
+
+  - task: Npm@1
+    displayName: 'npm ci'
+    inputs:
+      command: 'ci'
+      # npm ci reads from the cache path automatically when npm_config_cache is set</code></pre>
+
+      <div class="callout ok">
+        <strong>Why <code>npm ci</code> and not <code>npm install</code>?</strong>
+        <code>npm ci</code> requires a lock file and installs exactly what it contains —
+        no version range resolution, no lock file mutations. It is faster and deterministic.
+        Use <code>npm ci</code> in all CI pipelines.
+      </div>
+
+      <div class="callout warn">
+        <strong><code>restoreKeys</code></strong> is a fallback. If the exact key misses (e.g.
+        a new package was added), Azure tries the broader <code>npm | "$(Agent.OS)"</code> key
+        as a partial match. You get a stale-but-partial cache, then npm fills in the delta.
+        Better than a full re-download. Always include a restoreKeys block.
+      </div>
+    </div>
+
+    <!-- DOTNET PANEL -->
+    <div class="stack-panel" id="tab-dotnet">
+      <p style="color:var(--text-muted); font-size:0.93rem; margin-bottom:1rem;">
+        Add <code>Cache@2</code> <strong>before</strong> <code>dotnet restore</code>.
+        Tell the .NET SDK where to store packages by setting <code>NUGET_PACKAGES</code>.
+      </p>
+
+      <pre><code>variables:
+  NUGET_PACKAGES: $(Pipeline.Workspace)/.nuget/packages   # ← store cache here
+
+steps:
+  - checkout: self
+    fetchDepth: 0
+
+  - task: UseDotNet@2
+    displayName: 'Install .NET 8.0.x'
+    inputs:
+      version: '8.0.x'
+
+  - task: Cache@2
+    displayName: 'Cache NuGet packages'
+    inputs:
+      key: 'nuget | "$(Agent.OS)" | **/packages.lock.json,!**/bin/**,!**/obj/**'
+      restoreKeys: |
+        nuget | "$(Agent.OS)"
+      path: $(NUGET_PACKAGES)
+
+  - task: DotNetCoreCLI@2
+    displayName: 'Restore'
+    inputs:
+      command: 'restore'
+      projects: '**/*.csproj'
+      # dotnet restore reads NUGET_PACKAGES automatically</code></pre>
+
+      <div class="callout warn">
+        <strong>NuGet lock files are opt-in.</strong> The glob <code>**/packages.lock.json</code>
+        only works if your projects have package lock files enabled. Add this to your
+        <code>.csproj</code>:
+        <pre style="margin-top:0.5rem; font-size:0.85rem;"><code>&lt;PropertyGroup&gt;
+  &lt;RestorePackagesWithLockFile&gt;true&lt;/RestorePackagesWithLockFile&gt;
+&lt;/PropertyGroup&gt;</code></pre>
+        Without this, fall back to hashing <code>**/*.csproj</code> files instead:
+        <code>key: 'nuget | "$(Agent.OS)" | **/*.csproj'</code>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── CACHE_RESTORED ─────────────────────────────────────── -->
+  <section style="margin-bottom:2rem;">
+    <h2 style="margin-bottom:0.75rem;">Skipping install on a cache hit</h2>
+    <p>
+      If you want to skip <code>npm ci</code> entirely on a cache hit (not just speed it up),
+      use the <code>CACHE_RESTORED</code> variable that Azure sets after the Cache task runs:
+    </p>
+    <pre><code>- task: Cache@2
+  displayName: 'Cache npm packages'
+  inputs:
+    key: 'npm | "$(Agent.OS)" | package-lock.json'
+    path: $(npm_config_cache)
+  # After this step: CACHE_RESTORED is 'true' or 'false'
+
+- task: Npm@1
+  displayName: 'npm ci'
+  inputs:
+    command: 'ci'
+  condition: ne(variables.CACHE_RESTORED, 'true')   # skip if cache hit</code></pre>
+
+    <div class="callout info">
+      <strong>When to use this:</strong> If your <code>path</code> includes <code>node_modules</code>
+      directly (not just the npm cache), you can skip install completely. But if you're caching the
+      npm download cache and restoring into <code>node_modules</code> separately, you still need
+      <code>npm ci</code> to unpack. Most teams cache the npm cache directory and let npm ci run
+      (it's fast when the cache is warm).
+    </div>
+  </section>
+
+  <!-- ── WHERE THE CACHE TASK GOES ──────────────────────────── -->
+  <section style="margin-bottom:2rem;">
+    <h2 style="margin-bottom:0.75rem;">Placement in your Lesson 13 pipeline</h2>
+    <p style="color:var(--text-muted); font-size:0.93rem; margin-bottom:0.75rem;">
+      Insert the Cache task in the Build stage, after checkout and Node/SDK install, but
+      <strong>before</strong> the package restore/install step.
+    </p>
+    <pre><code>steps:
+  - checkout: self
+    fetchDepth: 0
+
+  - task: gitversion/setup@3.2.1
+    inputs:
+      versionSpec: '5.x'
+  - task: gitversion/execute@3.2.1
+    name: GitVersion
+
+  - task: NodeTool@0
+    inputs:
+      versionSpec: '20.x'
+
+  ← INSERT Cache@2 HERE ←
+
+  - task: Npm@1
+    displayName: 'npm ci'
+    inputs:
+      command: 'ci'
+
+  - task: Npm@1
+    displayName: 'npm build'
+    inputs:
+      command: 'custom'
+      customCommand: 'run build'</code></pre>
+    <div class="callout ok">
+      The cache task does not change the rest of the pipeline. The npm ci step still runs —
+      it just finds all packages already in the cache directory and skips downloading them.
+    </div>
+  </section>
+
+  <!-- ── QUIZ ──────────────────────────────────────────────── -->
+  <section style="margin-top:2.5rem;">
+    <h2 style="margin-bottom:1rem;">Check your understanding</h2>
+    <div id="quiz-container"></div>
+  </section>
+
+  <!-- ── PRIMARY SOURCE ─────────────────────────────────────── -->
+  <section class="primary-source" style="margin-top:2.5rem; padding:1.25rem; background:var(--highlight); border-radius:8px;">
+    <h3 style="margin-bottom:0.5rem;">Primary source</h3>
+    <p>
+      <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/release/caching" target="_blank">
+        Pipeline caching — Azure Pipelines (Microsoft Learn)
+      </a>
+    </p>
+    <p style="font-size:0.9rem; color:var(--text-muted); margin-top:0.5rem;">
+      Covers all cache key syntax, restoreKeys behaviour, CACHE_RESTORED variable, and
+      per-ecosystem examples (npm, NuGet, pip, Maven, Gradle, Cargo).
+    </p>
+  </section>
+
+  <p style="margin-top:2.5rem; color:var(--text-muted); font-size:0.9rem; border-top:1px solid var(--border); padding-top:1rem;">
+    Anything unclear? Ask your teacher agent.
+    <br>
+    <a href="0013-build-your-own-pipeline-azure-app-service.html">← Lesson 13 (your pipeline)</a>
+    &nbsp;·&nbsp;
+    <a href="0015-pipeline-code-review.html">← Lesson 15 (pipeline review)</a>
+  </p>
+
+</main>
+
+<script src="../assets/quiz.js"></script>
+<script>
+  // Tab switcher
+  function switchTab(btn, id) {
+    document.querySelectorAll('.stack-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.stack-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + id).classList.add('active');
+  }
+
+  new Quiz('quiz-container', [
+    {
+      q: 'The cache key is `npm | "$(Agent.OS)" | package-lock.json`. When does a cache miss occur?',
+      options: [
+        'Every run — Azure never reuses cache across separate pipeline runs',
+        'When package-lock.json content changes — the hash of that file changes the key',
+        'When the Agent.OS changes — running on a different cloud region causes a miss',
+        'When the npm label changes — updating the task label busts the cache'
+      ],
+      answer: 1,
+      explanation: 'Cache@2 hashes the file content of package-lock.json (when a file path is included in the key). The key only changes when the lock file itself changes — i.e., when you add, remove, or upgrade a dependency.'
+    },
+    {
+      q: 'Where must you place the `Cache@2` task relative to `npm ci` for it to take effect?',
+      options: [
+        'After npm ci — so the downloaded packages are available to cache',
+        'Before npm ci — so the cache is restored before npm reads from it',
+        'In a separate job — the cache must restore before the build job starts',
+        'At the end of the stage — Azure defers all cache operations until stage end'
+      ],
+      answer: 1,
+      explanation: 'Cache@2 must run BEFORE the package install step. On a cache hit, it restores the packages into the cache directory — so when npm ci runs, it finds them already there. Placing it after install means npm already downloaded everything; the cache is useless.'
+    },
+    {
+      q: 'What does the `restoreKeys` block provide?',
+      options: [
+        'A backup cache location if the primary Azure storage bucket is unavailable',
+        'A fallback partial match used when the exact key has no cache entry',
+        'An alternate key for restoring cache on the deployment agent',
+        'A list of files to exclude from being saved into the cache'
+      ],
+      answer: 1,
+      explanation: 'restoreKeys provides prefix-based fallback matching. If the exact key (including the lock file hash) misses, Azure tries the restoreKeys prefixes in order. You get a partial-match cache — slightly stale, but npm/dotnet restore fills in only the delta. Much faster than a cold start.'
+    },
+    {
+      q: 'You want NuGet package caching to use `packages.lock.json` as the cache signal. What must be true for this to work?',
+      options: [
+        'The .NET SDK version must be 6.0 or above for lock file support to be available',
+        'Each .csproj must have RestorePackagesWithLockFile set to true to generate lock files',
+        'The pipeline agent must be Windows because Linux agents do not generate lock files',
+        'The NuGet.Config file must declare a lockFilePath entry pointing to the lock file'
+      ],
+      answer: 1,
+      explanation: 'NuGet lock files are opt-in. Without `<RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>` in the project file, packages.lock.json is never created. The Cache@2 key glob finds nothing, the cache never saves or restores correctly. Fallback: use **/*.csproj as the key file instead.'
+    }
+  ]);
+</script>
+</body>
+</html>

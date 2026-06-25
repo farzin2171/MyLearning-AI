@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 4 — Templates &amp; extends:</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    /* Template type cards */
+    .type-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 0.75rem;
+      margin: 1.1rem 0 1.75rem;
+    }
+    .type-card {
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      padding: 0.8rem 0.9rem;
+      background: var(--surface);
+      font-size: 0.87rem;
+    }
+    .type-card .tc-label {
+      font-family: var(--font-mono);
+      font-weight: 700;
+      color: var(--accent-dark);
+      font-size: 0.9rem;
+      margin-bottom: 0.3rem;
+    }
+    .type-card .tc-defines {
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      margin-bottom: 0.25rem;
+    }
+    .type-card .tc-example {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--text);
+      background: var(--code-bg);
+      border-radius: 3px;
+      padding: 0.1em 0.3em;
+    }
+
+    /* Flow diagram */
+    .flow {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      margin: 1rem 0 1.5rem;
+      font-size: 0.88rem;
+    }
+    .flow-box {
+      border: 1.5px solid var(--border);
+      border-radius: 6px;
+      padding: 0.45rem 0.8rem;
+      background: var(--surface);
+      text-align: center;
+      line-height: 1.3;
+    }
+    .flow-box.highlight { border-color: var(--accent); background: #eaf4fb; }
+    .flow-box .fb-name { font-weight: 700; font-size: 0.85rem; }
+    .flow-box .fb-sub  { font-size: 0.74rem; color: var(--text-muted); }
+    .flow-arrow { color: var(--text-muted); font-size: 1.1rem; }
+
+    /* Source file tag */
+    .src {
+      display: inline-block;
+      font-size: 0.7rem;
+      font-family: var(--font-mono);
+      background: #e8f0fe;
+      color: #1a237e;
+      border-radius: 3px;
+      padding: 0.1em 0.4em;
+      margin-left: 0.35rem;
+      vertical-align: middle;
+    }
+
+    /* Parameter type pill */
+    .param-type {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      background: #f3e5f5;
+      color: #4a148c;
+      border-radius: 3px;
+      padding: 0.05em 0.35em;
+    }
+  </style>
+</head>
+<body>
+<main>
+
+  <!-- ── Header ─────────────────────────────────────────── -->
+  <header class="lesson-header">
+    <div class="breadcrumb">
+      Azure CI/CD ·
+      <a href="0001-yaml-pipeline-anatomy.html">L1</a> →
+      <a href="0002-triggers-and-conditions.html">L2</a> →
+      <a href="0003-variables-and-variable-groups.html">L3</a> → Lesson 4
+    </div>
+    <h1>Templates &amp; <code>extends:</code></h1>
+    <p class="subtitle">How your team packages reusable pipeline logic and how app repos consume it safely.</p>
+  </header>
+
+  <!-- ── Why this matters ───────────────────────────────── -->
+  <h2>Why this lesson</h2>
+  <p>
+    Every app pipeline in your team starts with roughly these three lines:
+  </p>
+  <pre><span class="y-key">resources</span>:
+  <span class="y-key">repositories</span>:
+    - <span class="y-key">repository</span>: <span class="y-val">templates</span>
+      <span class="y-key">name</span>: <span class="y-val">PipelineTemplates</span>
+      <span class="y-key">type</span>: <span class="y-val">git</span>
+<span class="y-key">extends</span>:
+  <span class="y-key">template</span>: <span class="y-val">/CI/build-dotnet-service-pipeline.yml@templates</span>
+  <span class="y-key">parameters</span>:
+    <span class="y-key">buildDocumentation</span>: <span class="y-bool">true</span>
+    <span class="y-key">deployOctopusRelease</span>: <span class="y-bool">false</span></pre>
+  <p>
+    Until you understand <code>extends:</code>, template parameters, and compile-time conditionals,
+    you're reading this as magic. After this lesson, you'll see exactly what each line does.
+  </p>
+
+  <!-- ── Two ways to use templates ─────────────────────── -->
+  <h2>Two ways to use templates</h2>
+
+  <div class="flow">
+    <div class="flow-box highlight">
+      <div class="fb-name">template:</div>
+      <div class="fb-sub">Inline reference<br>inject steps / jobs / stages</div>
+    </div>
+    <div class="flow-arrow">vs</div>
+    <div class="flow-box highlight">
+      <div class="fb-name">extends:</div>
+      <div class="fb-sub">Full pipeline inheritance<br>security boundary</div>
+    </div>
+  </div>
+
+  <p>
+    <strong><code>template:</code></strong> — inserts a chunk of YAML (steps, jobs, or stages)
+    from a file into the current pipeline. Used heavily inside the PipelineTemplates repo itself,
+    e.g. a stage template calling a step template.
+    <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/process/templates?view=azure-devops" target="_blank">Templates docs →</a>
+  </p>
+
+  <p>
+    <strong><code>extends:</code></strong> — the pipeline <em>is</em> the template. The app's
+    <code>azure-pipelines.yml</code> hands full control to the template and can only pass parameters.
+    This is a <strong>security boundary</strong>: admins can require that all pipelines extend
+    an approved template, preventing ad-hoc steps from running arbitrary code.
+    <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/security/templates?view=azure-devops" target="_blank">Template security →</a>
+  </p>
+
+  <div class="callout tip">
+    <div class="callout label">Your team's pattern</div>
+    App repos use <code>extends:</code> — the whole pipeline is controlled by PipelineTemplates.
+    Inside PipelineTemplates, templates call each other with <code>template:</code>.
+  </div>
+
+  <!-- ── resources.repositories ─────────────────────────── -->
+  <h2>Step 1 — registering the template repo</h2>
+  <p>
+    Before you can reference any template from PipelineTemplates, you must declare the repo as a
+    resource. The <code>repository:</code> value becomes the alias you use in <code>@alias</code>
+    references. <span class="src">README.md</span>
+  </p>
+  <pre><span class="y-key">resources</span>:
+  <span class="y-key">repositories</span>:
+    - <span class="y-key">repository</span>: <span class="y-val">templates</span>       <span class="y-cmt"># this becomes the @templates alias</span>
+      <span class="y-key">name</span>: <span class="y-val">PipelineTemplates</span>       <span class="y-cmt"># repo name in Azure DevOps</span>
+      <span class="y-key">ref</span>: <span class="y-val">refs/heads/master</span>       <span class="y-cmt"># which branch of templates to use</span>
+      <span class="y-key">type</span>: <span class="y-val">git</span>                     <span class="y-cmt"># git = Azure Repos</span></pre>
+
+  <p>
+    After this, any template reference appends <code>@templates</code>:
+  </p>
+  <pre><span class="y-cmt"># Inside an app repo — must use @templates suffix</span>
+- <span class="y-key">template</span>: <span class="y-val">libs/git/gitversion-steps.yml@templates</span>
+
+<span class="y-cmt"># Inside PipelineTemplates itself — relative path, no @suffix needed</span>
+- <span class="y-key">template</span>: <span class="y-val">deploy-release-steps.yml</span></pre>
+
+  <!-- ── Four template types ─────────────────────────────── -->
+  <h2>The four template types</h2>
+  <p>
+    A template file's type is determined by what it defines at the top level, not by its filename.
+  </p>
+  <div class="type-grid">
+    <div class="type-card">
+      <div class="tc-label">Step template</div>
+      <div class="tc-defines">Defines: <code>steps:</code></div>
+      <div class="tc-example">gitversion-steps.yml<br>build-app-steps.yml</div>
+    </div>
+    <div class="type-card">
+      <div class="tc-label">Job template</div>
+      <div class="tc-defines">Defines: <code>jobs:</code></div>
+      <div class="tc-example">build-db-on-linux-job.yml<br>create-git-tag-job.yml</div>
+    </div>
+    <div class="type-card">
+      <div class="tc-label">Stage template</div>
+      <div class="tc-defines">Defines: <code>stages:</code></div>
+      <div class="tc-example">deploy-release-process.yml<br>run-tests-stage.yml</div>
+    </div>
+    <div class="type-card">
+      <div class="tc-label">Pipeline template</div>
+      <div class="tc-defines">Defines: <code>parameters:</code> + full pipeline</div>
+      <div class="tc-example">build-dotnet-service-pipeline.yml<br>ghas-scan-reactjs-pipeline.yml</div>
+    </div>
+  </div>
+
+  <!-- ── Typed parameters ───────────────────────────────── -->
+  <h2>Typed template parameters</h2>
+  <p>
+    Templates declare their inputs with a <code>parameters:</code> block.
+    Each parameter has a <span class="param-type">type</span>, a <code>default</code>, and an optional <code>displayName</code>.
+    <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/process/template-parameters?view=azure-devops" target="_blank">Parameter types →</a>
+  </p>
+  <pre><span class="y-cmt"># From V2/build-dotnet-service-pipeline.yml</span>
+<span class="y-key">parameters</span>:
+  - <span class="y-key">name</span>: <span class="y-val">dotNetVersion</span>
+    <span class="y-key">type</span>: <span class="y-val">string</span>            <span class="y-cmt"># string, number, boolean, object, step, stepList, job, jobList, stage, stageList</span>
+    <span class="y-key">default</span>: <span class="y-str">'8.0.x'</span>
+
+  - <span class="y-key">name</span>: <span class="y-val">runIntegrationTests</span>
+    <span class="y-key">type</span>: <span class="y-val">boolean</span>
+    <span class="y-key">default</span>: <span class="y-bool">true</span>
+
+  - <span class="y-key">name</span>: <span class="y-val">applicationBuildList</span>   <span class="y-cmt"># a list of objects — used with ${{ each }}</span>
+    <span class="y-key">type</span>: <span class="y-val">object</span>
+
+  - <span class="y-key">name</span>: <span class="y-val">copyFilesStep</span>         <span class="y-cmt"># caller provides an entire step definition</span>
+    <span class="y-key">type</span>: <span class="y-val">step</span>
+    <span class="y-key">default</span>:
+      <span class="y-key">script</span>: <span class="y-val">echo "no copy step provided"</span></pre>
+
+  <div class="callout">
+    <div class="callout label">type: step — a real team usage</div>
+    <code>build-configuration-pipeline.yml</code> accepts a <span class="param-type">type: step</span>
+    parameter called <code>copyFilesStep</code>. The caller injects a custom step definition,
+    and the template inserts it inline with <code>${{ parameters.copyFilesStep }}</code>.
+    This is how the template stays generic while each project customises one step.
+    <span class="src">V2/build-configuration-pipeline.yml L9</span>
+  </div>
+
+  <!-- ── Compile-time conditionals ─────────────────────── -->
+  <h2>Compile-time conditionals — <code>${{ if }}</code></h2>
+  <p>
+    Template expressions run at compile-time, so <code>${{ if }}</code> can add or remove entire
+    steps, jobs, or stages before the pipeline runs. This is how your templates implement optional
+    features. <span class="src">V2/libs/net/build-with-tests-steps.yml L75</span>
+  </p>
+  <pre><span class="y-key">steps</span>:
+  <span class="y-cmt"># Always runs</span>
+  - <span class="y-key">task</span>: <span class="y-val">DotNetCoreCLI@2</span>
+    <span class="y-key">displayName</span>: <span class="y-str">'Build projects'</span>
+    ...
+
+  <span class="y-cmt"># Only compiled into the pipeline if skipRunTests is not true</span>
+  - <span class="y-val">${{ if ne(parameters.skipRunTests, true) }}</span>:
+    - <span class="y-key">task</span>: <span class="y-val">DotNetCoreCLI@2</span>
+      <span class="y-key">displayName</span>: <span class="y-str">'Tests projects'</span>
+      ...
+
+    - <span class="y-key">task</span>: <span class="y-val">reportgenerator@5</span>
+      <span class="y-key">displayName</span>: <span class="y-str">'Generate test report'</span>
+      ...</pre>
+
+  <div class="callout warn">
+    <div class="callout label">${{ if }} vs condition:</div>
+    <code>${{ if }}</code> removes steps entirely at compile-time — the agent never sees them.
+    <code>condition:</code> runs at runtime and <em>skips</em> a step that is still in the plan.
+    Use <code>${{ if }}</code> for structural YAML changes (adding/removing whole steps);
+    use <code>condition:</code> for runtime decisions (succeed/fail/branch-check).
+  </div>
+
+  <!-- ── Each loop ──────────────────────────────────────── -->
+  <h2>Looping over object parameters — <code>${{ each }}</code></h2>
+  <p>
+    When a parameter is <span class="param-type">type: object</span>, templates can iterate over
+    it to generate steps or jobs dynamically. Your Octopus deploy templates do this to create one
+    release per project in the list.
+    <span class="src">V2/build-configuration-pipeline.yml L130</span>
+  </p>
+  <pre><span class="y-cmt"># Template definition — iterates over the list passed by the caller</span>
+- <span class="y-val">${{ each project in parameters.octopusProjectList }}</span>:
+    - <span class="y-key">task</span>: <span class="y-val">OctopusCreateRelease@5</span>
+      <span class="y-key">displayName</span>: <span class="y-str">'Create release for ${{ project.projectName }}'</span>
+      <span class="y-key">inputs</span>:
+        <span class="y-key">Space</span>: <span class="y-str">'${{ project.projectSpace }}'</span>
+        <span class="y-key">ProjectName</span>: <span class="y-str">'${{ project.projectName }}'</span></pre>
+
+  <pre><span class="y-cmt"># Caller (app repo) provides the list</span>
+<span class="y-key">extends</span>:
+  <span class="y-key">template</span>: <span class="y-val">/CI/build-dotnet-service-pipeline.yml@templates</span>
+  <span class="y-key">parameters</span>:
+    <span class="y-key">applicationBuildList</span>:
+      - <span class="y-key">name</span>: <span class="y-val">MyService</span>
+        <span class="y-key">packageType</span>: <span class="y-val">publish</span>
+        <span class="y-key">octopusProjectList</span>:
+          - <span class="y-key">projectSpace</span>: <span class="y-val">Spaces-222</span>
+            <span class="y-key">projectName</span>: <span class="y-val">Base Config Common</span>
+            <span class="y-key">deployRelease</span>: <span class="y-bool">false</span></pre>
+
+  <!-- ── Nested if + each ───────────────────────────────── -->
+  <h2>Nested <code>${{ if }}</code> inside <code>${{ each }}</code></h2>
+  <p>
+    The Octopus deploy stage template combines both: loop over projects, then only deploy
+    the ones where <code>deployRelease</code> is <code>true</code>.
+    <span class="src">V2/libs/octopus/deploy-release-process.yml L25</span>
+  </p>
+  <pre><span class="y-key">steps</span>:
+  - <span class="y-val">${{ each project in parameters.octopusProjectList }}</span>:
+    - <span class="y-val">${{ if eq(project.deployRelease, true) }}</span>:    <span class="y-cmt"># filter within the loop</span>
+      - <span class="y-key">template</span>: <span class="y-val">deploy-release-steps.yml</span>
+        <span class="y-key">parameters</span>:
+          <span class="y-key">octopusProjectName</span>: <span class="y-str">'${{ project.projectName }}'</span>
+          <span class="y-key">octopusProjectEnvironment</span>: <span class="y-str">"${{ coalesce(project.projectDevEnvironment, 'Development') }}"</span></pre>
+
+  <div class="callout">
+    <div class="callout label">coalesce()</div>
+    <code>coalesce(a, b)</code> returns the first non-empty value. Here: if the caller didn't set
+    <code>projectDevEnvironment</code>, the template falls back to <code>'Development'</code>.
+    It's the template equivalent of a default fallback.
+    <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/process/expressions?view=azure-devops#coalesce" target="_blank">coalesce() docs →</a>
+  </div>
+
+  <!-- ── Full picture ───────────────────────────────────── -->
+  <h2>The full call chain in your team</h2>
+  <div class="flow">
+    <div class="flow-box">
+      <div class="fb-name">azure-pipelines.yml</div>
+      <div class="fb-sub">App repo<br><code>extends: …@templates</code></div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box highlight">
+      <div class="fb-name">build-dotnet-service-pipeline.yml</div>
+      <div class="fb-sub">Pipeline template<br>stages + jobs defined</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box">
+      <div class="fb-name">libs/net/build-with-tests-steps.yml</div>
+      <div class="fb-sub">Step template<br><code>template:</code> (relative)</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box">
+      <div class="fb-name">libs/octopus/deploy-release-process.yml</div>
+      <div class="fb-sub">Stage template<br><code>template:</code> (relative)</div>
+    </div>
+  </div>
+  <p>
+    Each level only knows its own parameters. The app repo can't see inside the step template —
+    it can only pass values to the pipeline template, which passes subsets down the chain.
+  </p>
+
+  <!-- ── Quiz ──────────────────────────────────────────────── -->
+  <section class="quiz-section">
+    <h2>Check your understanding</h2>
+    <p style="color:var(--text-muted);font-size:0.9rem;margin-bottom:1.25rem">
+      Answer from memory — no scrolling up. Retrieval is the learning.
+    </p>
+    <div id="quiz"></div>
+  </section>
+
+  <!-- ── Primary source ─────────────────────────────────── -->
+  <h2>Primary source</h2>
+  <p>
+    <strong>Read next:</strong>
+    <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/process/templates?view=azure-devops" target="_blank">
+      YAML templates — Azure Pipelines | Microsoft Learn
+    </a><br>
+    <span style="color:var(--text-muted);font-size:0.9rem">
+      Focus on the "Reuse variable and parameter definitions" and "Extend from a template" sections.
+      The "Required templates" section explains the security model behind <code>extends:</code>.
+    </span>
+  </p>
+
+  <!-- ── Ask questions ──────────────────────────────────── -->
+  <div class="callout" style="margin-top:2rem">
+    <div class="callout label">Your teacher is here</div>
+    Ask a follow-up in the Claude Code chat. Try:
+    <em>"When should I use a step template vs a job template?"</em> or
+    <em>"How do I pass a secret variable through to a step template?"</em>
+  </div>
+
+  <!-- ── Footer ─────────────────────────────────────────── -->
+  <footer class="lesson-footer">
+    <span>← <a href="0003-variables-and-variable-groups.html">Lesson 3: Variables &amp; Groups</a></span>
+    <span>Next: <a href="0005-artifacts-and-handoff.html">Lesson 5: Artifacts &amp; Stage Handoff →</a></span>
+  </footer>
+
+</main>
+
+<script src="../assets/quiz.js"></script>
+<script>
+new Quiz('quiz', [
+  {
+    q: 'In an app repo\'s azure-pipelines.yml, which block registers PipelineTemplates so the @templates alias works?',
+    options: [
+      'The extends: block',
+      'The resources: block',
+      'The checkout: block',
+      'The variables: block'
+    ],
+    answer: 1,
+    explanation: 'resources.repositories registers external repos and gives them an alias. Only after that alias is defined can you append @templates to any template reference or use checkout: templates.'
+  },
+  {
+    q: 'What does extends: give you that template: does not?',
+    options: [
+      'Access to template parameters',
+      'A pipeline security boundary',
+      'Faster compile-time processing',
+      'Support for object parameters'
+    ],
+    answer: 1,
+    explanation: 'extends: is an enforced security boundary. Admins can require pipelines to extend an approved template, preventing arbitrary steps. With template: alone, the caller can still add any steps they want around it.'
+  },
+  {
+    q: 'When is a ${{ if eq(parameters.skipTests, true) }}: block evaluated?',
+    options: [
+      'When the agent runs each step',
+      'When the pipeline YAML is compiled',
+      'When each stage begins to run',
+      'When the build queue picks up'
+    ],
+    answer: 1,
+    explanation: '${{ }} template expressions are compile-time — evaluated when Azure assembles the pipeline YAML before any agent runs. The step is either included or excluded before the run starts, which is different from condition: which skips at runtime.'
+  },
+  {
+    q: 'Which parameter type lets a caller pass an entire step definition into a template?',
+    options: [
+      'type: object',
+      'type: string',
+      'type: step',
+      'type: boolean'
+    ],
+    answer: 2,
+    explanation: 'type: step accepts a complete step definition (script:, task:, etc.) from the caller. The template then inserts it inline with ${{ parameters.stepParamName }}. Your team uses this in build-configuration-pipeline.yml for copyFilesStep.'
+  },
+  {
+    q: 'In a ${{ each project in parameters.list }} loop, how do you access the project\'s projectName property?',
+    options: [
+      '${{ parameters.projectName }}',
+      '${{ project.projectName }}',
+      '$(project.projectName)',
+      '$[ parameters.list.projectName ]'
+    ],
+    answer: 1,
+    explanation: 'Inside a ${{ each item in parameters.list }} loop, the loop variable (item/project) holds the current object. Access its properties with ${{ item.propertyName }} — using template expression syntax, not macro syntax.'
+  }
+]);
+</script>
+
+</body>
+</html>

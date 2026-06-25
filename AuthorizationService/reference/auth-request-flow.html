@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reference — Authorization Request Flow</title>
+  <link rel="stylesheet" href="../assets/style.css" />
+  <style>
+    @media print {
+      body { font-size: 12px; }
+      .lesson-container { max-width: 100%; }
+    }
+    .ref-table { width:100%; border-collapse:collapse; font-family:sans-serif; font-size:0.8rem; margin:0.8rem 0; }
+    .ref-table th { text-align:left; padding:0.35rem 0.6rem; border-bottom:2px solid #ddd; font-weight:700; }
+    .ref-table td { padding:0.35rem 0.6rem; border-bottom:1px solid #eee; vertical-align:top; }
+    .ref-table tr:nth-child(even) td { background:#fafaf8; }
+    h2 { margin-top: 1.6rem; }
+  </style>
+</head>
+<body>
+<div class="lesson-container">
+
+  <header class="lesson-header">
+    <div class="lesson-meta">Reference · Authorization Service · Request Flow</div>
+    <h1 class="lesson-title">Authorization Request Flow — Quick Reference</h1>
+    <p class="lesson-subtitle">One-page cheat sheet. See <a href="../lessons/0002-the-authorization-request-flow.html">Lesson 02</a> for the full walkthrough.</p>
+  </header>
+
+  <h2>Fast-path vs Slow-path</h2>
+  <div class="diagram">Cache HIT  →  keysSet.Contains(key) → Allow/Deny      (no DB, no ext calls)
+Cache MISS →  ExternalRoles → [dbo].[GetUserAccessKeys] → SetAsync → Contains</div>
+
+  <h2>Identity Context Selection (checked in order)</h2>
+  <table class="ref-table">
+    <thead><tr><th>Context</th><th>Detection</th><th>Cache key</th><th>Role source</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>OnBehalfOf</strong></td>
+        <td><code>IsOnBehalfOf == true</code></td>
+        <td><code>authz.eval.{ExtOwnerId}_{OBOExtId}</code></td>
+        <td>Two ext-role lookups + intersection</td>
+      </tr>
+      <tr>
+        <td><strong>Guest</strong></td>
+        <td>claim <code>service_isGuestAccount=true</code></td>
+        <td><code>authz.eval.guest</code></td>
+        <td>Hardcoded: <code>"Guest"</code>, <code>"Guest{TenantId}"</code></td>
+      </tr>
+      <tr>
+        <td><strong>ServiceAccount</strong></td>
+        <td><code>IdentityType == Service</code></td>
+        <td><code>authz.eval.{service_role claim}</code></td>
+        <td>Claim <code>service_role</code> (no ext call)</td>
+      </tr>
+      <tr>
+        <td><strong>User</strong></td>
+        <td>Default</td>
+        <td><code>authz.eval.{OwnerId}</code></td>
+        <td>ExternalRolesService (providers)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Key Classes &amp; Their Responsibility</h2>
+  <table class="ref-table">
+    <thead><tr><th>Class</th><th>Does</th></tr></thead>
+    <tbody>
+      <tr><td><code>AuthorizeController</code></td><td>Entry point. Builds <code>AuthorizeParameters</code> from JWT identity context.</td></tr>
+      <tr><td><code>AuthorizeServiceFactory</code></td><td>Selects one of 4 <code>IAuthorizeService</code> by context.</td></tr>
+      <tr><td><code>AuthorizeCacheService</code></td><td>Cache check. Returns hit; triggers evaluate on miss.</td></tr>
+      <tr><td><code>EvaluateServiceFactory</code></td><td>Same 4-way selection for evaluate pipeline.</td></tr>
+      <tr><td><code>EvaluateCacheService</code></td><td>Calls <code>getAccessKeysMethod</code> if cache empty; writes result to Redis.</td></tr>
+      <tr><td><code>ExternalRolesService</code></td><td>Runs configured providers by priority; returns external role names.</td></tr>
+      <tr><td><code>AccessRepository</code></td><td>Dapper: <code>exec [dbo].[GetUserAccessKeys] @TenantId, @Roles</code> → <code>List&lt;string&gt;</code></td></tr>
+      <tr><td><code>AuthorizationCacheManager</code></td><td>Redis wrapper with Polly circuit breaker + in-memory fallback.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Stored Procedures</h2>
+  <table class="ref-table">
+    <thead><tr><th>SP</th><th>Params</th><th>Returns</th><th>Used by</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>[dbo].[GetUserAccessKeys]</code></td>
+        <td><code>@TenantId</code>, <code>@Roles</code> (CSV)</td>
+        <td>Rows with <code>Identifier</code> (access key string)</td>
+        <td>User, ServiceAccount, Guest, OnBehalfOf</td>
+      </tr>
+      <tr>
+        <td><code>[dbo].[GetUserAccessKeysFromPermissionGroups]</code></td>
+        <td><code>@TenantId</code>, <code>@PermissionGroups</code> (CSV)</td>
+        <td>Rows with <code>Identifier</code> (access key string)</td>
+        <td>OnBehalfOf (assistant intersection only)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Cache Resilience</h2>
+  <table class="ref-table">
+    <thead><tr><th>State</th><th>Behaviour</th></tr></thead>
+    <tbody>
+      <tr><td>Redis healthy</td><td>Normal read/write. Lock key = <code>{cacheKey}_lock</code> prevents stampede.</td></tr>
+      <tr><td>Redis degraded (breaker closed, errors accumulating)</td><td>Polly retries; errors counted toward breaker threshold.</td></tr>
+      <tr><td>Redis down (breaker open)</td><td>All reads/writes go to per-instance in-memory cache. Invalidation doesn't propagate.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>OnBehalfOf — Extra Steps</h2>
+  <ol style="font-family:sans-serif; font-size:0.85rem; margin-top:0.5rem;">
+    <li>Resolve external roles for <strong>impersonator</strong>.</li>
+    <li>Check impersonator has <code>"authorization.use.onBehalfOf"</code> permission. If not → return empty (Deny).</li>
+    <li>Resolve external roles for <strong>target user</strong>.</li>
+    <li>Run <code>[dbo].[GetUserAccessKeys]</code> for target user's roles.</li>
+    <li>If impersonator is an assistant → run <code>[dbo].[GetUserAccessKeysFromPermissionGroups]</code> and <strong>intersect</strong> results.</li>
+    <li>Cache intersected list under composite key.</li>
+  </ol>
+
+  <footer class="lesson-footer" style="margin-top:2rem;">
+    <div>Reference card · Authorization Service · Updated 2026-06-22 · <a href="../lessons/0002-the-authorization-request-flow.html">← Lesson 02</a></div>
+  </footer>
+
+</div>
+</body>
+</html>

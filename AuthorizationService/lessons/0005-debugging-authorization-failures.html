@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lesson 05 — Debugging Authorization Failures</title>
+  <link rel="stylesheet" href="../assets/style.css" />
+  <style>
+    /* ── Diagnostic stepper ─────────────────────────────── */
+    .case-study {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin: 1.8rem 0;
+      overflow: hidden;
+    }
+    .case-study-header {
+      background: var(--ink);
+      color: #fff;
+      padding: 0.7rem 1.2rem;
+      font-family: sans-serif;
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+    .case-body { padding: 1.2rem; }
+    .symptom {
+      background: #fff7ed;
+      border-left: 4px solid #ea580c;
+      padding: 0.8rem 1rem;
+      border-radius: 0 var(--radius) var(--radius) 0;
+      font-family: sans-serif;
+      font-size: 0.88rem;
+      margin-bottom: 1rem;
+    }
+    .symptom-label { font-weight: 700; color: #9a3412; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.3rem; }
+    .step-container { margin-top: 0.8rem; }
+    .step {
+      display: none;
+      margin-bottom: 0.8rem;
+    }
+    .step.visible { display: block; }
+    .step-finding {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.7rem 1rem;
+      font-family: var(--mono);
+      font-size: 0.8em;
+      margin: 0.4rem 0 0.6rem;
+      white-space: pre-wrap;
+    }
+    .step-analysis {
+      font-family: sans-serif;
+      font-size: 0.87rem;
+      margin: 0.3rem 0 0.6rem;
+      color: var(--muted);
+    }
+    .step-btn {
+      display: inline-block;
+      padding: 0.38rem 0.9rem;
+      background: #fff;
+      border: 1px solid var(--ink);
+      border-radius: var(--radius);
+      font-family: sans-serif;
+      font-size: 0.82rem;
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .step-btn:hover { background: var(--accent-light); border-color: var(--accent); }
+    .root-cause {
+      background: var(--success-bg);
+      border: 1px solid #15803d;
+      border-radius: var(--radius);
+      padding: 0.8rem 1rem;
+      font-family: sans-serif;
+      font-size: 0.87rem;
+      display: none;
+      margin-top: 0.6rem;
+    }
+    .root-cause.visible { display: block; }
+    .root-cause strong { display: block; margin-bottom: 0.3rem; color: var(--success); }
+
+    /* ── Cause taxonomy ────────────────────────────────── */
+    .cause-row {
+      display: grid;
+      grid-template-columns: 2rem 1fr;
+      gap: 0 0.8rem;
+      margin-bottom: 1rem;
+      align-items: start;
+    }
+    .cause-num {
+      width: 2rem; height: 2rem;
+      border-radius: 50%;
+      background: #f1f5f9;
+      border: 1px solid var(--border);
+      font-family: sans-serif;
+      font-weight: 700;
+      font-size: 0.8rem;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .cause-body h3 { margin: 0 0 0.2rem; font-size: 0.95rem; }
+    .cause-body p  { margin: 0; font-size: 0.87rem; color: var(--muted); }
+
+    /* ── SQL toolkit ───────────────────────────────────── */
+    .sql-block {
+      background: #0f172a;
+      color: #e2e8f0;
+      border-radius: var(--radius);
+      padding: 1rem 1.2rem;
+      font-family: var(--mono);
+      font-size: 0.8em;
+      line-height: 1.55;
+      overflow-x: auto;
+      margin: 0.6rem 0 1.2rem;
+      white-space: pre;
+    }
+    .sql-comment { color: #64748b; }
+    .sql-kw { color: #7dd3fc; }
+    .sql-str { color: #86efac; }
+  </style>
+</head>
+<body>
+<div class="lesson-container">
+
+  <!-- ── Header ─────────────────────────────────────────── -->
+  <header class="lesson-header">
+    <div class="lesson-meta">Lesson 05 · Authorization Service · Applied Skills</div>
+    <h1 class="lesson-title">Debugging Authorization Failures</h1>
+    <p class="lesson-subtitle">Using the complete mental model to diagnose "user is denied" in production — systematically, not by guessing.</p>
+  </header>
+
+  <p>
+    Lessons <a href="0001-what-is-the-authorization-service.html">01</a>–<a href="0004-policy-role-permission-hierarchy.html">04</a>
+    gave you the mental model. This lesson applies it. The mission goal is:
+    <em>"Debug common authorization failures confidently."</em>
+    By the end you will have a repeatable diagnostic process and three worked cases under your belt.
+  </p>
+
+  <!-- ── The Five Root Causes ──────────────────────────── -->
+  <h2>The Five Root Causes of Unexpected Deny</h2>
+
+  <div class="cause-row">
+    <div class="cause-num">1</div>
+    <div class="cause-body">
+      <h3>Provider exception</h3>
+      <p>A higher-priority provider threw an exception. The cascade stopped. No roles were resolved. All users hit by that provider get Deny on everything, not just one key.</p>
+    </div>
+  </div>
+  <div class="cause-row">
+    <div class="cause-num">2</div>
+    <div class="cause-body">
+      <h3>Role name mismatch</h3>
+      <p>The provider returned a name (e.g. <code>"Compliance_Officers"</code>) that does not exactly match any <code>tblExternalRole.ExternalSourceId</code>. Silent — no error, no match.</p>
+    </div>
+  </div>
+  <div class="cause-row">
+    <div class="cause-num">3</div>
+    <div class="cause-body">
+      <h3>Missing or inactive mapping</h3>
+      <p>The ExternalRole record exists, but <code>tblExternalRoleToPermission</code> / <code>tblExternalRoleToRole</code> has no active row linking it to the relevant PolicyPermission/PolicyRole.</p>
+    </div>
+  </div>
+  <div class="cause-row">
+    <div class="cause-num">4</div>
+    <div class="cause-body">
+      <h3>Stale cache</h3>
+      <p>A permission was added or removed in the database, but the user's Redis cache entry (TTL not yet expired) still holds the old key list. The change hasn't taken effect yet.</p>
+    </div>
+  </div>
+  <div class="cause-row">
+    <div class="cause-num">5</div>
+    <div class="cause-body">
+      <h3>Wrong access key string</h3>
+      <p>The caller is requesting <code>X</code> but the actual key in the database is <code>x</code> (casing), or the policy nesting is different from what the caller assumed. The key simply isn't in the list.</p>
+    </div>
+  </div>
+
+  <!-- ── Diagnostic Decision Tree ──────────────────────── -->
+  <h2>The Diagnostic Decision Tree</h2>
+
+  <div class="diagram">User reports Deny
+    │
+    ├─ Is it ALL keys or ONE specific key?
+    │       │                   │
+    │     ALL keys          ONE key
+    │       │                   │
+    │       ▼                   ▼
+    │   Check logs:         Run the SP manually:
+    │   LogError from       exec [dbo].[GetUserAccessKeys]
+    │   ExternalRolesService   @TenantId=..., @Roles='role-name'
+    │   (cause 1)          Is the key in the output?
+    │                          │            │
+    │                         NO           YES
+    │                          │            │
+    │                          ▼            ▼
+    │               Case 2, 3, or 5    Cause 4 (stale cache)
+    │               (see below)        DELETE /cache/permissions/{userId}
+    │
+    ├─ Did it EVER work, or NEVER work?
+    │       │                   │
+    │   Worked before       Never worked
+    │       │                   │
+    │       ▼                   ▼
+    │   Recent change?      Check name match (cause 2)
+    │   Cache stale?        Check mappings (cause 3)
+    │   (causes 3, 4)       Check key string (cause 5)
+    │
+    └─ Affects ONE user or MANY users?
+            │                   │
+          ONE user          MANY users
+            │                   │
+            ▼                   ▼
+      Likely their          Likely provider error
+      specific roles         (cause 1) or a
+      or mappings            config change</div>
+
+  <!-- ── Diagnostic Toolkit ────────────────────────────── -->
+  <h2>The Diagnostic Toolkit</h2>
+
+  <h3>1. Check logs for provider exceptions</h3>
+  <p>
+    Search structured logs (Seq/Graylog) for <code>LogError</code> from
+    <code>Equisoft.AuthorizationService.Services.V1.Services.ExternalRole.ExternalRolesService</code>
+    around the time of the failure. The message contains <code>"Exception occurred while fetching external roles"</code>.
+  </p>
+
+  <h3>2. Check active providers for the tenant</h3>
+  <div class="sql-block"><span class="sql-kw">SELECT</span> ExternalRoleProviderId, Type, Priority, IsActive, Description
+<span class="sql-kw">FROM</span> tblExternalRoleProvider
+<span class="sql-kw">WHERE</span> TenantId = <span class="sql-str">'TENANT-GUID'</span>
+<span class="sql-kw">ORDER BY</span> Priority <span class="sql-kw">ASC</span>;
+<span class="sql-comment">-- Verify: correct types active, expected priority order</span></div>
+
+  <h3>3. Check ExternalRole record by name</h3>
+  <div class="sql-block"><span class="sql-kw">SELECT</span> ExternalRoleId, ExternalSourceId, Name, IsActive
+<span class="sql-kw">FROM</span> tblExternalRole
+<span class="sql-kw">WHERE</span> TenantId = <span class="sql-str">'TENANT-GUID'</span>
+  <span class="sql-kw">AND</span> ExternalSourceId = <span class="sql-str">'the-exact-role-name-from-provider'</span>;
+<span class="sql-comment">-- Must be an exact match (case-sensitive). Zero rows = cause 2.</span></div>
+
+  <h3>4. Check mappings for an ExternalRole</h3>
+  <div class="sql-block"><span class="sql-comment">-- Permission mappings (cause 3 check)</span>
+<span class="sql-kw">SELECT</span> er.Name        <span class="sql-kw">AS</span> ExternalRole,
+       pol.Key         <span class="sql-kw">AS</span> PolicyKey,
+       perm.Key        <span class="sql-kw">AS</span> PermissionKey,
+       erp.IsActive    <span class="sql-kw">AS</span> MappingActive
+<span class="sql-kw">FROM</span>   tblExternalRole er
+<span class="sql-kw">JOIN</span>   tblExternalRoleToPermission erp  <span class="sql-kw">ON</span> er.ExternalRoleId = erp.ExternalRoleId
+<span class="sql-kw">JOIN</span>   tblPolicyPermission pp           <span class="sql-kw">ON</span> erp.PolicyPermissionId = pp.PolicyPermissionId
+<span class="sql-kw">JOIN</span>   tblPermission perm               <span class="sql-kw">ON</span> pp.PermissionId = perm.PermissionId
+<span class="sql-kw">JOIN</span>   tblPolicy pol                   <span class="sql-kw">ON</span> pp.PolicyId = pol.PolicyId
+<span class="sql-kw">WHERE</span>  er.TenantId = <span class="sql-str">'TENANT-GUID'</span>
+  <span class="sql-kw">AND</span>  er.ExternalSourceId = <span class="sql-str">'the-role-name'</span>;
+<span class="sql-comment">-- Zero rows = cause 3. IsActive=0 row = mapping disabled.</span></div>
+
+  <h3>5. Simulate what the stored procedure produces</h3>
+  <div class="sql-block"><span class="sql-kw">EXEC</span> [dbo].[GetUserAccessKeys]
+     @TenantId = <span class="sql-str">'TENANT-GUID'</span>,
+     @Roles    = <span class="sql-str">'RoleName1,RoleName2'</span>;
+<span class="sql-comment">-- The full list the user's cache SHOULD contain once recomputed.</span>
+<span class="sql-comment">-- If your expected key is absent here, the mapping is missing (cause 3 or 5).</span>
+<span class="sql-comment">-- If it IS here and the user still gets Deny, the cache is stale (cause 4).</span></div>
+
+  <h3>6. Force cache invalidation</h3>
+  <div class="sql-block"><span class="sql-comment">-- REST call (service account token required)</span>
+DELETE /api/v1/cache/permissions/{userId}?executedFor={userId}
+
+DELETE /api/v1/cache/clear/assistants/{assistantId}   <span class="sql-comment">-- for assistant contexts</span></div>
+
+  <!-- ── Case Study 1 ───────────────────────────────────── -->
+  <h2>Case Studies</h2>
+
+  <div class="case-study">
+    <div class="case-study-header">Case 1 — "It worked yesterday"</div>
+    <div class="case-body">
+      <div class="symptom">
+        <div class="symptom-label">Reported symptoms</div>
+        Multiple users from the <em>same tenant</em> lost all access simultaneously this morning. No code was deployed. No policy changes were made in the Authorization Service. The maintenance window last night involved patching the network switches.
+      </div>
+
+      <div class="step-container" id="case1">
+        <div class="step visible" id="c1s0">
+          <p style="font-family:sans-serif; font-size:0.88rem;"><strong>What is your first diagnostic step?</strong></p>
+          <button class="step-btn" onclick="nextStep('case1', 1)">Check structured logs for provider exceptions</button>
+          <button class="step-btn" onclick="wrongStep(this, 'case1')">Run GetUserAccessKeys for an affected user</button>
+          <button class="step-btn" onclick="wrongStep(this, 'case1')">Query tblExternalRole for name mismatches</button>
+          <p id="case1-wrong" style="display:none; color: var(--error); font-family:sans-serif; font-size:0.85rem; margin-top:0.5rem;"></p>
+        </div>
+        <div class="step" id="c1s1">
+          <p style="font-family:sans-serif; font-size:0.88rem;"><em>You search Seq for <code>LogError</code> from ExternalRolesService between 02:00–06:00.</em></p>
+          <div class="step-finding">ERROR ExternalRolesService Exception occurred while fetching external roles
+  Type: MicrosoftGraph
+  Message: The operation was canceled (network timeout after 30s)
+  TenantId: acme-tenant-id</div>
+          <p class="step-analysis">The MicrosoftGraph provider (priority 1) timed out after the network switch patching disrupted Azure AD connectivity. The cascade stopped — no roles resolved for any user who relied on this provider.</p>
+          <button class="step-btn" onclick="nextStep('case1', 2)">What is the immediate fix?</button>
+        </div>
+        <div class="step" id="c1s2">
+          <div class="root-cause visible">
+            <strong>Root cause: Provider exception (Cause 1)</strong>
+            MicrosoftGraph provider at priority 1 is timing out due to network disruption.<br/><br/>
+            <strong>Immediate fix:</strong> Temporarily set <code>IsActive = 0</code> for the MicrosoftGraph provider in <code>tblExternalRoleProvider</code> so the cascade falls through to the next provider. Then force cache invalidation for affected users with <code>DELETE /cache/permissions/{userId}</code>. Once Azure AD connectivity is restored, re-enable the provider.<br/><br/>
+            <strong>Long-term fix:</strong> If OIPA can serve as a fallback for this tenant, verify it is configured and active at a lower priority.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Case Study 2 ───────────────────────────────────── -->
+  <div class="case-study">
+    <div class="case-study-header">Case 2 — "It never worked"</div>
+    <div class="case-body">
+      <div class="symptom">
+        <div class="symptom-label">Reported symptoms</div>
+        A new Azure AD group <code>"Compliance_Officers"</code> (with underscore) was created last week and its members should have access to <code>platform.compliance.reports.view</code>. None of them can access it. Only users in this group are affected.
+      </div>
+
+      <div class="step-container" id="case2">
+        <div class="step visible" id="c2s0">
+          <p style="font-family:sans-serif; font-size:0.88rem;"><strong>No provider exceptions in logs. Which query do you run first?</strong></p>
+          <button class="step-btn" onclick="nextStep('case2', 1)">Check tblExternalRole for the exact name returned by MicrosoftGraph</button>
+          <button class="step-btn" onclick="wrongStep2(this)">Run GetUserAccessKeys for an affected user</button>
+          <button class="step-btn" onclick="wrongStep2(this)">Check if the permission key string is correct</button>
+          <p id="case2-wrong" style="display:none; color: var(--error); font-family:sans-serif; font-size:0.85rem; margin-top:0.5rem;"></p>
+        </div>
+        <div class="step" id="c2s1">
+          <p style="font-family:sans-serif; font-size:0.88rem;"><em>You query tblExternalRole for the name.</em></p>
+          <div class="step-finding">SELECT ExternalSourceId, Name, IsActive FROM tblExternalRole
+WHERE TenantId = 'acme-tenant-id'
+  AND ExternalSourceId LIKE '%Compliance%';
+
+Result:
+ExternalSourceId   | Name                | IsActive
+-------------------+---------------------+---------
+ComplianceOfficers | Compliance Officers | 1</div>
+          <p class="step-analysis">The ExternalRole record exists and is active — but the <code>ExternalSourceId</code> is <code>"ComplianceOfficers"</code> (no underscore). MicrosoftGraph returns the AD group <code>DisplayName</code>, which is <code>"Compliance_Officers"</code> (with underscore). The names don't match — the stored procedure receives <code>"Compliance_Officers"</code> but looks for <code>"ComplianceOfficers"</code>.</p>
+          <button class="step-btn" onclick="nextStep('case2', 2)">What is the fix?</button>
+        </div>
+        <div class="step" id="c2s2">
+          <div class="root-cause visible">
+            <strong>Root cause: Role name mismatch (Cause 2)</strong>
+            The ExternalSourceId in the database doesn't match the string MicrosoftGraph returns.<br/><br/>
+            <strong>Fix:</strong> Update the ExternalRole record so <code>ExternalSourceId = 'Compliance_Officers'</code> (with underscore), matching the Azure AD group DisplayName exactly. Then force cache invalidation for all affected users. No code change needed — this is a data fix via the management API or directly in the DB (with care).
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Case Study 3 ───────────────────────────────────── -->
+  <div class="case-study">
+    <div class="case-study-header">Case 3 — "The change isn't taking effect"</div>
+    <div class="case-body">
+      <div class="symptom">
+        <div class="symptom-label">Reported symptoms</div>
+        An analyst's role was updated 20 minutes ago — a new permission <code>analytics.dashboard.export</code> was added. The analyst still gets Deny when they try to use it. The developer who made the change confirms the database was updated correctly.
+      </div>
+
+      <div class="step-container" id="case3">
+        <div class="step visible" id="c3s0">
+          <p style="font-family:sans-serif; font-size:0.88rem;"><strong>No provider exceptions. You confirm the SP produces the new key. What's next?</strong></p>
+          <button class="step-btn" onclick="wrongStep3(this)">Check if the ExternalRole record is active in tblExternalRole</button>
+          <button class="step-btn" onclick="wrongStep3(this)">Check for name mismatch in tblExternalRole</button>
+          <button class="step-btn" onclick="nextStep('case3', 1)">Force cache invalidation for this user</button>
+          <p id="case3-wrong" style="display:none; color: var(--error); font-family:sans-serif; font-size:0.85rem; margin-top:0.5rem;"></p>
+        </div>
+        <div class="step" id="c3s1">
+          <p style="font-family:sans-serif; font-size:0.88rem;"><em>You call the cache invalidation endpoint with a service account token.</em></p>
+          <div class="step-finding">DELETE /api/v1/cache/permissions/{analyst-user-id}?executedFor={analyst-user-id}
+→ HTTP 200 OK</div>
+          <p class="step-analysis">The user's Redis cache entry held the old key list computed before the permission was added. The TTL (say, 1 hour) had not yet expired. Forcing invalidation evicts the entry — the next request triggers a fresh evaluation, which now returns the new key.</p>
+          <button class="step-btn" onclick="nextStep('case3', 2)">Confirm result</button>
+        </div>
+        <div class="step" id="c3s2">
+          <div class="root-cause visible">
+            <strong>Root cause: Stale cache (Cause 4)</strong>
+            The database had the correct data, but the user's cached key list hadn't been invalidated.<br/><br/>
+            <strong>Fix already applied:</strong> Cache invalidated — user now gets Allow on the next request.<br/><br/>
+            <strong>Process improvement:</strong> When making permission changes that need immediate effect, always include a cache invalidation step. Document this in your deployment checklist.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Quiz ───────────────────────────────────────────── -->
+  <h2>Check Your Understanding</h2>
+  <div class="quiz">
+    <div class="quiz-title">Retrieval practice — work from memory</div>
+
+    <div class="quiz-q">
+      <p>1. 50 users from the same tenant suddenly lose access to all features simultaneously. No database changes were made. What is the most likely root cause?</p>
+      <button class="quiz-option" data-correct="false">
+        A name mismatch was introduced when a new ExternalRole was created
+      </button>
+      <button class="quiz-option" data-correct="false">
+        All 50 users had their Redis cache entries evicted simultaneously
+      </button>
+      <button class="quiz-option" data-correct="true"
+        data-explanation="✓ Correct. Sudden, simultaneous loss for many users with no database change points directly to a provider exception. An exception stops the cascade and returns empty for every user that provider serves.">
+        A provider exception stopped the cascade, returning empty roles for all users
+      </button>
+      <button class="quiz-option" data-correct="false">
+        The stored procedure returned a different schema after a SQL Server upgrade
+      </button>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-q">
+      <p>2. You run <code>[dbo].[GetUserAccessKeys]</code> manually for a user and the expected key IS in the output, but <code>GET /authorize</code> still returns Deny. What does this tell you?</p>
+      <button class="quiz-option" data-correct="false">
+        The ExternalRole mapping is inactive and the SP result is incorrect
+      </button>
+      <button class="quiz-option" data-correct="true"
+        data-explanation="✓ Correct. If the SP has the right key but /authorize still denies, the live cache is serving a stale list that predates the new key. Force invalidation to evict the entry.">
+        The user's Redis cache holds a stale key list that predates the new permission
+      </button>
+      <button class="quiz-option" data-correct="false">
+        The caller is using the wrong access key string in their request
+      </button>
+      <button class="quiz-option" data-correct="false">
+        The provider returned a different role than expected at evaluation time
+      </button>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-q">
+      <p>3. A provider returns the role <code>"Admin"</code>. Zero rows come back from <code>[dbo].[GetUserAccessKeys]</code> for that role. Which query most directly confirms the root cause?</p>
+      <button class="quiz-option" data-correct="false">
+        Query tblPolicyPermission for the expected PolicyId and PermissionId
+      </button>
+      <button class="quiz-option" data-correct="true"
+        data-explanation="✓ Correct. Zero SP output means either no matching ExternalRole record, or the ExternalRole has no active mappings. Checking tblExternalRole for ExternalSourceId = 'Admin' first tells you whether the name matches — the most upstream check.">
+        Query tblExternalRole WHERE ExternalSourceId = 'Admin' to check for a match
+      </button>
+      <button class="quiz-option" data-correct="false">
+        Query tblExternalRoleToPermission for rows with IsActive = 0
+      </button>
+      <button class="quiz-option" data-correct="false">
+        Check the logs for a provider exception occurring during role resolution
+      </button>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-q">
+      <p>4. An ExternalRole record exists and is active. Its <code>tblExternalRoleToPermission</code> rows all have <code>IsActive = 1</code>. The SP still returns no keys. What is the most likely remaining cause?</p>
+      <button class="quiz-option" data-correct="false">
+        The Redis circuit breaker has opened and is returning empty from memory cache
+      </button>
+      <button class="quiz-option" data-correct="false">
+        The stored procedure has a bug that filters out active mappings incorrectly
+      </button>
+      <button class="quiz-option" data-correct="true"
+        data-explanation="✓ Correct. If the ExternalRole and its mappings are active, but the SP returns nothing, check whether the Policy itself is active (IsActive = 1 in tblPolicy). An inactive policy means its permissions are excluded from the query.">
+        The tblPolicy record for the linked policy has IsActive = 0
+      </button>
+      <button class="quiz-option" data-correct="false">
+        The TenantId passed to the SP does not match the ExternalRole's TenantId
+      </button>
+      <div class="quiz-feedback"></div>
+    </div>
+
+  </div>
+
+  <!-- ── What's Next ─────────────────────────────────────── -->
+  <h2>What's Next</h2>
+  <p>
+    You now have a repeatable debugging process and have worked through three real failure modes.
+    Lesson 06 will cover the <strong>caching strategy in depth</strong> — Redis TTL configuration,
+    the circuit breaker settings, what happens during a Redis restart, and the consistency
+    guarantees (or lack thereof) that the current design provides.
+    That's the final success criterion in your mission.
+  </p>
+
+  <!-- ── Primary Source ─────────────────────────────────── -->
+  <h2>Primary Source</h2>
+  <p>
+    Read <code>ExternalRolesService.cs</code> alongside <code>AuthorizeCacheService.cs</code> as a
+    pair. The former is the slow path that can fail; the latter is the fast path that can be stale.
+    Together they are the two failure surfaces you will encounter most often in production.
+  </p>
+
+  <!-- ── Footer ─────────────────────────────────────────── -->
+  <footer class="lesson-footer">
+    <div>
+      Lesson 05 of the Authorization Service series · 2026-06-22 ·
+      <a href="0004-policy-role-permission-hierarchy.html">← Lesson 04</a>
+    </div>
+    <div class="ask-teacher">
+      <strong>Questions?</strong> Ask your Claude Code agent anything unclear.
+      Good prompts: "Show me the exact log message format for a provider exception",
+      "What SQL do I use to check if a Policy is active?", or
+      "How long is the default Redis TTL configured to?"
+    </div>
+  </footer>
+
+</div>
+<script src="../assets/quiz.js"></script>
+<script>
+function nextStep(caseId, stepNum) {
+  var container = document.getElementById(caseId);
+  // Hide all buttons in previous step
+  var prevStep = document.getElementById(caseId.replace('case','c') + 's' + (stepNum - 1));
+  if (prevStep) {
+    prevStep.querySelectorAll('.step-btn').forEach(function(b) { b.style.display = 'none'; });
+    var wrongMsg = document.getElementById(caseId + '-wrong');
+    if (wrongMsg) wrongMsg.style.display = 'none';
+  }
+  var next = document.getElementById(caseId.replace('case','c') + 's' + stepNum);
+  if (next) next.classList.add('visible');
+}
+
+function wrongStep(btn, caseId) {
+  var msg = document.getElementById(caseId + '-wrong');
+  if (msg) {
+    msg.style.display = 'block';
+    msg.textContent = '✗ Not the most efficient first step. When multiple users are affected simultaneously with no database change, logs will point to the cause faster than any individual user query.';
+  }
+}
+function wrongStep2(btn) {
+  var msg = document.getElementById('case2-wrong');
+  msg.style.display = 'block';
+  msg.textContent = '✗ Good instinct, but premature. Without a provider error in logs and with only one group affected, the most targeted first step is checking the exact name the provider returns vs. what the database expects.';
+}
+function wrongStep3(btn) {
+  var msg = document.getElementById('case3-wrong');
+  msg.style.display = 'block';
+  msg.textContent = '✗ You already confirmed the SP produces the correct key — that rules out missing/inactive records. If the data is right but the user still gets Deny, the cache is the only remaining layer.';
+}
+</script>
+</body>
+</html>

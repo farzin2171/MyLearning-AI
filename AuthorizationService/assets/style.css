@@ -1,0 +1,187 @@
+/* Authorization Service — Teaching Workspace Shared Stylesheet */
+
+:root {
+  --ink: #1a1a1a;
+  --muted: #555;
+  --faint: #888;
+  --border: #ddd;
+  --bg: #fafaf8;
+  --surface: #fff;
+  --accent: #1a56db;
+  --accent-light: #e8f0fe;
+  --success: #166534;
+  --success-bg: #dcfce7;
+  --error: #991b1b;
+  --error-bg: #fee2e2;
+  --warn: #92400e;
+  --warn-bg: #fef3c7;
+  --code-bg: #f3f4f6;
+  --radius: 6px;
+  --mono: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Georgia', 'Times New Roman', serif;
+  font-size: 17px;
+  line-height: 1.7;
+  color: var(--ink);
+  background: var(--bg);
+  padding: 0 1rem 4rem;
+}
+
+.lesson-container {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+/* ── Header ─────────────────────────────────────────────── */
+.lesson-header {
+  border-bottom: 2px solid var(--ink);
+  padding: 2.5rem 0 1rem;
+  margin-bottom: 2.5rem;
+}
+
+.lesson-meta {
+  font-family: sans-serif;
+  font-size: 0.8rem;
+  color: var(--faint);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 0.4rem;
+}
+
+.lesson-title {
+  font-size: 2rem;
+  font-weight: normal;
+  line-height: 1.2;
+  margin-bottom: 0.5rem;
+}
+
+.lesson-subtitle {
+  font-style: italic;
+  color: var(--muted);
+  font-size: 1rem;
+}
+
+/* ── Typography ──────────────────────────────────────────── */
+h2 {
+  font-size: 1.35rem;
+  font-weight: normal;
+  margin: 2.5rem 0 0.75rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.3rem;
+}
+
+h3 {
+  font-size: 1.1rem;
+  margin: 1.8rem 0 0.5rem;
+  font-weight: bold;
+}
+
+p { margin-bottom: 1rem; }
+
+a { color: var(--accent); }
+
+ul, ol { margin: 0.5rem 0 1rem 1.6rem; }
+li { margin-bottom: 0.3rem; }
+
+/* ── Code ────────────────────────────────────────────────── */
+code {
+  font-family: var(--mono);
+  font-size: 0.82em;
+  background: var(--code-bg);
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+}
+
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.2rem;
+  overflow-x: auto;
+  margin: 1.2rem 0;
+}
+
+pre code { background: none; padding: 0; font-size: 0.85em; line-height: 1.55; }
+
+/* ── Callouts ────────────────────────────────────────────── */
+.callout {
+  border-left: 4px solid;
+  padding: 0.9rem 1.1rem;
+  margin: 1.5rem 0;
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.callout.info    { border-color: var(--accent); background: var(--accent-light); }
+.callout.warn    { border-color: #d97706;        background: var(--warn-bg); color: var(--warn); }
+.callout.key     { border-color: #7c3aed;        background: #f5f3ff; }
+.callout-title   { font-family: sans-serif; font-size: 0.78rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 0.3rem; }
+
+/* ── Diagrams ────────────────────────────────────────────── */
+.diagram {
+  font-family: var(--mono);
+  font-size: 0.82em;
+  line-height: 1.5;
+  background: #f8f9fa;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.2rem 1.5rem;
+  margin: 1.5rem 0;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+/* ── Quiz ────────────────────────────────────────────────── */
+.quiz { margin: 2rem 0; }
+.quiz-title { font-family: sans-serif; font-weight: 700; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 1rem; color: var(--muted); }
+.quiz-q { margin-bottom: 1.8rem; }
+.quiz-q p { margin-bottom: 0.6rem; font-weight: bold; }
+
+.quiz-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.55rem 0.9rem;
+  margin-bottom: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-family: sans-serif;
+  font-size: 0.88rem;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.quiz-option:hover { background: var(--accent-light); border-color: var(--accent); }
+.quiz-option.correct  { background: var(--success-bg); border-color: #15803d; color: var(--success); }
+.quiz-option.wrong    { background: var(--error-bg);   border-color: #dc2626; color: var(--error); }
+.quiz-option:disabled { cursor: default; }
+
+.quiz-feedback {
+  font-family: sans-serif;
+  font-size: 0.88rem;
+  margin-top: 0.5rem;
+  min-height: 1.4em;
+  color: var(--muted);
+}
+
+/* ── Footer ──────────────────────────────────────────────── */
+.lesson-footer {
+  margin-top: 3rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border);
+  font-family: sans-serif;
+  font-size: 0.83rem;
+  color: var(--faint);
+}
+
+.lesson-footer .ask-teacher {
+  background: var(--accent-light);
+  border-radius: var(--radius);
+  padding: 0.8rem 1rem;
+  margin-top: 1rem;
+  color: var(--ink);
+  font-size: 0.85rem;
+}

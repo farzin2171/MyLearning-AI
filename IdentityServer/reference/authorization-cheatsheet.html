@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Authorization Service — Quick Reference</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    .ref-section { margin-bottom: 2rem; }
+    .endpoint-block {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--accent);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      padding: 0.8rem 1rem;
+      margin: 0.6rem 0;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      line-height: 1.6;
+    }
+    .endpoint-block .method { color: #0a9e5c; font-weight: bold; margin-right: 0.5rem; }
+    .endpoint-block .auth   { color: var(--muted); font-size: 0.75rem; display: block; margin-top: 0.3rem; }
+    .mini-table { font-size: 0.82rem; margin: 0.4rem 0 1rem; }
+    .mini-table td, .mini-table th { padding: 0.3rem 0.6rem; }
+    .flow-compact {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 0.3rem;
+      font-family: var(--font-ui); font-size: 0.78rem; margin: 0.5rem 0 1rem;
+    }
+    .fc-node {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 4px; padding: 0.3rem 0.6rem; text-align: center;
+    }
+    .fc-node.blue { border-color: var(--accent); background: #e8f0ff; }
+    .fc-node.green { border-color: #0a9e5c; background: #e8faf0; }
+    .fc-arrow { color: var(--muted); }
+    h2 { font-size: 1.1rem; }
+    h3 { font-size: 0.95rem; margin: 1rem 0 0.4rem; }
+    @media print { body { font-size: 9pt; } h1 { font-size: 14pt; } }
+  </style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb"><a href="../MISSION.md">Identity &amp; Authorization</a> › Reference</div>
+  <h1>Authorization Service — Quick Reference</h1>
+  <div class="meta"><span>Print-friendly</span><span>Services.Authorization</span></div>
+</div>
+
+<div class="ref-section">
+<h2>Endpoints</h2>
+
+<div class="endpoint-block">
+  <span class="method">GET</span> /api/v1/Authorize?key={accessKey}
+  <span class="auth">Auth: any valid JWT (user or service) · 200 = allowed, 403 = denied</span>
+</div>
+<div class="endpoint-block">
+  <span class="method">GET</span> /api/v1/Evaluate
+  <span class="auth">Auth: service account only (service_isService: true) · Returns full access-key array</span>
+</div>
+<div class="endpoint-block">
+  <span class="method">GET</span> /api/v1/Evaluate/{userId}?productKey={key}
+  <span class="auth">Auth: service account only · Returns boolean</span>
+</div>
+<div class="endpoint-block">
+  <span class="method">DELETE</span> /api/v1/Cache/permissions/{executedBy}?executedFor={executedFor}
+  <span class="auth">Auth: service account + IsService policy · Immediate cache invalidation</span>
+</div>
+<div class="endpoint-block">
+  <span class="method">DELETE</span> /api/v1/Cache/clear/assistants/{assistantId}
+  <span class="auth">Auth: any authenticated user · Called by AssistantManagement on relation changes</span>
+</div>
+</div>
+
+<div class="ref-section">
+<h2>Permission Resolution Flow</h2>
+<div class="flow-compact">
+  <div class="fc-node blue">JWT token</div><div class="fc-arrow">→</div>
+  <div class="fc-node">Extract<br>identity</div><div class="fc-arrow">→</div>
+  <div class="fc-node blue">Redis<br>cache?</div><div class="fc-arrow">→ hit →</div>
+  <div class="fc-node green">Answer</div>
+</div>
+<div class="flow-compact">
+  <span style="color:var(--muted);font-size:0.75rem">on cache miss:</span>
+  <div class="fc-node">External role<br>providers</div><div class="fc-arrow">→</div>
+  <div class="fc-node">Map external<br>→ internal roles</div><div class="fc-arrow">→</div>
+  <div class="fc-node">spGetUserAccessKeys<br>(SQL recursive CTE)</div><div class="fc-arrow">→</div>
+  <div class="fc-node">Store in<br>Redis</div><div class="fc-arrow">→</div>
+  <div class="fc-node green">Answer</div>
+</div>
+</div>
+
+<div class="ref-section">
+<h2>Access Key Format</h2>
+<pre style="margin:0.4rem 0"><code>policy.childpolicy.permission      e.g.  shared.eapp.Lock
+policy.permission                  e.g.  assistants.Manage
+policy.childpolicy.role            e.g.  shared.reports.Viewer</code></pre>
+<p style="font-size:0.83rem;margin:0.4rem 0">Separator: <code>.</code> (dot) · Defined in <code>AuthorizationConstants.cs</code></p>
+</div>
+
+<div class="ref-section">
+<h2>Data Model</h2>
+<table class="mini-table">
+  <thead><tr><th>Entity</th><th>SQL table</th><th>Key field</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>Policy</td><td>tblPolicy</td><td>Key</td><td>Hierarchical (ParentPolicyId). Tree root has NULL parent.</td></tr>
+    <tr><td>Role</td><td>tblRole</td><td>Key</td><td>Mapped to Policies via tblPolicyRoleMapping</td></tr>
+    <tr><td>Permission</td><td>tblPermission</td><td>Key</td><td>Mapped to Policies via tblPolicyPermissionMapping</td></tr>
+    <tr><td>ExternalRole</td><td>tblExternalRole</td><td>—</td><td>Maps provider role names → internal Role or Permission</td></tr>
+    <tr><td>ExternalRoleProvider</td><td>tblExternalRoleProvider</td><td>—</td><td>Type + priority per tenant</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="ref-section">
+<h2>External Role Provider Types</h2>
+<table class="mini-table">
+  <thead><tr><th>Type</th><th>Source of roles</th></tr></thead>
+  <tbody>
+    <tr><td>ClaimBased</td><td>Standard <code>role</code> claim in the JWT</td></tr>
+    <tr><td>MicrosoftGraph</td><td>Azure AD group memberships</td></tr>
+    <tr><td>CustomApi</td><td>Any HTTP endpoint returning role names</td></tr>
+    <tr><td>OipaExposedComputation</td><td>OIPA system computed roles</td></tr>
+    <tr><td>Assistant</td><td>AssistantManagement service</td></tr>
+  </tbody>
+</table>
+<p style="font-size:0.83rem">Providers are tried in priority order. First to return any roles wins.</p>
+</div>
+
+<div class="ref-section">
+<h2>Caching</h2>
+<table class="mini-table">
+  <thead><tr><th>Cache key</th><th>TTL</th><th>Content</th></tr></thead>
+  <tbody>
+    <tr><td><code>authz.keys.{userId}</code></td><td>300 s</td><td>List of access keys for a user</td></tr>
+    <tr><td><code>authz.keys.{roleName}</code></td><td>300 s</td><td>List of access keys for a service role</td></tr>
+    <tr><td><code>authz.eid.{userId}</code></td><td>300 s</td><td>External ID mapping</td></tr>
+  </tbody>
+</table>
+<p style="font-size:0.83rem">Primary: Redis. Fallback: in-memory. Circuit breaker: 1 error → 60 s break.</p>
+</div>
+
+<div class="ref-section">
+<h2>Useful SQL Queries</h2>
+<pre><code>-- Manually compute access keys for debugging:
+EXEC spGetUserAccessKeys @TenantId='…', @Roles='Advisor'
+
+-- Find all permissions for a policy:
+SELECT perm.Key
+FROM tblPermission perm
+JOIN tblPolicyPermissionMapping ppm ON ppm.PermissionId = perm.PermissionId
+JOIN tblPolicy p ON p.PolicyId = ppm.PolicyId
+WHERE p.Key = 'eapp' AND perm.IsActive = 1
+
+-- Find which policies a role has access to:
+SELECT p.Key AS Policy
+FROM tblPolicyRoleMapping prm
+JOIN tblPolicy p ON p.PolicyId = prm.PolicyId
+JOIN tblRole   r ON r.RoleId   = prm.RoleId
+WHERE r.Key = 'Advisor'</code></pre>
+</div>
+
+<div class="ref-section">
+<h2>Common Errors</h2>
+<table class="mini-table">
+  <thead><tr><th>Symptom</th><th>Fix</th></tr></thead>
+  <tbody>
+    <tr><td>403 on Authorize — permission should exist</td><td>Check Redis TTL; manually run spGetUserAccessKeys; verify external role provider returns the role</td></tr>
+    <tr><td>403 on Evaluate — using user token</td><td>Evaluate requires service_isService:true — use a service account token</td></tr>
+    <tr><td>Permission change not reflected</td><td>Call DELETE /api/v1/Cache/permissions or wait up to 5 minutes for Redis TTL</td></tr>
+    <tr><td>External role provider returns empty</td><td>Check provider priority order; check that the provider is Active; check connectivity to the provider's data source</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="lesson-footer">
+  Authorization Service Quick Reference · See <a href="../lessons/0004-authorization-service.html">Lesson 4</a> for the full walkthrough.
+</div>
+
+</body>
+</html>

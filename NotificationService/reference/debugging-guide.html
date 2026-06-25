@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Debugging Guide — Quick Reference</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    table { width: 100%; border-collapse: collapse; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 0.875rem; margin: 1rem 0; }
+    th { background: var(--accent); color: #fff; text-align: left; padding: 0.5rem 0.75rem; }
+    td { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+    tr:nth-child(even) td { background: var(--light); }
+    .ref-section { margin-bottom: 2.5rem; }
+    .log-key { font-family: monospace; font-size: 0.8rem; background: var(--code-bg); padding: 0.1em 0.3em; border-radius: 3px; }
+    .badge { display: inline-block; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; padding: 0.1em 0.5em; border-radius: 3px; }
+    .notif { background: #dbeafe; color: #1e40af; }
+    .ka    { background: #ede9fe; color: #5b21b6; }
+    .both  { background: #f0fdf4; color: #166534; }
+    @media print { body { max-width: none; padding: 1rem; } }
+  </style>
+</head>
+<body>
+
+<nav class="breadcrumb"><a href="../lessons/0005-debugging-and-operations.html">← Lesson 5</a></nav>
+
+<header class="lesson-header">
+  <p class="lesson-number">Reference</p>
+  <h1>Debugging Guide</h1>
+  <p class="subtitle">Log messages, diagnostic trees, and the testing gap</p>
+</header>
+
+<main>
+
+<div class="ref-section">
+  <h2>Key Log Messages</h2>
+  <table>
+    <thead><tr><th>Message</th><th>Source</th><th>Means</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><span class="log-key">Succeed to set relationship between ApplicationId {x} and ConnectionId {y} for User {z}</span></td>
+        <td><code>KeepAliveManagementService</code></td>
+        <td><span class="badge both">both</span> Browser registered — connection is in Redis</td>
+      </tr>
+      <tr>
+        <td><span class="log-key">Succeed to retrieve connectionId list for ApplicationId {x} and User {y}</span></td>
+        <td><code>KeepAliveManagementService</code></td>
+        <td><span class="badge ka">keep-alive</span> Redis lookup completed (may return empty list)</td>
+      </tr>
+      <tr>
+        <td><span class="log-key">Requesting lock {key}_lock</span></td>
+        <td><code>NotificationServiceCacheManager</code></td>
+        <td><span class="badge both">both</span> About to write to Redis — lock being acquired</td>
+      </tr>
+      <tr>
+        <td><span class="log-key">Lock acquired</span></td>
+        <td><code>NotificationServiceCacheManager</code></td>
+        <td><span class="badge both">both</span> Redis write is proceeding normally</td>
+      </tr>
+      <tr>
+        <td><span class="log-key">Could not acquire lock</span></td>
+        <td><code>NotificationServiceCacheManager</code></td>
+        <td><span class="badge both">both</span> Lock failed after 30s wait — counts as circuit breaker exception</td>
+      </tr>
+      <tr>
+        <td><span class="log-key">Circuit broken</span></td>
+        <td><code>NotificationServiceCacheManager</code></td>
+        <td><span class="badge ka">keep-alive</span> Redis bypassed — in-memory fallback active for 60s</td>
+      </tr>
+      <tr>
+        <td><span class="log-key">Using in memory cache</span></td>
+        <td><code>NotificationServiceCacheManager</code></td>
+        <td><span class="badge ka">keep-alive</span> Circuit open + fallback enabled</td>
+      </tr>
+      <tr>
+        <td><span class="log-key">Circuit reset</span></td>
+        <td><code>NotificationServiceCacheManager</code></td>
+        <td><span class="badge ka">keep-alive</span> Redis back online — probe succeeded</td>
+      </tr>
+    </tbody>
+  </table>
+  <p style="font-family: -apple-system, sans-serif; font-size: 0.875rem; color: var(--muted);">Note: userId is logged via <code>.Sanitize()</code> — control characters are escaped. A raw userId with special characters may look different in logs.</p>
+</div>
+
+<div class="ref-section">
+  <h2>Diagnostic Tree: Notifications Not Arriving</h2>
+  <pre><code>User reports: "I'm not getting notifications"
+
+1. Is the browser connected?
+   → Search logs for "Succeed to set relationship" with this userId
+   → If missing: browser never called SetApplicationId — front-end issue
+   → If present: connection was registered; continue
+
+2. Is the JWT valid?
+   → If browser never got a WebSocket connection, check 401 responses
+   → Token expired mid-session? SignalR will drop on next reconnect
+
+3. Is the SignalR Redis backplane healthy?
+   → Notifications use .User() routing via the backplane
+   → If backplane Redis is down: cross-instance routing fails
+   → Notifications TO THE SAME INSTANCE still work
+
+4. Is the correct userId being sent by the caller?
+   → Compare userId in POST /api/v1/notifications with Context.UserIdentifier
+   → These must match exactly (case-sensitive string comparison)</code></pre>
+</div>
+
+<div class="ref-section">
+  <h2>Diagnostic Tree: Keep-Alive Not Arriving</h2>
+  <pre><code>User/system reports: "Keep-alive signals stopped"
+
+1. Was the connection ever registered?
+   → Search logs for "Succeed to set relationship" with this userId + applicationId
+   → If missing: SetApplicationId was never called — front-end issue
+
+2. Has the circuit breaker opened?
+   → Search logs for "Circuit broken"
+   → If yes: Redis is/was down; fallback is in-memory (per-instance)
+
+3. Is the connection on the right instance?
+   → If circuit opened, the connection may be in instance A's memory
+   → Keep-alive request to instance B won't find it
+
+4. Has the TTL expired?
+   → Default TTL: 3600 seconds (1 hour)
+   → If user was idle for > 1 hour, the record was evicted
+   → Browser must call SetApplicationId again (on reconnect or tab refocus)
+
+5. Is the applicationId in the keep-alive request correct?
+   → Must match the Guid used in SetApplicationId exactly
+   → A Guid mismatch returns 204 but no connection IDs found → silent drop</code></pre>
+</div>
+
+<div class="ref-section">
+  <h2>The Testing Gap</h2>
+  <table>
+    <thead><tr><th>What the tests verify</th><th>What they do NOT verify</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>HTTP 200/204 for valid requests</td>
+        <td>That the notification reached the browser</td>
+      </tr>
+      <tr>
+        <td>HTTP 400 for missing required fields</td>
+        <td>That the keep-alive reset the session timer</td>
+      </tr>
+      <tr>
+        <td>HTTP 401 for unauthorized requests</td>
+        <td>Circuit breaker behaviour under Redis failure</td>
+      </tr>
+      <tr>
+        <td>Health check returns 200</td>
+        <td>Redis connectivity or SignalR backplane health</td>
+      </tr>
+    </tbody>
+  </table>
+  <p style="font-family: -apple-system, sans-serif; font-size: 0.875rem;">End-to-end delivery requires a live SignalR connection and Redis. Manual testing or load testing with a real client is needed to verify the full flow.</p>
+</div>
+
+<div class="ref-section">
+  <h2>Configuration Values That Affect Behaviour</h2>
+  <table>
+    <thead><tr><th>Setting</th><th>Default</th><th>Operational impact</th></tr></thead>
+    <tbody>
+      <tr><td><code>cacheOptions:expiryTimeSpanInSecs</code></td><td>3600 s</td><td>How long before an idle connection is evicted. Reduce if you want faster cleanup; increase if sessions are longer than 1 hour.</td></tr>
+      <tr><td><code>persistence:circuitBreaker:exceptionsAllowedBeforeBreaking</code></td><td>1</td><td>A single Redis blip opens the circuit. Increase to tolerate transient failures before failing over to memory.</td></tr>
+      <tr><td><code>persistence:circuitBreaker:durationOfBreakInSeconds</code></td><td>60 s</td><td>How long Redis is bypassed. Increase for slow Redis restarts; decrease for faster recovery.</td></tr>
+      <tr><td><code>persistence:enableMemoryCacheProvider</code></td><td>true</td><td>If false, service returns null on Redis failure — keep-alive silently drops. Usually keep this true.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+</main>
+
+<footer class="lesson-footer" style="border-top: 1px solid var(--border); padding-top: 1.5rem; margin-top: 2rem; font-family: -apple-system, sans-serif; font-size: 0.875rem;">
+  <a href="../lessons/0005-debugging-and-operations.html">← Back to Lesson 5</a>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 2: Inside the NotificationHub — Notification Service</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<nav class="breadcrumb">
+  <a href="0001-the-two-flows.html">← Lesson 1</a>
+  &nbsp;&nbsp;|&nbsp;&nbsp; Notification Service &rsaquo; Lesson 2 of 6
+</nav>
+
+<header class="lesson-header">
+  <p class="lesson-number">Lesson 2</p>
+  <h1>Inside the NotificationHub</h1>
+  <p class="subtitle">The connection lifecycle, hub methods, and the three client-targeting strategies</p>
+  <div class="objectives">
+    <p><strong>After this lesson you can:</strong></p>
+    <ul>
+      <li>Read and explain every line of <code>NotificationHub.cs</code></li>
+      <li>Describe the three ways the service targets clients and when it uses each</li>
+      <li>Explain what <code>IHubContext</code> is and why controllers need it instead of <code>Hub</code></li>
+    </ul>
+  </div>
+</header>
+
+<main>
+
+<!-- ─────────────────────────────────────────────── -->
+<section>
+  <h2>A Correction from Lesson 1</h2>
+  <p>Lesson 1 described the notification delivery as: <em>"the controller looks up the connectionId from Redis."</em> The actual code tells a different story. Here is the entire <code>NotificationsController.Index</code> method:</p>
+  <pre><code>public async Task&lt;IActionResult&gt; Index([FromBody] NotificationViewModel viewModel)
+{
+    var sendViewModel = new NotificationSendViewModel
+    {
+        Body    = viewModel.Body,
+        Code    = viewModel.Code,
+        Subject = viewModel.Subject
+    };
+
+    await _hubContext.Clients.User(viewModel.UserId).SendAsync("notificationReceived", sendViewModel);
+
+    return Ok();
+}</code></pre>
+  <p>No Redis lookup. No cache query. The controller calls <code>Clients.User(userId)</code> and SignalR handles the routing internally. This is the key insight that makes Lesson 2 click: <strong>the service uses two completely different routing mechanisms for its two flows.</strong></p>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section>
+  <h2>The Hub Class — What It Gives You</h2>
+  <p>A SignalR hub is a class that inherits from <code>Hub</code>. SignalR creates a new hub instance for each client invocation (not each connection), then discards it. This means hubs are <strong>not suitable for holding state</strong> — long-lived state lives in injected services.</p>
+  <p>The <code>Hub</code> base class gives you three things:</p>
+  <ul>
+    <li><code>Context</code> — information about the <em>current</em> connection</li>
+    <li><code>Clients</code> — ways to push messages to connected clients</li>
+    <li><code>Groups</code> — methods to add or remove connections from named groups</li>
+  </ul>
+  <p>Everything the <code>NotificationHub</code> does uses exactly these three handles.</p>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section>
+  <h2>The Connection Context</h2>
+  <p>Inside any hub method, <code>Context</code> describes the <em>currently active connection</em>. Two properties matter most in this service:</p>
+
+  <pre><code>// A unique string SignalR generates per WebSocket socket.
+// Changes every time the browser reconnects.
+Context.ConnectionId      // e.g. "abc123xyz..."
+
+// The user ID extracted from the JWT — the NameIdentifier claim.
+// SignalR uses this to implement .Clients.User(userId) routing.
+Context.UserIdentifier    // e.g. "user-42"</code></pre>
+
+  <p>Both are used explicitly in the hub. <code>ConnectionId</code> is passed to <code>KeepAliveManagementService</code> to build the application cache record. <code>UserIdentifier</code> is what powers <code>.User()</code> routing — SignalR maintains an internal map of <code>UserIdentifier → [ConnectionId, ConnectionId, …]</code> using its Redis backplane.</p>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section>
+  <h2>The Connection Lifecycle</h2>
+  <p>Two methods fire automatically — you override them to hook into connection events.</p>
+
+  <pre><code>public override async Task OnConnectedAsync()
+{
+    await Groups.AddToGroupAsync(Context.ConnectionId, "Authenticated SignalR Users");
+    await base.OnConnectedAsync();
+}
+
+public override async Task OnDisconnectedAsync(Exception? exception)
+{
+    await Groups.RemoveFromGroupAsync(Context.ConnectionId, "Authenticated SignalR Users");
+    await base.OnDisconnectedAsync(exception);
+}</code></pre>
+
+  <p>This service uses a single group — <em>"Authenticated SignalR Users"</em> — to collect every connected, authenticated socket. The group isn't used for targeted delivery in this service, but it's a natural broadcast target if that need ever arises.</p>
+  <p>Notice that <code>OnDisconnectedAsync</code> receives an <code>exception</code> parameter. It is <code>null</code> on a clean disconnect (user closes tab) and non-null when the connection dropped unexpectedly (network failure, timeout). The hub doesn't currently differentiate between the two — the group membership cleanup happens either way.</p>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section>
+  <h2>Hub Methods — The Client Calls the Server</h2>
+  <p>Any public method on a hub class becomes callable from the browser. The browser invokes it by name over the WebSocket. Here are the two hub methods this service exposes:</p>
+
+  <pre><code>public async Task SetApplicationId(Guid applicationId)
+{
+    await _keepAliveManagementService.LinkAsync(
+        applicationId,
+        Context.ConnectionId,
+        Context.UserIdentifier);
+}
+
+public async Task UnSetApplicationId(Guid applicationId)
+{
+    await _keepAliveManagementService.UnlinkAsync(
+        applicationId,
+        Context.ConnectionId,
+        Context.UserIdentifier);
+}</code></pre>
+
+  <p>Both methods are thin wrappers. They extract the values that only the hub can see — <code>ConnectionId</code> and <code>UserIdentifier</code> — and pass them to the service layer. The hub methods themselves contain no business logic.</p>
+  <p class="aside"><strong>Note:</strong> The browser calls <code>SetApplicationId</code> immediately after connecting. If it fails or is never called, the keep-alive flow breaks — the service has no way to map this connection to an application. Notifications still work (because they use <code>.User()</code> routing, not the app cache), but keep-alive signals will not reach this tab.</p>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section>
+  <h2>The Three Targeting Strategies</h2>
+  <p>This is the heart of the lesson. The service uses three different ways to push messages to clients, each chosen deliberately.</p>
+
+  <h3>Strategy 1 — <code>Clients.User(userId)</code> &nbsp;→ notifications</h3>
+  <pre><code>// NotificationsController.cs
+await _hubContext.Clients.User(viewModel.UserId).SendAsync("notificationReceived", payload);</code></pre>
+  <p>SignalR internally tracks every <code>ConnectionId</code> associated with a given <code>UserIdentifier</code>. <code>Clients.User()</code> delivers to <em>all of them at once</em> — every tab the user has open, on every service instance, across the Redis backplane. <strong>No Redis lookup required in application code.</strong></p>
+
+  <h3>Strategy 2 — <code>Clients.Clients(ids)</code> &nbsp;→ keep-alive</h3>
+  <pre><code>// KeepAliveController.cs
+var connectionIds = await _keepAliveManagementService
+    .GetConnectionIdListAsync(viewModel.ApplicationId, viewModel.UserId);
+
+await _hubContext.Clients.Clients(connectionIds.ToList()).SendAsync("keepAliveReceived");</code></pre>
+  <p>Keep-alive signals must be targeted to a <em>specific application instance</em> — not all of the user's tabs. The controller first fetches the exact <code>ConnectionId</code> list from the application's own Redis cache, then passes them to <code>Clients.Clients()</code>. This is why the application cache exists: to support finer-grained routing than <code>.User()</code> provides.</p>
+
+  <h3>Strategy 3 — <code>Clients.Group(name)</code> &nbsp;→ available but unused for delivery</h3>
+  <pre><code>// Would broadcast to all authenticated users — not currently used for delivery
+await _hubContext.Clients.Group("Authenticated SignalR Users").SendAsync("…", …);</code></pre>
+  <p>All connected sockets belong to the <em>"Authenticated SignalR Users"</em> group (added in <code>OnConnectedAsync</code>). The group exists but is not currently used to send messages — it's there if a broadcast-to-all-users need arises without a per-user lookup.</p>
+
+  <div class="callout">
+    <div class="callout-steps">
+      <div class="callout-step">
+        <span class="callout-icon">→</span>
+        <div><strong>Notifications</strong> use <code>.User(userId)</code> — reach all of the user's tabs, managed by SignalR's backplane.</div>
+      </div>
+      <div class="callout-step">
+        <span class="callout-icon">→</span>
+        <div><strong>Keep-alive</strong> uses <code>.Clients(ids)</code> — reach a specific application instance, after a Redis lookup.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section>
+  <h2>IHubContext — Sending Messages from Outside the Hub</h2>
+  <p>Both controllers use <code>IHubContext&lt;NotificationHub&gt;</code> rather than inheriting from <code>Hub</code>. Why?</p>
+  <p>A <code>Hub</code> instance only exists during a client invocation — SignalR creates it, calls the method, and destroys it. You cannot hold a <code>Hub</code> as a constructor-injected dependency because it has no meaningful existence outside of that narrow window.</p>
+  <p><code>IHubContext&lt;T&gt;</code> is the solution: a singleton service that gives any class access to the <code>Clients</code> surface without needing to be inside a hub. Both controllers inject it:</p>
+  <pre><code>// NotificationsController
+public NotificationsController(IHubContext&lt;NotificationHub&gt; hubContext)
+{
+    _hubContext = hubContext;
+}
+
+// KeepAliveController
+public KeepAliveController(
+    IHubContext&lt;NotificationHub&gt; hubContext,
+    IKeepAliveManagementService keepAliveManagementService)
+{
+    _hubContext = hubContext;
+    _keepAliveManagementService = keepAliveManagementService;
+}</code></pre>
+  <p>The pattern is always the same: inject <code>IHubContext&lt;T&gt;</code>, use <code>.Clients</code> to target, call <code>.SendAsync("methodName", payload)</code>.</p>
+  <p>See the <a href="../reference/signalr-hub-patterns.html">SignalR Hub Patterns reference sheet</a> for a compact summary of everything above.</p>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section class="quiz-section">
+  <h2>Check Your Understanding</h2>
+  <p>Click an option to check your answer immediately.</p>
+
+  <div class="quiz-question" data-answer="1">
+    <p class="question-text">1. What is <code>Context.ConnectionId</code> inside a hub method?</p>
+    <div class="quiz-options">
+      <div class="quiz-option">A Guid set by the browser on connect</div>
+      <div class="quiz-option">A unique string SignalR assigns per socket</div>
+      <div class="quiz-option">The JWT subject claim from the token</div>
+      <div class="quiz-option">The applicationId passed via SetApplicationId</div>
+    </div>
+    <div class="feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-answer="2">
+    <p class="question-text">2. Which method fires automatically when a WebSocket drops?</p>
+    <div class="quiz-options">
+      <div class="quiz-option">OnConnectedAsync(exception)</div>
+      <div class="quiz-option">SetApplicationId(applicationId)</div>
+      <div class="quiz-option">OnDisconnectedAsync(exception)</div>
+      <div class="quiz-option">UnSetApplicationId(applicationId)</div>
+    </div>
+    <div class="feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-answer="3">
+    <p class="question-text">3. The <code>NotificationsController</code> never touches Redis. How does it find the right browser?</p>
+    <div class="quiz-options">
+      <div class="quiz-option">It looks up the connectionId from hub state</div>
+      <div class="quiz-option">It broadcasts to the Authenticated Users group</div>
+      <div class="quiz-option">It calls KeepAliveManagementService.GetConnectionIdListAsync</div>
+      <div class="quiz-option">It uses SignalR's .User(userId) routing by JWT subject</div>
+    </div>
+    <div class="feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-answer="1">
+    <p class="question-text">4. Why do controllers inject <code>IHubContext&lt;T&gt;</code> instead of <code>Hub</code>?</p>
+    <div class="quiz-options">
+      <div class="quiz-option">Hub requires an active connection to instantiate</div>
+      <div class="quiz-option">IHubContext&lt;T&gt; sends messages with lower latency</div>
+      <div class="quiz-option">Hub cannot target individual connections by ID</div>
+      <div class="quiz-option">IHubContext&lt;T&gt; automatically handles JWT validation</div>
+    </div>
+    <div class="feedback"></div>
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section class="primary-source">
+  <h2>Go Deeper</h2>
+  <p><strong>Recommended reading:</strong> <a href="https://learn.microsoft.com/en-us/aspnet/core/signalr/hubs" target="_blank">ASP.NET Core SignalR Hubs — Microsoft Docs</a>. The sections on "Send messages from outside a hub" (<code>IHubContext</code>) and "Manage groups" are directly relevant to this service. This is the canonical source for everything covered in this lesson.</p>
+  <p>Also open the <a href="../reference/signalr-hub-patterns.html">SignalR Hub Patterns cheat sheet</a> for a printable reference.</p>
+</section>
+
+</main>
+
+<footer class="lesson-footer">
+  <p class="ask-teacher">Questions about this lesson? <strong>Ask your teacher</strong> — reply in the chat and I'll clarify anything unclear, walk through the source code with you, or dig into any concept further.</p>
+  <p><a href="0003-the-redis-caching-layer.html">Next lesson: The Redis Caching Layer &rarr;</a></p>
+</footer>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

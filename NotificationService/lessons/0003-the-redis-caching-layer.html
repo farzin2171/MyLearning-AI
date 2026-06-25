@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 3: The Application Cache — Notification Service</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<nav class="breadcrumb">
+  <a href="0002-signalr-hubs.html">← Lesson 2</a>
+  &nbsp;&nbsp;|&nbsp;&nbsp; Notification Service &rsaquo; Lesson 3 of 6
+</nav>
+
+<header class="lesson-header">
+  <p class="lesson-number">Lesson 3</p>
+  <h1>The Application Cache</h1>
+  <p class="subtitle">What is stored in Redis, how writes are protected, and what happens when Redis fails</p>
+  <div class="objectives">
+    <p><strong>After this lesson you can:</strong></p>
+    <ul>
+      <li>Describe the exact key/value structure stored in Redis for keep-alive routing</li>
+      <li>Explain why write operations need a distributed lock</li>
+      <li>Trace the code path for a cache read when Redis is unavailable</li>
+    </ul>
+  </div>
+</header>
+
+<main>
+
+<!-- ─────────────────────────────────────────────── -->
+<section>
+  <h2>The Narrative Thread</h2>
+  <p>When a browser calls <code>SetApplicationId(appId)</code> on the hub, execution flows to <code>KeepAliveManagementService.LinkAsync</code>, which calls <code>_notificationCacheManager.SetAsync</code>. This lesson traces exactly what happens inside that cache manager — and what the fallback looks like when Redis is down.</p>
+  <p>This is the layer that makes keep-alive routing possible. Notifications (<code>Clients.User()</code>) never touch it. Only the keep-alive flow does.</p>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section>
+  <h2>What Is Stored and Why</h2>
+  <p>The cache manager stores one record per <code>applicationId</code>. The value is a <em>list</em> of connection identifiers — because multiple users can share the same <code>applicationId</code> (e.g. a shared workstation, or a scenario where the application concept spans users).</p>
+
+  <pre><code>// Key: applicationId as a plain string (Guid.ToString())
+Key:   "efa9b2c1-0c14-4a3b-b9f1-ab27e31b4f2c"
+
+// Value: a JSON array
+Value: [
+  {
+    "connectionId":  "abc123...",
+    "userId":        "user-42",
+    "applicationId": "efa9b2c1-..."
+  }
+]
+
+// TTL: 3600 seconds (1 hour) — set in appsettings.json
+//      persistence:cacheOptions:expiryTimeSpanInSecs</code></pre>
+
+  <p>Every time <code>LinkAsync</code> is called for a <code>userId</code>, it:</p>
+  <ol>
+    <li>Reads the current list from cache</li>
+    <li>Removes any existing entry for that <code>userId</code> (replacing old connections)</li>
+    <li>Appends the new <code>CachedConnectionIdentifier</code></li>
+    <li>Writes the updated list back</li>
+  </ol>
+
+  <p>This read-modify-write pattern is exactly why writes need a distributed lock — which we'll come to in a moment.</p>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section>
+  <h2>The Interface</h2>
+  <p><code>IServiceCacheManager</code> is deliberately minimal — just two methods:</p>
+
+  <pre><code>Task&lt;T&gt; GetAsync&lt;T&gt;(string key)
+Task    SetAsync&lt;T&gt;(string key, T value, TimeSpan timeToLive)</code></pre>
+
+  <p>The interface hides whether the underlying store is Redis, memory, or something else. <code>KeepAliveManagementService</code> only knows about this interface — the hybrid strategy is entirely inside the implementation.</p>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section>
+  <h2>Reading: Two Chances to Succeed</h2>
+  <p>Here is the full <code>GetAsync</code> implementation:</p>
+
+  <pre><code>public async Task&lt;T&gt; GetAsync&lt;T&gt;(string key) where T : class
+{
+    // Fast path: circuit already open — skip Redis entirely
+    if (_circuitBreakerPolicy.CircuitState == CircuitState.Open)
+    {
+        return await FallbackToInMemoryCache&lt;T&gt;(key);
+    }
+
+    try
+    {
+        // Try Redis, wrapped in the circuit breaker
+        var cacheValue = await _circuitBreakerPolicy.ExecuteAsync(
+            async () => await _redisCache.GetStringAsync(key));
+
+        if (cacheValue != null)
+            return Deserialize&lt;T&gt;(cacheValue);
+
+        return default;
+    }
+    catch (Exception)
+    {
+        // Redis threw something — fall back
+        return await FallbackToInMemoryCache&lt;T&gt;(key);
+    }
+}</code></pre>
+
+  <p>There are two routes to the in-memory fallback, not one. The explicit <code>CircuitState.Open</code> check is an <em>early exit</em>: when the circuit is already open, the code never calls <code>ExecuteAsync</code> at all. The <code>catch</code> block handles failures that happen while the circuit is transitioning or closing.</p>
+
+  <p>The in-memory read is also guarded:</p>
+
+  <pre><code>private async Task&lt;T&gt; FallbackToInMemoryCache&lt;T&gt;(string key) where T : class
+{
+    if (_cacheOptions.IsInMemoryCacheEnabled)
+        return await Task.FromResult(_memoryCache.Get&lt;T&gt;(key));
+
+    return null;
+}</code></pre>
+
+  <p>If <code>enableMemoryCacheProvider</code> is <code>false</code> in configuration, the fallback returns <code>null</code> — keep-alive lookups return no connections, and the keep-alive signal goes nowhere. The service degrades gracefully rather than throwing.</p>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section>
+  <h2>Writing: Why a Distributed Lock?</h2>
+  <p>Consider what happens without a lock in a two-instance deployment during <code>LinkAsync</code>:</p>
+
+  <div class="callout">
+    <div class="callout-steps">
+      <div class="callout-step">
+        <span class="callout-icon">①</span>
+        <div>Instance A reads the list: <code>[user-1]</code></div>
+      </div>
+      <div class="callout-step">
+        <span class="callout-icon">②</span>
+        <div>Instance B reads the same list: <code>[user-1]</code></div>
+      </div>
+      <div class="callout-step">
+        <span class="callout-icon">③</span>
+        <div>Instance A writes <code>[user-1, user-42]</code> — adds user-42</div>
+      </div>
+      <div class="callout-step">
+        <span class="callout-icon">④</span>
+        <div>Instance B writes <code>[user-1, user-99]</code> — adds user-99, <strong>overwrites user-42's entry</strong></div>
+      </div>
+    </div>
+  </div>
+
+  <p>Instance B's write clobbers Instance A's work. User-42's connection is lost from the cache — their keep-alive signals stop arriving.</p>
+  <p>The lock prevents this. <code>SetAsync</code> acquires a <em>distributed</em> lock using <a href="https://github.com/samcook/RedLock.net" target="_blank">RedLock.net</a> — a Redis-based locking algorithm. Only one instance can hold the lock at a time:</p>
+
+  <pre><code>var lockKey = key + "_lock";  // e.g. "efa9b2c1-..._lock"
+
+using IRedLock cacheLock = await _redisCache.AcquireLockAsync(
+    lockKey,
+    expiryTimeSpan:  TimeSpan.FromSeconds(30),   // max lock lifetime
+    waitTimeSpan:    TimeSpan.FromSeconds(30),   // how long to wait to acquire
+    retryTimeSpan:   TimeSpan.FromSeconds(5));   // retry interval
+
+if (!cacheLock.IsAcquired)
+    throw new Exception("Could not acquire lock");
+    // ↑ This throw counts as a circuit breaker hit —
+    //   a lock failure can trigger the fallback path</code></pre>
+
+  <p>If the lock cannot be acquired within 30 seconds, the write throws. That exception propagates up to the <code>catch</code> in <code>SetAsync</code>, which falls back to writing the value to the in-memory cache.</p>
+  <p class="aside"><strong>Note:</strong> The lock is not held during the <em>read</em> phase of <code>LinkAsync</code> — only during the write. This is an optimistic pattern: read without a lock, write with one. It means a rare race is still possible (two instances reading before either writes), but the lock ensures their writes don't interleave.</p>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section>
+  <h2>The Circuit Breaker: Three States</h2>
+  <p>The Polly circuit breaker has three states. It is built once in the constructor and shared across all calls:</p>
+
+  <pre><code>_circuitBreakerPolicy = Policy
+    .Handle&lt;Exception&gt;()
+    .CircuitBreakerAsync(
+        exceptionsAllowedBeforeBreaking: 1,   // 1 failure opens the circuit
+        durationOfBreak: TimeSpan.FromSeconds(60),
+        onBreak:  OnCircuitBreak,   // logs "Circuit broken"
+        onReset:  OnCircuitReset);  // logs "Circuit reset"</code></pre>
+
+  <table style="font-family: -apple-system, sans-serif; font-size: 0.875rem; width: 100%; border-collapse: collapse; margin: 1rem 0;">
+    <thead>
+      <tr>
+        <th style="background: var(--accent); color: #fff; padding: 0.5rem 0.75rem; text-align: left;">State</th>
+        <th style="background: var(--accent); color: #fff; padding: 0.5rem 0.75rem; text-align: left;">Trigger</th>
+        <th style="background: var(--accent); color: #fff; padding: 0.5rem 0.75rem; text-align: left;">Behaviour</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border);">Closed</td>
+        <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border);">Normal / after successful probe</td>
+        <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border);">Redis is tried. Exceptions increment the counter.</td>
+      </tr>
+      <tr>
+        <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); background: var(--light);">Open</td>
+        <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); background: var(--light);">1 exception in Closed state</td>
+        <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); background: var(--light);">Redis is bypassed. Explicit check returns fallback immediately. Duration: 60 s.</td>
+      </tr>
+      <tr>
+        <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border);">HalfOpen</td>
+        <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border);">60 s after opening</td>
+        <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border);">One probe request let through. Success → Closed. Failure → back to Open.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>After 1 Redis exception the circuit opens immediately (because <code>exceptionsAllowedBeforeBreaking = 1</code>). This is aggressive. A single transient network blip closes the circuit for 60 seconds. The trade-off is that instability is contained fast — but the service relies on its local memory cache for an entire minute during transient Redis hiccups.</p>
+  <p>See the <a href="../reference/caching-layer.html">Caching Layer reference sheet</a> for a compact summary with all configuration values.</p>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section class="quiz-section">
+  <h2>Check Your Understanding</h2>
+  <p>Click an option to check your answer immediately.</p>
+
+  <div class="quiz-question" data-answer="1">
+    <p class="question-text">1. What format does the cache key take for a connection record?</p>
+    <div class="quiz-options">
+      <div class="quiz-option">The user's JWT subject claim string</div>
+      <div class="quiz-option">The applicationId as a plain Guid string</div>
+      <div class="quiz-option">A composite of userId plus applicationId</div>
+      <div class="quiz-option">The SignalR connection ID assigned per socket</div>
+    </div>
+    <div class="feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-answer="1">
+    <p class="question-text">2. Why does <code>SetAsync</code> acquire a distributed lock before writing?</p>
+    <div class="quiz-options">
+      <div class="quiz-option">To prevent the circuit breaker from interrupting</div>
+      <div class="quiz-option">To stop two instances overwriting simultaneously</div>
+      <div class="quiz-option">To ensure Redis replication has completed first</div>
+      <div class="quiz-option">To block reads while the write is in-flight</div>
+    </div>
+    <div class="feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-answer="2">
+    <p class="question-text">3. When <code>GetAsync</code> detects the circuit is <code>Open</code>, what does it do?</p>
+    <div class="quiz-options">
+      <div class="quiz-option">Throws BrokenCircuitException back to the caller</div>
+      <div class="quiz-option">Retries Redis once after a brief timeout</div>
+      <div class="quiz-option">Reads from the in-memory cache directly</div>
+      <div class="quiz-option">Returns null without checking any cache</div>
+    </div>
+    <div class="feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-answer="1">
+    <p class="question-text">4. What is the default TTL for connection records in the application cache?</p>
+    <div class="quiz-options">
+      <div class="quiz-option">60 seconds — the circuit breaker break duration</div>
+      <div class="quiz-option">3600 seconds — the connection cache expiry time</div>
+      <div class="quiz-option">300 seconds — the Redis instance expiry setting</div>
+      <div class="quiz-option">30 seconds — the distributed lock expiry time</div>
+    </div>
+    <div class="feedback"></div>
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section class="primary-source">
+  <h2>Go Deeper</h2>
+  <p><strong>Recommended reading:</strong> <a href="https://github.com/App-vNext/Polly/wiki/Circuit-Breaker" target="_blank">Polly Circuit Breaker — official wiki</a>. The "Circuit states and transitions" section maps exactly to the three states above. This is the canonical source for understanding how the circuit breaker interacts with <code>ExecuteAsync</code> and why the explicit <code>CircuitState.Open</code> check works the way it does.</p>
+  <p>Also open the <a href="../reference/caching-layer.html">Caching Layer reference sheet</a> for all configuration keys and the read/write paths in compact form.</p>
+</section>
+
+</main>
+
+<footer class="lesson-footer">
+  <p class="ask-teacher">Questions about this lesson? <strong>Ask your teacher</strong> — reply in the chat and I'll walk through the code with you, explain the RedLock algorithm, or go deeper on any part of the circuit breaker behaviour.</p>
+  <p><a href="0004-the-keep-alive-flow.html">Next lesson: The Keep-Alive Flow &rarr;</a></p>
+</footer>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

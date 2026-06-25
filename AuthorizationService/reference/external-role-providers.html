@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reference — External Role Providers</title>
+  <link rel="stylesheet" href="../assets/style.css" />
+  <style>
+    @media print { body { font-size: 11px; } .lesson-container { max-width: 100%; } }
+    .ref-table { width:100%; border-collapse:collapse; font-family:sans-serif; font-size:0.79rem; margin:0.7rem 0 1.2rem; }
+    .ref-table th { text-align:left; padding:0.35rem 0.6rem; border-bottom:2px solid #ddd; font-weight:700; }
+    .ref-table td { padding:0.35rem 0.6rem; border-bottom:1px solid #eee; vertical-align:top; }
+    .ref-table tr:nth-child(even) td { background:#fafaf8; }
+    .safe  { color: #166534; font-weight:700; }
+    .warn  { color: #92400e; font-weight:700; }
+    .bad   { color: #991b1b; font-weight:700; }
+    h2 { margin-top:1.5rem; }
+  </style>
+</head>
+<body>
+<div class="lesson-container">
+
+  <header class="lesson-header">
+    <div class="lesson-meta">Reference · Authorization Service · External Role Providers</div>
+    <h1 class="lesson-title">External Role Providers — Quick Reference</h1>
+    <p class="lesson-subtitle">See <a href="../lessons/0003-external-role-providers.html">Lesson 03</a> for the full walkthrough.</p>
+  </header>
+
+  <h2>Orchestration Rules (ExternalRolesService)</h2>
+  <div class="diagram">Providers sorted by Priority ASC → iterate:
+  non-empty result  →  return immediately (skip remaining)
+  empty result      →  try next provider
+  exception         →  log error, return empty [], STOP (skip remaining)</div>
+
+  <h2>Five Provider Types</h2>
+  <table class="ref-table">
+    <thead><tr><th>Type</th><th>External system</th><th>Returns</th><th>Failure mode</th><th>Required params</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>Claims</code></td>
+        <td>JWT claims (no call)</td>
+        <td>Claim values matching <code>ClaimType</code></td>
+        <td class="safe">Never throws — empty if no match</td>
+        <td><code>ClaimType</code> (defaults to <code>ClaimTypes.Role</code>)</td>
+      </tr>
+      <tr>
+        <td><code>Assistant</code></td>
+        <td>Assistant Management Service<br/><code>GET /api/v2/assistants/{id}/exists</code></td>
+        <td><code>"Assistant"</code> if 200/204</td>
+        <td class="warn">Empty on 404<br/><span class="bad">Throws on other HTTP errors</span></td>
+        <td>None (uses internal token service)</td>
+      </tr>
+      <tr>
+        <td><code>MicrosoftGraph</code></td>
+        <td>Azure AD group membership</td>
+        <td>AD Group <code>DisplayName</code> values</td>
+        <td class="warn">Empty on 404<br/><span class="bad">Throws on other errors</span></td>
+        <td><code>ClientId</code>, <code>ClientSecret</code>, <code>TenantId</code></td>
+      </tr>
+      <tr>
+        <td><code>CustomApi</code></td>
+        <td>Any REST API (configurable)</td>
+        <td><code>securityRoles[].key</code> from JSON response</td>
+        <td class="bad">Throws on missing config, HTTP error, schema mismatch</td>
+        <td><code>ServiceEndpoint</code> + token strategy</td>
+      </tr>
+      <tr>
+        <td><code>Oipa</code></td>
+        <td>OIPA Exposed Computation (SOAP)</td>
+        <td>Role strings from OIPA computation</td>
+        <td class="bad">Throws on missing config or SOAP failure</td>
+        <td><code>Url</code>, <code>Username</code>, <code>Password</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>CustomApi Token Strategies</h2>
+  <table class="ref-table">
+    <thead><tr><th>UseJwtForwarding</th><th>TokenEndpoint set?</th><th>Behaviour</th></tr></thead>
+    <tbody>
+      <tr><td><code>true</code></td><td>–</td><td>Forwards the caller's incoming JWT as Bearer token</td></tr>
+      <tr><td><code>false</code></td><td>Yes</td><td>Fetches token via client credentials (<code>TokenClientId</code> + <code>TokenClientSecret</code>)</td></tr>
+      <tr><td><code>false</code></td><td>No</td><td>Throws — no token available</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Role Name → Access Key Mapping (two levels)</h2>
+  <div class="diagram">Provider.Name (string)
+  → tblExternalRole.ExternalSourceId  (must match exactly, case-sensitive)
+  → tblExternalRoleToRole    → tblRole → tblPermission
+  → tblExternalRoleToPermission → tblPermission
+  → [dbo].[GetUserAccessKeys] returns Permission.Key strings</div>
+
+  <h2>"Why Is This User Denied?" Checklist</h2>
+  <ol style="font-family:sans-serif; font-size:0.82rem; line-height:2;">
+    <li>Check logs for provider exceptions (<code>LogError</code> from <code>ExternalRolesService</code>)</li>
+    <li>Confirm providers are <code>IsActive = 1</code> in <code>tblExternalRoleProvider</code></li>
+    <li>Confirm role name matches <code>tblExternalRole.ExternalSourceId</code> exactly (case!)</li>
+    <li>Confirm ExternalRole has active mappings in <code>tblExternalRoleToRole</code> / <code>tblExternalRoleToPermission</code></li>
+    <li>Clear stale cache: <code>DELETE /api/v1/cache/permissions/{userId}</code></li>
+  </ol>
+
+  <footer class="lesson-footer" style="margin-top:1.5rem;">
+    <div>Reference card · Authorization Service · Updated 2026-06-22 · <a href="../reference/auth-request-flow.html">← Request Flow ref</a></div>
+  </footer>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lesson 03 — External Role Providers</title>
+  <link rel="stylesheet" href="../assets/style.css" />
+  <style>
+    .provider-card {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem 1.2rem;
+      margin-bottom: 1.2rem;
+    }
+    .provider-card h3 {
+      margin: 0 0 0.4rem;
+      font-size: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+    .provider-card p { margin-bottom: 0.4rem; }
+    .badge {
+      display: inline-block;
+      font-family: sans-serif;
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 0.15em 0.5em;
+      border-radius: 3px;
+    }
+    .badge-safe  { background: var(--success-bg);  color: var(--success); }
+    .badge-throw { background: var(--error-bg);    color: var(--error); }
+    .badge-mixed { background: var(--warn-bg);     color: var(--warn); }
+
+    .pill-row { display:flex; gap:0.4rem; flex-wrap:wrap; margin: 0.3rem 0 0.6rem; }
+    .pill {
+      font-family: sans-serif;
+      font-size: 0.75rem;
+      padding: 0.2em 0.6em;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--code-bg);
+    }
+
+    .mapping-diagram {
+      font-family: var(--mono);
+      font-size: 0.82em;
+      line-height: 1.6;
+      background: #f8f9fa;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.2rem 1.5rem;
+      margin: 1.2rem 0;
+      overflow-x: auto;
+      white-space: pre;
+    }
+
+    .priority-example {
+      font-family: sans-serif;
+      font-size: 0.84rem;
+    }
+    .priority-example table { border-collapse: collapse; width: 100%; margin: 0.8rem 0; }
+    .priority-example th { text-align:left; padding: 0.35rem 0.7rem; border-bottom: 2px solid #ddd; }
+    .priority-example td { padding: 0.35rem 0.7rem; border-bottom: 1px solid #eee; }
+  </style>
+</head>
+<body>
+<div class="lesson-container">
+
+  <!-- ── Header ─────────────────────────────────────────── -->
+  <header class="lesson-header">
+    <div class="lesson-meta">Lesson 03 · Authorization Service · External Role Providers</div>
+    <h1 class="lesson-title">External Role Providers</h1>
+    <p class="lesson-subtitle">Where user roles come from, how the service chooses between them, and what goes wrong when they fail.</p>
+  </header>
+
+  <p>
+    In <a href="0002-the-authorization-request-flow.html">Lesson 02</a> you saw that on a cache miss,
+    the service calls <code>ExternalRolesService.GetRolesForUserAsync()</code> before it can touch the database.
+    That call is the subject of this lesson.
+    It is the layer responsible for most "why is this user denied?" puzzles in production.
+  </p>
+
+  <!-- ── What an External Role Provider does ───────────── -->
+  <h2>What a Provider Does</h2>
+
+  <p>
+    A provider answers one question: <strong>what role names does this user have in an external system?</strong>
+    It takes a user identity and returns a list of <code>ExternalRoleInformation</code> objects —
+    each carrying a <code>Name</code> string that must later match a configured record in
+    <code>tblExternalRole</code>.
+  </p>
+
+  <div class="callout key">
+    <div class="callout-title">The name must match exactly</div>
+    <p>
+      If a provider returns the string <code>"Underwriter"</code> but the database has
+      <code>ExternalRole.ExternalSourceId = "underwriter"</code> (lowercase),
+      the stored procedure won't find a match and the user gets no access from that role.
+      Case sensitivity in provider responses is a common source of subtle bugs.
+    </p>
+  </div>
+
+  <!-- ── The Five Providers ─────────────────────────────── -->
+  <h2>The Five Provider Types</h2>
+
+  <div class="provider-card">
+    <h3>Claims <span class="badge badge-safe">Never throws</span></h3>
+    <div class="pill-row">
+      <span class="pill">type: "Claims"</span>
+      <span class="pill">No external call</span>
+      <span class="pill">ClaimType param</span>
+    </div>
+    <p>Reads roles directly from the <strong>JWT claims</strong> already in the request.
+    Filters claims by the configured <code>ClaimType</code> (defaults to
+    <code>System.Security.Claims.ClaimTypes.Role</code>) and returns each matching claim value as a role name.</p>
+    <p><strong>Failure mode:</strong> If no claims match the type, returns an empty list — it never throws.
+    The safest provider to configure; has zero external dependencies.</p>
+  </div>
+
+  <div class="provider-card">
+    <h3>Assistant <span class="badge badge-throw">Throws on unexpected HTTP</span></h3>
+    <div class="pill-row">
+      <span class="pill">type: "Assistant"</span>
+      <span class="pill">Assistant Management Service</span>
+      <span class="pill">No config params</span>
+    </div>
+    <p>Calls <code>GET /api/v2/assistants/{externalUserId}/exists</code> on the Assistant Management Service.
+    Returns a single role named <code>"Assistant"</code> if the user exists there (HTTP 200/204).
+    Returns empty on 404 (user is not an assistant).</p>
+    <p><strong>Failure mode:</strong> Any other HTTP status throws an exception — which stops the entire provider cascade.</p>
+  </div>
+
+  <div class="provider-card">
+    <h3>MicrosoftGraph <span class="badge badge-mixed">Empty on 404, throws otherwise</span></h3>
+    <div class="pill-row">
+      <span class="pill">type: "MicrosoftGraph"</span>
+      <span class="pill">Azure AD / Entra ID</span>
+      <span class="pill">ClientId, ClientSecret, TenantId</span>
+    </div>
+    <p>Calls the Microsoft Graph API to get the user's <strong>Azure AD group memberships</strong>.
+    Returns each group's <code>DisplayName</code> as the role name.</p>
+    <p><strong>Failure mode:</strong> 404 (user not found in Azure AD) returns empty.
+    Any other Graph API error or network failure throws, stopping the cascade.</p>
+  </div>
+
+  <div class="provider-card">
+    <h3>CustomApi <span class="badge badge-throw">Throws on HTTP failure or bad schema</span></h3>
+    <div class="pill-row">
+      <span class="pill">type: "CustomApi"</span>
+      <span class="pill">Any REST API</span>
+      <span class="pill">ServiceEndpoint + token strategy</span>
+    </div>
+    <p>Makes a GET request to a configurable <code>ServiceEndpoint</code> URL (may include a
+    <code>{userId}</code> placeholder). Expects a JSON response matching:
+    <code>{"securityRoles": [{"key": "...", "description": "..."}]}</code></p>
+    <p>Token strategy: either <strong>JWT forwarding</strong> (the incoming user token is forwarded)
+    or <strong>client credentials</strong> (fetches a new token using <code>TokenClientId</code> + <code>TokenClientSecret</code>).</p>
+    <p><strong>Failure mode:</strong> Throws on missing config, HTTP errors, or JSON schema mismatch.</p>
+  </div>
+
+  <div class="provider-card">
+    <h3>OIPA <span class="badge badge-throw">Throws on missing config or SOAP failure</span></h3>
+    <div class="pill-row">
+      <span class="pill">type: "Oipa"</span>
+      <span class="pill">OIPA Exposed Computation (SOAP)</span>
+      <span class="pill">Url, Username, Password, ComputationId</span>
+    </div>
+    <p>Calls the OIPA insurance platform's SOAP web service using computation ID <code>"API_M037"</code>
+    (configurable). The service returns a list of role strings specific to the insurance system.</p>
+    <p><strong>Failure mode:</strong> Throws if <code>Url</code>, <code>Username</code>, or <code>Password</code>
+    are missing, or if the SOAP call fails.</p>
+  </div>
+
+  <!-- ── Priority and First-Match-Wins ─────────────────── -->
+  <h2>How the Service Chooses: Priority + First-Match-Wins</h2>
+
+  <p>
+    <code>ExternalRolesService</code> loads all <em>active</em> providers for the tenant,
+    <strong>sorts them by <code>Priority</code> ascending</strong> (lower number = runs first),
+    then iterates:
+  </p>
+
+  <div class="callout key">
+    <div class="callout-title">The three rules of provider execution</div>
+    <ol style="margin:0.4rem 0 0 1.2rem;">
+      <li><strong>Non-empty result → return immediately</strong> (remaining providers are skipped)</li>
+      <li><strong>Empty result → try next provider</strong></li>
+      <li><strong>Exception → log error, return empty, stop</strong> (remaining providers are skipped)</li>
+    </ol>
+  </div>
+
+  <p>This is the exact loop from the code:</p>
+  <pre><code>foreach (var provider in providers.Where(x => x.IsActive).OrderBy(x => x.Priority))
+{
+    try
+    {
+        var roles = await provider.GetRolesForUserAsync(parameters, providerId);
+        if (roles.Any())
+            return roles;        // ← stop: first winner takes all
+    }
+    catch (Exception ex)
+    {
+        _logger.LogError(ex, "Exception occurred...");
+        return new List&lt;ExternalRoleInformation&gt;();  // ← stop: exception = empty
+    }
+}
+return new List&lt;ExternalRoleInformation&gt;();  // ← all exhausted</code></pre>
+
+  <h3>A worked example</h3>
+  <div class="priority-example">
+    <p>Suppose a tenant has three active providers:</p>
+    <table>
+      <thead><tr><th>Priority</th><th>Type</th><th>What happens for User A</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Claims</td><td>Returns empty (user has no matching claims)</td></tr>
+        <tr><td>2</td><td>MicrosoftGraph</td><td>Returns ["Underwriter", "BasicAccess"] ← <strong>non-empty → return immediately</strong></td></tr>
+        <tr><td>3</td><td>OIPA</td><td><em>Never called</em></td></tr>
+      </tbody>
+    </table>
+    <p>Now change the scenario: MicrosoftGraph throws an exception.</p>
+    <table>
+      <thead><tr><th>Priority</th><th>Type</th><th>What happens</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Claims</td><td>Returns empty</td></tr>
+        <tr><td>2</td><td>MicrosoftGraph</td><td><strong>Throws → log error, return empty [ ]</strong></td></tr>
+        <tr><td>3</td><td>OIPA</td><td><em>Never called — exception stopped the cascade</em></td></tr>
+      </tbody>
+    </table>
+    <p>The result: User A gets <em>zero access</em>, even though OIPA could have resolved their roles.</p>
+  </div>
+
+  <div class="callout warn">
+    <div class="callout-title">This is the most dangerous production behaviour</div>
+    <p>
+      An intermittent failure in a higher-priority provider silently denies <em>all</em> users
+      for whom that provider throws — even if a lower-priority provider would have succeeded.
+      When debugging unexpected Deny results, always check logs for provider exceptions first.
+    </p>
+  </div>
+
+  <!-- ── The Two-Level Mapping ──────────────────────────── -->
+  <h2>How Role Names Become Access Keys: The Two-Level Mapping</h2>
+
+  <p>
+    A provider returning <code>"Underwriter"</code> doesn't directly grant permissions.
+    There is a two-level indirection through the database:
+  </p>
+
+  <div class="mapping-diagram">Provider returns Name = "Underwriter"
+         │
+         ▼
+[tblExternalRole]
+  ExternalSourceId = "Underwriter" (matched by stored proc)
+  TenantId = ...
+         │
+         ├──[tblExternalRoleToRole]──────────────────────────────────────────┐
+         │  ExternalRoleId → PolicyRoleId                                    │
+         │                                                                   ▼
+         │                                             [tblRole] → [tblPolicyRole] → [tblPermission]
+         │
+         └──[tblExternalRoleToPermission]────────────────────────────────────┐
+            ExternalRoleId → PolicyPermissionId                             │
+                                                                            ▼
+                                                                [tblPermission] → Permission.Key
+                                                                            │
+                                                                            ▼
+                                               Stored proc returns: ["policy.submit", "dashboard.view", ...]</div>
+
+  <p>
+    The stored procedure <code>[dbo].[GetUserAccessKeys]</code> receives the role names as a CSV string
+    and walks this graph entirely in SQL, returning the flat list of permission key strings.
+  </p>
+
+  <div class="callout info">
+    <div class="callout-title">What this means for configuration</div>
+    <p>
+      Adding a new external provider is not enough. For a role that provider returns to grant access,
+      you must also create an <code>ExternalRole</code> record in the database with a matching
+      <code>ExternalSourceId</code>, and attach it to at least one internal Role or Permission via
+      the junction tables.
+    </p>
+  </div>
+
+  <!-- ── Debugging Guide ───────────────────────────────── -->
+  <h2>Debugging: "Why Is This User Denied?"</h2>
+
+  <p>When a user gets Deny unexpectedly, work through this checklist:</p>
+
+  <ol style="font-family: sans-serif; font-size: 0.9rem; line-height: 1.8;">
+    <li>
+      <strong>Check for provider exceptions in the logs.</strong>
+      Look for <code>LogError</code> from <code>ExternalRolesService</code>.
+      An exception in any provider stops the cascade and returns empty.
+    </li>
+    <li>
+      <strong>Check which providers are active for the tenant</strong> (query <code>tblExternalRoleProvider</code> where <code>TenantId = ? AND IsActive = 1</code>).
+      A deactivated provider silently contributes nothing.
+    </li>
+    <li>
+      <strong>Verify the role name returned by the provider exactly matches an ExternalRole record</strong>
+      (<code>SELECT * FROM tblExternalRole WHERE TenantId = ? AND ExternalSourceId = 'the-name'</code>).
+      Case mismatch here is silent — no error, just no permissions.
+    </li>
+    <li>
+      <strong>Check the ExternalRole has active mappings</strong>
+      (<code>tblExternalRoleToRole</code> or <code>tblExternalRoleToPermission</code> with <code>IsActive = 1</code>).
+      A mapped role/permission that was deactivated gives nothing.
+    </li>
+    <li>
+      <strong>Check the cache.</strong> If the deny happened just after a permission change,
+      the user's old key list may still be cached. Call
+      <code>DELETE /api/v1/cache/permissions/{userId}</code> to force recomputation.
+    </li>
+  </ol>
+
+  <!-- ── Quiz ───────────────────────────────────────────── -->
+  <h2>Check Your Understanding</h2>
+  <div class="quiz">
+    <div class="quiz-title">Retrieval practice — answer from memory first</div>
+
+    <div class="quiz-q">
+      <p>1. A tenant has two providers: Claims (priority 1) and MicrosoftGraph (priority 2). For User A, Claims returns empty and MicrosoftGraph returns two roles. What roles does the evaluation use?</p>
+      <button class="quiz-option" data-correct="false">
+        No roles — Claims returned empty so the cascade stops
+      </button>
+      <button class="quiz-option" data-correct="false">
+        Roles from both providers, merged into one list
+      </button>
+      <button class="quiz-option" data-correct="true"
+        data-explanation="✓ Correct. An empty result means 'try the next provider'. MicrosoftGraph runs and returns two roles — non-empty, so those are returned immediately.">
+        Two roles from MicrosoftGraph — empty result triggers fallthrough
+      </button>
+      <button class="quiz-option" data-correct="false">
+        Two roles from MicrosoftGraph plus any claims already in the JWT
+      </button>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-q">
+      <p>2. MicrosoftGraph (priority 1) throws a network exception. CustomApi (priority 2) is configured and healthy. What does the user receive?</p>
+      <button class="quiz-option" data-correct="false">
+        Roles from CustomApi — exceptions fall through to the next provider
+      </button>
+      <button class="quiz-option" data-correct="true"
+        data-explanation="✓ Correct. An exception — unlike an empty result — stops the cascade immediately. CustomApi is never called. The user gets an empty role list and therefore Deny.">
+        No roles — an exception stops the cascade; CustomApi is never called
+      </button>
+      <button class="quiz-option" data-correct="false">
+        No roles — the service throws an HTTP 500 to the caller
+      </button>
+      <button class="quiz-option" data-correct="false">
+        Roles from CustomApi after a short retry delay and backoff
+      </button>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-q">
+      <p>3. A provider returns the role name <code>"Advisor"</code>. The database has an ExternalRole with <code>ExternalSourceId = "advisor"</code> (lowercase). What access does the user get from this role?</p>
+      <button class="quiz-option" data-correct="false">
+        Full access — the stored procedure normalises role names to lowercase
+      </button>
+      <button class="quiz-option" data-correct="true"
+        data-explanation="✓ Correct. The stored procedure receives 'Advisor' as a CSV string and attempts a case-sensitive match against ExternalSourceId. 'Advisor' ≠ 'advisor' — no match is found and no access keys are returned.">
+        No access — the name mismatch means the stored proc finds no matching record
+      </button>
+      <button class="quiz-option" data-correct="false">
+        Partial access — the role is found but only active mappings are applied
+      </button>
+      <button class="quiz-option" data-correct="false">
+        No access — the role is valid but must be flagged IsActive to be used
+      </button>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-q">
+      <p>4. You've added a new MicrosoftGraph External Role Provider and confirmed it returns the group <code>"ComplianceOfficers"</code> for a user. But the user is still denied. What is the most likely missing step?</p>
+      <button class="quiz-option" data-correct="false">
+        The provider priority must be set to 1 to take effect in production
+      </button>
+      <button class="quiz-option" data-correct="false">
+        The user's Redis cache must be cleared before the new provider applies
+      </button>
+      <button class="quiz-option" data-correct="true"
+        data-explanation="✓ Correct. Providers only return role names. Those names must match an ExternalRole record (ExternalSourceId = 'ComplianceOfficers') with active mappings to internal roles or permissions. Without that database record, the stored proc finds nothing.">
+        No ExternalRole record with ExternalSourceId matching 'ComplianceOfficers' exists
+      </button>
+      <button class="quiz-option" data-correct="false">
+        The Claims provider at higher priority is overriding with an empty result
+      </button>
+      <div class="quiz-feedback"></div>
+    </div>
+
+  </div>
+
+  <!-- ── What's Next ─────────────────────────────────────── -->
+  <h2>What's Next</h2>
+  <p>
+    Lesson 04 will cover the <strong>Policy → Role → Permission hierarchy</strong> in depth:
+    how to read it, how parent-child inheritance works, and how to predict exactly which access keys
+    a given policy assignment will produce. That knowledge directly enables you to design new policies
+    and audit existing ones.
+  </p>
+
+  <!-- ── Reference ──────────────────────────────────────── -->
+  <p>
+    See the <a href="../reference/external-role-providers.html">External Role Providers reference card</a>
+    for a compact summary of all five types, their parameters, and failure modes.
+  </p>
+
+  <!-- ── Primary Source ─────────────────────────────────── -->
+  <h2>Primary Source</h2>
+  <p>
+    Read <code>ExternalRolesService.cs</code> — it is short (under 60 lines) but contains the
+    entire orchestration logic. Pay attention to the <code>catch</code> block: the comment says
+    "Exception occurred" but the behaviour (return empty immediately) is critical and easy to miss
+    at a glance.
+    File: <code>src/Equisoft.AuthorizationService.Services/V1/Services/ExternalRole/ExternalRolesService.cs</code>
+  </p>
+
+  <!-- ── Footer ─────────────────────────────────────────── -->
+  <footer class="lesson-footer">
+    <div>
+      Lesson 03 of the Authorization Service series · 2026-06-22 ·
+      <a href="0002-the-authorization-request-flow.html">← Lesson 02</a>
+    </div>
+    <div class="ask-teacher">
+      <strong>Questions?</strong> Ask your Claude Code agent anything unclear.
+      Good prompts: "Show me what the CustomApi JSON schema looks like",
+      "What happens if two providers return the same role name?", or
+      "How do I configure a new OIPA provider for a tenant?"
+    </div>
+  </footer>
+
+</div>
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 18 — Matrix Strategy: Run One Job Across Many Configurations</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    /* ── Lesson-specific ────────────────────────────────────── */
+    .matrix-visual {
+      display: grid;
+      gap: 0.6rem;
+      margin: 1.25rem 0;
+    }
+    .matrix-row {
+      display: flex;
+      align-items: stretch;
+      gap: 0.6rem;
+    }
+    .matrix-label {
+      width: 7rem;
+      flex-shrink: 0;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      padding-right: 0.5rem;
+    }
+    .matrix-job {
+      flex: 1;
+      background: var(--accent);
+      color: white;
+      border-radius: 4px;
+      padding: 0.45em 0.75em;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      text-align: center;
+    }
+    .matrix-job.success { background: var(--success); }
+    .matrix-job.warn    { background: var(--warn); }
+    .matrix-job.muted   { background: var(--code-bg); color: var(--text-muted); border: 1px solid var(--border); }
+
+    /* Callouts */
+    .callout {
+      padding: 0.9rem 1.1rem;
+      border-radius: 6px;
+      margin: 1rem 0;
+      font-size: 0.93rem;
+      border-left: 4px solid;
+    }
+    .callout.info  { background: #e8f4fd; border-color: var(--accent);  color: #003f6b; }
+    .callout.warn  { background: #fff8e1; border-color: var(--warn);    color: #5a3a00; }
+    .callout.ok    { background: #e6f4ea; border-color: var(--success);  color: #1a4a1a; }
+
+    /* Key-value anatomy */
+    .kv-box {
+      background: var(--code-bg);
+      border-radius: 6px;
+      padding: 1rem 1.25rem;
+      margin: 0.75rem 0;
+      font-family: var(--font-mono);
+      font-size: 0.88rem;
+    }
+    .kv-key   { color: #0078d4; font-weight: 600; }
+    .kv-value { color: #107c10; }
+    .kv-var   { color: #c17f24; font-weight: 600; }
+
+    /* Concept grid */
+    .concept-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin: 1.1rem 0;
+    }
+    @media (max-width: 600px) { .concept-grid { grid-template-columns: 1fr; } }
+    .concept-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1rem 1.1rem;
+    }
+    .concept-box h3 {
+      font-size: 0.93rem;
+      font-weight: 700;
+      margin-bottom: 0.4rem;
+    }
+    .concept-box p {
+      font-size: 0.88rem;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+<main>
+
+  <!-- ── HEADER ─────────────────────────────────────────────── -->
+  <header class="lesson-header">
+    <p class="breadcrumb">Azure CI/CD · Lesson 18</p>
+    <h1>Matrix Strategy: One Job, Many Configurations</h1>
+    <p style="color:var(--text-muted); margin-top:0.5rem;">
+      A matrix fans out one job definition into multiple parallel runs — each with a
+      different value from your matrix. Test on Node 18 and Node 20 simultaneously.
+      Test on Linux and Windows. Run five browser configs at once.
+    </p>
+  </header>
+
+  <!-- ── WHAT A MATRIX IS ───────────────────────────────────── -->
+  <section style="margin-bottom:2rem;">
+    <h2 style="margin-bottom:0.75rem;">What the matrix does</h2>
+    <p>
+      Without a matrix you write one job, it runs once. With a matrix, Azure Pipelines
+      <strong>clones the job</strong> once per matrix entry and sets a different variable
+      in each clone. The jobs run in parallel (up to <code>maxParallel</code>).
+    </p>
+
+    <div class="matrix-visual">
+      <div class="matrix-row">
+        <div class="matrix-label">node_18</div>
+        <div class="matrix-job success">Build &amp; Test · Node 18 · ✓</div>
+      </div>
+      <div class="matrix-row">
+        <div class="matrix-label">node_20</div>
+        <div class="matrix-job success">Build &amp; Test · Node 20 · ✓</div>
+      </div>
+      <div class="matrix-row">
+        <div class="matrix-label">node_22</div>
+        <div class="matrix-job warn">Build &amp; Test · Node 22 · ✗ (failing)</div>
+      </div>
+    </div>
+
+    <p>
+      Each row is the <em>same</em> job definition. The only difference is the value of
+      <code>$(nodeVersion)</code>. You write the job once; Azure runs it three times.
+    </p>
+  </section>
+
+  <!-- ── MINIMAL EXAMPLE ────────────────────────────────────── -->
+  <section style="margin-bottom:2rem;">
+    <h2 style="margin-bottom:0.75rem;">Minimal example: Node.js version matrix</h2>
+
+    <pre><code>jobs:
+  - job: TestMatrix
+    displayName: 'Test on Node.js'
+    pool:
+      vmImage: 'ubuntu-latest'
+
+    strategy:
+      matrix:
+        node_18:
+          nodeVersion: '18.x'
+        node_20:
+          nodeVersion: '20.x'
+        node_22:
+          nodeVersion: '22.x'
+      maxParallel: 3          # all three run at the same time
+
+    steps:
+      - checkout: self
+        fetchDepth: 0
+
+      - task: NodeTool@0
+        displayName: 'Install Node.js $(nodeVersion)'
+        inputs:
+          versionSpec: $(nodeVersion)   # ← matrix variable
+
+      - task: Npm@1
+        displayName: 'npm ci'
+        inputs:
+          command: 'ci'
+
+      - task: Npm@1
+        displayName: 'npm test'
+        inputs:
+          command: 'custom'
+          customCommand: 'test -- --ci --watchAll=false'</code></pre>
+
+    <div class="callout info">
+      <strong>Matrix keys become job names.</strong> Azure Pipelines names each cloned job
+      <code>TestMatrix node_18</code>, <code>TestMatrix node_20</code>, etc. — derived from
+      the matrix key. Use underscores or alphanumerics only; hyphens in keys can cause
+      display issues.
+    </div>
+  </section>
+
+  <!-- ── ANATOMY ────────────────────────────────────────────── -->
+  <section style="margin-bottom:2rem;">
+    <h2 style="margin-bottom:0.75rem;">Matrix anatomy</h2>
+
+    <div class="kv-box">
+      strategy:<br>
+      &nbsp;&nbsp;matrix:<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;<span class="kv-key">node_18</span>:&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--text-muted); font-weight:normal;"># ← job-suffix key (becomes part of the job name)</span><br>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="kv-var">nodeVersion</span>: <span class="kv-value">'18.x'</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--text-muted); font-weight:normal;"># ← variable set in this leg, readable as $(nodeVersion)</span><br>
+      &nbsp;&nbsp;&nbsp;&nbsp;<span class="kv-key">node_20</span>:<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="kv-var">nodeVersion</span>: <span class="kv-value">'20.x'</span><br>
+      &nbsp;&nbsp;<span style="color:#a4262c;">maxParallel</span>: 3&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--text-muted); font-weight:normal;"># ← cap on concurrency (omit = no cap)</span>
+    </div>
+
+    <div class="concept-grid">
+      <div class="concept-box">
+        <h3>Matrix key (e.g. <code>node_18</code>)</h3>
+        <p>
+          Becomes the job-name suffix: the full job name is
+          <code>TestMatrix node_18</code>. Used for display and in downstream
+          <code>dependsOn</code> references. Choose descriptive, lowercase names.
+        </p>
+      </div>
+      <div class="concept-box">
+        <h3>Matrix property (e.g. <code>nodeVersion</code>)</h3>
+        <p>
+          A variable that is set only in that leg of the matrix.
+          Reference it with <code>$(nodeVersion)</code> exactly as any other
+          pipeline variable — in task inputs, scripts, or conditions.
+        </p>
+      </div>
+      <div class="concept-box">
+        <h3><code>maxParallel</code></h3>
+        <p>
+          Maximum number of matrix legs that run concurrently.
+          <code>maxParallel: 1</code> makes them run sequentially —
+          useful when legs write to shared test data (as in the
+          Applications.Apply nightly matrix you saw in Lesson 12).
+        </p>
+      </div>
+      <div class="concept-box">
+        <h3>Multiple variables per leg</h3>
+        <p>
+          Each key can define any number of variables. A cross-platform leg
+          could set both <code>nodeVersion</code> and <code>vmImage</code>,
+          giving you an implicit cross-product.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── MULTI-VARIABLE MATRIX ──────────────────────────────── -->
+  <section style="margin-bottom:2rem;">
+    <h2 style="margin-bottom:0.75rem;">Multi-variable legs: OS × Node cross-matrix</h2>
+
+    <pre><code>strategy:
+  matrix:
+    linux_node20:
+      vmImage: 'ubuntu-latest'
+      nodeVersion: '20.x'
+    windows_node20:
+      vmImage: 'windows-latest'
+      nodeVersion: '20.x'
+    linux_node22:
+      vmImage: 'ubuntu-latest'
+      nodeVersion: '22.x'
+  maxParallel: 3
+
+pool:
+  vmImage: $(vmImage)   # ← matrix variable used in pool definition
+
+steps:
+  - task: NodeTool@0
+    inputs:
+      versionSpec: $(nodeVersion)</code></pre>
+
+    <div class="callout warn">
+      <strong>Explicit cross-products, not automatic.</strong> Azure Pipelines does not
+      automatically compute 2×2 matrices. You define each leg explicitly. This is verbose but
+      intentional — you often want to test <em>specific</em> combinations, not all possible ones.
+      An 18 × 3 auto-matrix would create 54 jobs; you usually want fewer.
+    </div>
+  </section>
+
+  <!-- ── EXCLUDING LEGS & CONDITIONALS ─────────────────────── -->
+  <section style="margin-bottom:2rem;">
+    <h2 style="margin-bottom:0.75rem;">Conditional legs with matrix variables</h2>
+    <p>
+      You can use matrix variables in <code>condition:</code> expressions, allowing
+      specific steps to only run in certain legs:
+    </p>
+    <pre><code>steps:
+  - script: npm run test:coverage
+    displayName: 'Coverage report (LTS only)'
+    condition: eq(variables['nodeVersion'], '20.x')   # ← only on the Node 20 leg
+
+  - task: PublishCodeCoverageResults@2
+    displayName: 'Publish coverage'
+    condition: eq(variables['nodeVersion'], '20.x')</code></pre>
+
+    <div class="callout ok">
+      This is a common pattern: run the full test suite on all Node versions to catch
+      compatibility issues, but only publish the coverage report once (from the
+      primary/LTS leg). Publishing from every leg would create duplicate artifacts and
+      inflate costs.
+    </div>
+  </section>
+
+  <!-- ── DOWNSTREAM DEPENDSON ──────────────────────────────── -->
+  <section style="margin-bottom:2rem;">
+    <h2 style="margin-bottom:0.75rem;">Depending on a matrix job downstream</h2>
+    <p>
+      A later stage or job that needs <em>all matrix legs to pass</em> uses the job name
+      without the suffix:
+    </p>
+    <pre><code>stages:
+  - stage: Test
+    jobs:
+      - job: TestMatrix
+        strategy:
+          matrix:
+            node_18: { nodeVersion: '18.x' }
+            node_20: { nodeVersion: '20.x' }
+        ...
+
+  - stage: Deploy
+    dependsOn: Test          # waits for ALL TestMatrix legs to complete
+    condition: succeeded()   # only proceeds if ALL legs passed
+    jobs:
+      - deployment: DeployToDev
+        ...</code></pre>
+
+    <div class="callout info">
+      <code>dependsOn: Test</code> refers to the <em>stage</em>, which completes only when all
+      jobs inside it (including all matrix legs) have finished. If any single matrix leg fails,
+      the stage fails and Deploy is blocked. This is the correct behavior — you don't want to
+      deploy code that failed on Node 18.
+    </div>
+  </section>
+
+  <!-- ── REAL EXAMPLE: APPLICATIONS.APPLY ─────────────────── -->
+  <section style="margin-bottom:2rem;">
+    <h2 style="margin-bottom:0.75rem;">Real example: the nightly browser matrix (from Lesson 12)</h2>
+    <p>
+      You saw the Applications.Apply nightly pipeline use a matrix for 8 device/browser
+      combos in Lesson 12. Now you can read exactly what it was doing:
+    </p>
+    <pre><code>strategy:
+  matrix:
+    chromium_desktop:
+      DEVICE_NAME: 'Desktop Chrome'
+    chromium_tablet:
+      DEVICE_NAME: 'Galaxy S8+'
+    firefox_desktop:
+      DEVICE_NAME: 'Desktop Firefox'
+    # ... 5 more entries
+  maxParallel: 1   # sequential — shared Dev environment, concurrent writes would conflict
+
+steps:
+  - task: DotNetCoreCLI@2
+    inputs:
+      command: 'test'
+      arguments: >-
+        --filter "Category=Regression"
+        --logger "trx;LogFileName=results-$(DEVICE_NAME).trx"
+    env:
+      DEVICE_NAME: $(DEVICE_NAME)   # matrix variable injected as env var into test runner</code></pre>
+  </section>
+
+  <!-- ── QUIZ ──────────────────────────────────────────────── -->
+  <section style="margin-top:2.5rem;">
+    <h2 style="margin-bottom:1rem;">Check your understanding</h2>
+    <div id="quiz-container"></div>
+  </section>
+
+  <!-- ── PRIMARY SOURCE ─────────────────────────────────────── -->
+  <section class="primary-source" style="margin-top:2.5rem; padding:1.25rem; background:var(--highlight); border-radius:8px;">
+    <h3 style="margin-bottom:0.5rem;">Primary source</h3>
+    <p>
+      <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/yaml-schema/jobs-job-strategy" target="_blank">
+        jobs.job.strategy definition — Azure Pipelines YAML schema (Microsoft Learn)
+      </a>
+    </p>
+    <p style="font-size:0.9rem; color:var(--text-muted); margin-top:0.5rem;">
+      Covers <code>matrix</code>, <code>maxParallel</code>, <code>parallel</code> (fixed fan-out),
+      and the <code>runonce</code> strategy. Also documents the
+      <code>System.JobPositionInPhase</code> and <code>System.TotalJobsInPhase</code>
+      variables available inside each matrix leg.
+    </p>
+  </section>
+
+  <p style="margin-top:2.5rem; color:var(--text-muted); font-size:0.9rem; border-top:1px solid var(--border); padding-top:1rem;">
+    Questions about matrix conditionals or downstream dependencies? Ask your teacher agent.
+    <br>
+    <a href="0012-playwright-automation-in-pipeline.html">← Lesson 12 (nightly browser matrix in context)</a>
+    &nbsp;·&nbsp;
+    <a href="0016-pipeline-caching.html">← Lesson 16 (add caching to your matrix steps)</a>
+  </p>
+
+</main>
+
+<script src="../assets/quiz.js"></script>
+<script>
+  new Quiz('quiz-container', [
+    {
+      q: 'You define a matrix with 4 legs and `maxParallel: 2`. How do the legs execute?',
+      options: [
+        'All 4 legs run at the same time — maxParallel only limits across stages',
+        'Two legs run, then when one finishes the third starts, keeping 2 concurrent',
+        'Two legs run sequentially, then the remaining two run sequentially after',
+        'The first two legs run; the last two are queued until a full agent pool resets'
+      ],
+      answer: 1,
+      explanation: 'maxParallel is a sliding concurrency cap, not a batch size. Azure runs 2 at a time. The moment one finishes, the next queued leg starts. Total wall-clock time is roughly: (total legs / maxParallel) × (time per leg) — but legs can overlap, so it is more efficient than true batching.'
+    },
+    {
+      q: 'A matrix has keys `node_18` and `node_20`. What are the resulting job names in the pipeline run?',
+      options: [
+        'TestMatrix and TestMatrix — the suffix is hidden in the UI but not in the name',
+        'TestMatrix node_18 and TestMatrix node_20 — key appended to the job name',
+        'node_18 and node_20 — the job name is replaced entirely by the matrix key',
+        'TestMatrix[0] and TestMatrix[1] — Azure uses index notation for matrix legs'
+      ],
+      answer: 1,
+      explanation: 'Azure Pipelines appends the matrix key to the job name with a space. The job defined as `job: TestMatrix` with keys `node_18` and `node_20` produces jobs named `TestMatrix node_18` and `TestMatrix node_20`. These names appear in the run view and are used in dependsOn references.'
+    },
+    {
+      q: 'You want to publish a coverage report only from the `node_20` leg. Which condition is correct?',
+      options: [
+        'condition: eq(variables.nodeVersion, 20) — compare to the integer version number',
+        'condition: eq(variables[\'nodeVersion\'], \'20.x\') — match the string value from the matrix',
+        'condition: eq(variables.matrixKey, \'node_20\') — reference the matrix key directly',
+        'condition: eq(Agent.JobName, \'TestMatrix\') — filter by the base job display name'
+      ],
+      answer: 1,
+      explanation: 'Matrix properties become pipeline variables. Reference them as variables[\'nodeVersion\'] (bracket notation for keys with dots) or variables.nodeVersion (for simple alphanumeric names). Match the exact string value you defined in the matrix — \'20.x\' not 20.'
+    },
+    {
+      q: 'A Deploy stage has `dependsOn: Test` where Test contains a 3-leg matrix. When does Deploy start?',
+      options: [
+        'After any one matrix leg succeeds — Deploy starts as soon as a passing leg is available',
+        'After all three matrix legs complete successfully — the stage waits for all legs',
+        'After the first two legs if maxParallel is 2 — the third runs in parallel with Deploy',
+        'Immediately when the Test stage starts — dependsOn only checks the stage exists'
+      ],
+      answer: 1,
+      explanation: 'dependsOn at the stage level waits for the entire referenced stage to complete, which means all jobs inside it — including every matrix leg. The Deploy stage starts only when all three legs have passed. If any leg fails, the Test stage fails, and Deploy is blocked by the `condition: succeeded()` on it.'
+    }
+  ]);
+</script>
+</body>
+</html>

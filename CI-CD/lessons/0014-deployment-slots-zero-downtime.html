@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 14 — Deployment Slots: Zero-Downtime Deploys on Azure App Service</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    /* ── Lesson-specific overrides ──────────────────────────── */
+    .concept-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 1.25rem;
+    }
+    .concept-box h3 {
+      font-size: 1rem;
+      font-weight: 700;
+      margin-bottom: 0.6rem;
+    }
+    .concept-box p {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+    }
+
+    /* Slot diagram */
+    .slot-diagram {
+      display: flex;
+      gap: 0;
+      margin: 1.5rem 0;
+      font-size: 0.88rem;
+      font-family: var(--font-mono);
+      align-items: stretch;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .slot {
+      flex: 1;
+      padding: 1rem 1.25rem;
+      text-align: center;
+    }
+    .slot.prod    { background: #e6f4ea; border-right: 2px dashed var(--border); }
+    .slot.staging { background: #fff8e1; }
+    .slot-label {
+      font-weight: 700;
+      font-size: 0.95rem;
+      margin-bottom: 0.4rem;
+    }
+    .slot.prod .slot-label    { color: var(--success); }
+    .slot.staging .slot-label { color: var(--warn); }
+    .slot-url {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-bottom: 0.5rem;
+    }
+    .slot-tag {
+      display: inline-block;
+      padding: 0.15em 0.5em;
+      border-radius: 3px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .slot.prod .slot-tag    { background: var(--success); color: white; }
+    .slot.staging .slot-tag { background: var(--warn);    color: white; }
+    .swap-arrow-col {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 0.5rem;
+      font-size: 1.4rem;
+      background: var(--code-bg);
+      color: var(--accent);
+      font-weight: 700;
+      cursor: default;
+    }
+
+    /* Three-step flow */
+    .steps-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 1rem;
+      margin: 1.5rem 0;
+    }
+    .step-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1rem;
+      text-align: center;
+    }
+    .step-card .num {
+      font-size: 1.6rem;
+      font-weight: 800;
+      color: var(--accent);
+      display: block;
+      margin-bottom: 0.3rem;
+    }
+    .step-card h4 {
+      font-size: 0.9rem;
+      font-weight: 700;
+      margin-bottom: 0.35rem;
+    }
+    .step-card p {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+    }
+
+    /* Callouts */
+    .callout {
+      padding: 0.9rem 1.1rem;
+      border-radius: 6px;
+      margin: 1rem 0;
+      font-size: 0.93rem;
+      border-left: 4px solid;
+    }
+    .callout.info  { background: #e8f4fd; border-color: var(--accent);  color: #003f6b; }
+    .callout.warn  { background: #fff8e1; border-color: var(--warn);    color: #5a3a00; }
+    .callout.ok    { background: #e6f4ea; border-color: var(--success);  color: #1a4a1a; }
+
+    /* Diff-style annotation */
+    .diff-add { background: #e6f4ea; padding: 0.15em 0.3em; border-radius: 3px; }
+    .diff-rem { background: #fde8e8; padding: 0.15em 0.3em; border-radius: 3px; }
+
+    /* Sticky-settings table */
+    table.sticky {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+      margin: 0.75rem 0 1.25rem;
+    }
+    table.sticky th {
+      background: var(--code-bg);
+      padding: 0.5rem 0.75rem;
+      text-align: left;
+      font-weight: 600;
+      border-bottom: 2px solid var(--border);
+    }
+    table.sticky td {
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    table.sticky .yes { color: var(--success); font-weight: 700; }
+    table.sticky .no  { color: var(--error);   font-weight: 700; }
+  </style>
+</head>
+<body>
+<main>
+
+  <!-- ── HEADER ─────────────────────────────────────────────── -->
+  <header class="lesson-header">
+    <p class="breadcrumb">Azure CI/CD · Lesson 14</p>
+    <h1>Deployment Slots: Zero-Downtime Deploys</h1>
+    <p style="color:var(--text-muted); margin-top:0.5rem;">
+      Extend your Lesson 13 pipeline with the <strong>deploy → smoke test → swap</strong>
+      pattern. Your users see the new version only after it has warmed up and passed a
+      health check — no 502s, no cold starts in production.
+    </p>
+  </header>
+
+  <!-- ── THE PROBLEM ───────────────────────────────────────── -->
+  <section style="margin-bottom:2rem;">
+    <h2 style="margin-bottom:0.75rem;">The problem with a direct deploy</h2>
+    <p>
+      When <code>AzureWebApp@1</code> deploys directly to the production slot, it does this:
+    </p>
+    <ol style="margin:0.75rem 0 0.75rem 1.5rem; color:var(--text-muted); font-size:0.95rem; line-height:1.8;">
+      <li>Stop the running app</li>
+      <li>Copy the new files over</li>
+      <li>Restart the app</li>
+    </ol>
+    <p>
+      During steps 1–3, any incoming request gets a <strong>502 Bad Gateway</strong>.
+      On .NET 8 with a SQL Server warm-up, that window can be 15–30 seconds. On a busy
+      service, that is real user-facing downtime.
+    </p>
+    <p style="margin-top:0.75rem;">
+      <strong>Deployment slots</strong> solve this by warming the new version up <em>before</em>
+      routing traffic to it.
+    </p>
+  </section>
+
+  <!-- ── WHAT IS A SLOT ─────────────────────────────────────── -->
+  <section style="margin-bottom:2rem;">
+    <h2 style="margin-bottom:0.75rem;">What a deployment slot is</h2>
+    <p>
+      A slot is a <strong>second live instance of your App Service</strong> running in the
+      same App Service Plan. Azure gives you one free slot on Standard tier and above —
+      conventionally named <code>staging</code>.
+    </p>
+
+    <div class="slot-diagram">
+      <div class="slot prod">
+        <div class="slot-label">production</div>
+        <div class="slot-url">my-service-prod.azurewebsites.net</div>
+        <span class="slot-tag">v1.2.0 — live</span>
+      </div>
+      <div class="swap-arrow-col">⇄</div>
+      <div class="slot staging">
+        <div class="slot-label">staging</div>
+        <div class="slot-url">my-service-prod-staging.azurewebsites.net</div>
+        <span class="slot-tag">v1.3.0 — warming up</span>
+      </div>
+    </div>
+
+    <p>
+      You deploy <strong>v1.3.0 to staging</strong>. It starts up, runs migrations, warms its
+      caches, passes your health check. Then Azure executes a <strong>slot swap</strong> — it
+      atomically redirects the production URL to the new instance. v1.3.0 is now live.
+      The old v1.2.0 instance moves to staging, where it can serve as an instant rollback.
+    </p>
+
+    <div class="callout ok">
+      <strong>Rollback in seconds:</strong> The previous version sits in the staging slot. If
+      you discover a bug in production after the swap, you swap back — no new build required.
+    </div>
+  </section>
+
+  <!-- ── THE THREE-STEP PATTERN ─────────────────────────────── -->
+  <section style="margin-bottom:2rem;">
+    <h2 style="margin-bottom:0.75rem;">The three-step pattern</h2>
+    <div class="steps-row">
+      <div class="step-card">
+        <span class="num">1</span>
+        <h4>Deploy to staging slot</h4>
+        <p>New version lands in staging, not production. Users are unaffected.</p>
+      </div>
+      <div class="step-card">
+        <span class="num">2</span>
+        <h4>Smoke test staging</h4>
+        <p>Hit the staging URL's health endpoint. Fail the pipeline if HTTP is not 200.</p>
+      </div>
+      <div class="step-card">
+        <span class="num">3</span>
+        <h4>Swap staging → production</h4>
+        <p>Azure atomically routes production traffic to the warmed-up new version.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── THE YAML UPDATE ────────────────────────────────────── -->
+  <section style="margin-bottom:2rem;">
+    <h2 style="margin-bottom:0.75rem;">Updating your pipeline (the diff from Lesson 13)</h2>
+    <p>
+      Add one variable to your variable group, then replace the <code>DeployProd</code> job steps.
+      Everything else in your Lesson 13 pipeline stays the same.
+    </p>
+
+    <h3 style="margin: 1rem 0 0.5rem;">Variable group addition</h3>
+    <p style="color:var(--text-muted); font-size:0.92rem; margin-bottom:0.5rem;">
+      In Pipelines → Library → <code>my-service-vars</code>, add:
+    </p>
+    <pre><code>resourceGroupName   = my-resource-group    ← the RG containing your App Service</code></pre>
+
+    <div class="callout info">
+      <strong>Why?</strong> The <code>AzureAppServiceManage@0</code> swap task requires the
+      resource group name — the <code>AzureWebApp@1</code> task does not, which is why you
+      didn't need it in Lesson 13.
+    </div>
+
+    <h3 style="margin: 1.5rem 0 0.5rem;">Replace the DeployProd job steps</h3>
+    <p style="color:var(--text-muted); font-size:0.92rem; margin-bottom:0.75rem;">
+      Find the <code>DeployProd</code> stage in your <code>azure-pipelines.yml</code> and
+      replace the <code>steps</code> block under <code>deploy:</code>:
+    </p>
+
+    <pre><code>      - deployment: DeployToProd
+        displayName: 'Azure App Service: Prod'
+        pool:
+          vmImage: 'ubuntu-latest'
+        environment: 'prod'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: none
+
+                # ── Step 1: Deploy to STAGING slot (not production) ──────
+                - task: AzureWebApp@1
+                  displayName: '① Deploy to staging slot'
+                  inputs:
+                    azureSubscription: '$(azureServiceConnection)'
+                    appType: 'webAppLinux'
+                    appName: '$(appServiceNameProd)'
+                    deployToSlotOrASE: true              # ← enables slot targeting
+                    resourceGroupName: '$(resourceGroupName)'
+                    slotName: 'staging'
+                    package: '$(Pipeline.Workspace)/drop/**/*.zip'
+                    appSettings: |
+                      -ASPNETCORE_ENVIRONMENT Production
+                      -ASPNETCORE_URLS "http://+:80"
+
+                # ── Step 2: Smoke test the staging slot ──────────────────
+                - script: |
+                    echo "Waiting 10s for app to warm up..."
+                    sleep 10
+                    url="https://$(appServiceNameProd)-staging.azurewebsites.net/hc"
+                    echo "Testing: $url"
+                    status=$(curl -s -o /dev/null -w "%{http_code}" "$url")
+                    if [ "$status" != "200" ]; then
+                      echo "##[error]Smoke test FAILED — HTTP $status from staging slot"
+                      exit 1
+                    fi
+                    echo "Smoke test passed (HTTP $status) — safe to swap"
+                  displayName: '② Smoke test staging slot'
+
+                # ── Step 3: Swap staging → production ────────────────────
+                - task: AzureAppServiceManage@0
+                  displayName: '③ Swap staging → production'
+                  inputs:
+                    azureSubscription: '$(azureServiceConnection)'
+                    Action: 'Swap Slots'
+                    WebAppName: '$(appServiceNameProd)'
+                    ResourceGroupName: '$(resourceGroupName)'
+                    SourceSlot: 'staging'
+                    # TargetSlot defaults to 'production' when omitted</code></pre>
+
+    <div class="callout warn">
+      <strong>Create the staging slot first.</strong> In the Azure portal: App Service →
+      Deployment slots → + Add Slot → name it <code>staging</code>, clone settings from production.
+      The pipeline will fail with "slot not found" if it does not exist yet.
+    </div>
+  </section>
+
+  <!-- ── STICKY SETTINGS ───────────────────────────────────── -->
+  <section style="margin-bottom:2rem;">
+    <h2 style="margin-bottom:0.75rem;">Sticky settings — the one gotcha everyone hits</h2>
+    <p>
+      By default, <strong>all app settings travel with the swap</strong>. If you set
+      <code>ASPNETCORE_ENVIRONMENT=Production</code> in staging to warm it up, after the swap
+      that setting is now in production — which is fine, that's what you want.
+    </p>
+    <p style="margin-top:0.75rem;">
+      But some settings should <em>not</em> travel. They should stay locked to their slot.
+      These are called <strong>sticky</strong> (or "slot setting") settings.
+    </p>
+
+    <table class="sticky">
+      <thead>
+        <tr>
+          <th>Setting</th>
+          <th>Should be sticky?</th>
+          <th>Why</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>ASPNETCORE_ENVIRONMENT</code></td>
+          <td class="no">No — travel with swap</td>
+          <td>Staging should warm up with Production settings, then swap those settings too</td>
+        </tr>
+        <tr>
+          <td>Production DB connection string</td>
+          <td class="yes">Yes — sticky to prod slot</td>
+          <td>You do not want staging accidentally pointing at your live database</td>
+        </tr>
+        <tr>
+          <td>Staging DB connection string</td>
+          <td class="yes">Yes — sticky to staging slot</td>
+          <td>After the swap, the "old prod" instance that lands in staging should use the staging DB</td>
+        </tr>
+        <tr>
+          <td>Feature flags / API keys</td>
+          <td>Depends on intent</td>
+          <td>If environment-specific: sticky. If they travel with the release: non-sticky.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      Mark a setting as sticky in the Azure portal: App Service → Configuration → Application
+      settings → tick <strong>"Deployment slot setting"</strong> next to the key.
+      You can also set sticky settings from the pipeline using the <code>appSettings</code> block
+      in a separate <code>AzureAppServiceSettings@1</code> task (advanced use case).
+    </p>
+  </section>
+
+  <!-- ── ROLLBACK ──────────────────────────────────────────── -->
+  <section style="margin-bottom:2rem;">
+    <h2 style="margin-bottom:0.75rem;">Manual rollback in an emergency</h2>
+    <p>
+      After a swap, v1.2.0 (the previous version) is sitting in the staging slot. To roll back
+      immediately, swap again — either from the portal or from a one-off pipeline run with:
+    </p>
+    <pre><code># Emergency rollback: swap staging (old prod) back to production
+- task: AzureAppServiceManage@0
+  inputs:
+    azureSubscription: '$(azureServiceConnection)'
+    Action: 'Swap Slots'
+    WebAppName: '$(appServiceNameProd)'
+    ResourceGroupName: '$(resourceGroupName)'
+    SourceSlot: 'staging'</code></pre>
+    <div class="callout ok">
+      <strong>Rollback time:</strong> ~15 seconds — the same as the original swap.
+      No new build, no re-deploy. This is the primary reason the pattern exists.
+    </div>
+  </section>
+
+  <!-- ── COST NOTE ──────────────────────────────────────────── -->
+  <section style="margin-bottom:2rem;">
+    <h2 style="margin-bottom:0.75rem;">Cost implications</h2>
+    <p>
+      A staging slot runs on the same App Service Plan as production. You pay for the compute
+      already (the plan, not the instances). Slots are free on <strong>Standard tier and above</strong>
+      (S1 / B1 do not support slots). The number of slots depends on tier:
+    </p>
+    <ul style="margin: 0.5rem 0 0 1.5rem; color:var(--text-muted); font-size:0.93rem;">
+      <li><strong>Standard:</strong> 5 slots</li>
+      <li><strong>Premium:</strong> 20 slots</li>
+    </ul>
+    <div class="callout warn">
+      If your App Service is on the <strong>Free or Shared tier</strong>, slots are not available.
+      You will need to upgrade before this pattern works.
+    </div>
+  </section>
+
+  <!-- ── QUIZ ──────────────────────────────────────────────── -->
+  <section style="margin-top:2.5rem;">
+    <h2 style="margin-bottom:1rem;">Check your understanding</h2>
+    <div id="quiz-container"></div>
+  </section>
+
+  <!-- ── PRIMARY SOURCE ─────────────────────────────────────── -->
+  <section class="primary-source" style="margin-top:2.5rem; padding:1.25rem; background:var(--highlight); border-radius:8px;">
+    <h3 style="margin-bottom:0.5rem;">Primary source</h3>
+    <p>
+      <a href="https://learn.microsoft.com/en-us/azure/app-service/deploy-staging-slots" target="_blank">
+        Set up staging environments — Azure App Service (Microsoft Learn)
+      </a>
+    </p>
+    <p style="font-size:0.9rem; color:var(--text-muted); margin-top:0.5rem;">
+      Covers all slot swap mechanics: auto-swap, multi-phase swap, traffic routing percentage,
+      and the full list of settings that are and are not swapped.
+    </p>
+  </section>
+
+  <p style="margin-top:2.5rem; color:var(--text-muted); font-size:0.9rem; border-top:1px solid var(--border); padding-top:1rem;">
+    Stuck on a step? Ask your teacher agent — paste the exact error message and the step number.
+    <br>
+    <a href="0013-build-your-own-pipeline-azure-app-service.html">← Lesson 13 (capstone pipeline)</a>
+    &nbsp;·&nbsp;
+    <a href="../reference/gitversion-cheatsheet.html">GitVersion cheatsheet</a>
+  </p>
+
+</main>
+
+<script src="../assets/quiz.js"></script>
+<script>
+  new Quiz('quiz-container', [
+    {
+      q: 'After a successful slot swap, where does the previous production version end up?',
+      options: [
+        'It is deleted — Azure has no way to keep two versions simultaneously',
+        'It remains in the staging slot — available for instant rollback',
+        'It is archived to Azure Blob Storage for 30 days automatically',
+        'It stays in production in a paused state until the next deploy'
+      ],
+      answer: 1,
+      explanation: 'The swap is a pointer exchange. The old prod instance moves to staging. This is what makes rollback nearly instantaneous — no rebuild or re-deploy is needed.'
+    },
+    {
+      q: 'Which App Service pricing tier is required to use deployment slots?',
+      options: [
+        'Free or Shared — slots are available on all tiers',
+        'Basic (B1) — the cheapest tier that supports any slots at all',
+        'Standard (S1) or above — Free, Shared, and Basic do not support slots',
+        'Premium only — Standard tier has too many restrictions for slots'
+      ],
+      answer: 2,
+      explanation: 'Slots require Standard tier (S1) or above. Free, Shared, and Basic plans do not include deployment slots. This is a common blocker when trying the pattern on a dev environment using a cheap plan.'
+    },
+    {
+      q: 'A database connection string is marked "Deployment slot setting" (sticky). What happens to it during a swap?',
+      options: [
+        'It travels to production along with the code — slot setting has no effect here',
+        'It stays in its slot — the prod connection stays in prod, staging in staging',
+        'It is deleted from both slots — sticky settings are removed on swap for safety',
+        'It is duplicated — both slots end up with both connection strings after the swap'
+      ],
+      answer: 1,
+      explanation: 'Sticky settings are "pinned" to their slot. When you swap, the connection strings do not move — production keeps its prod connection, staging keeps its staging connection. This prevents the classic bug where the new prod version accidentally hits the staging database.'
+    },
+    {
+      q: 'The smoke test script exits with code 1. What happens next in the pipeline?',
+      options: [
+        'The swap still proceeds — AzureAppServiceManage@0 runs unconditionally',
+        'The deployment job fails and the swap step is skipped automatically',
+        'The pipeline retries the smoke test three times before failing',
+        'The swap is skipped but the staging slot remains with the new version deployed'
+      ],
+      answer: 1,
+      explanation: 'A script step exiting with a non-zero code marks the step as failed. Subsequent steps in the same job are skipped by default. The swap never executes, production is never touched, and the staging slot holds the bad version until the next deploy overwrites it.'
+    }
+  ]);
+</script>
+</body>
+</html>

@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 6 — Building a New API Service End-to-End</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    .task-board {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem;
+      margin: 1rem 0 1.5rem;
+    }
+    .task-card {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      padding: 0.9rem 1rem;
+    }
+    .task-card h4 {
+      font-family: var(--font-ui);
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin: 0 0 0.5rem;
+    }
+    .task-card ul { list-style: none; padding: 0; margin: 0; }
+    .task-card li { font-size: 0.84rem; margin-bottom: 0.3rem; padding-left: 1.1rem; position: relative; }
+    .task-card li::before { content: "·"; position: absolute; left: 0.2rem; color: var(--accent); }
+    .file-ref {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 0.77rem;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 0.1rem 0.4rem;
+    }
+    .phase-label {
+      display: inline-block;
+      font-family: var(--font-ui);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--accent);
+      border: 1px solid var(--accent);
+      border-radius: 3px;
+      padding: 0.1rem 0.5rem;
+      margin-bottom: 0.8rem;
+    }
+  </style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="../MISSION.md">Identity &amp; Authorization</a> ›
+    <a href="0005-registering-clients.html">Lesson 5</a> › Lesson 6 of 6
+  </div>
+  <h1>Building a New API Service End-to-End</h1>
+  <div class="meta">
+    <span>~40 minutes</span>
+    <span>Hands-on implementation</span>
+    <span>Prerequisites: All previous lessons</span>
+  </div>
+</div>
+
+<p>
+  This is the capstone lesson. You will follow the exact pattern used by
+  <code>Services.AssistantManagement</code> to wire up a new ASP.NET Core API service with
+  JWT authentication, policy-based authorization, service-account token calls, and authorization
+  service integration. Every step references real code from the existing services.
+</p>
+
+<div class="callout">
+  <strong>What you'll build</strong>
+  A new API service (<em>MyNewService</em>) that: accepts JWT tokens from the Identity Gateway,
+  enforces scope-based policies, reads identity context via <code>IIdentityContext</code>,
+  calls the Authorization Service for fine-grained permission checks, and calls another service
+  using a service-account token.
+</div>
+
+<h2>The Four Responsibilities of Any Downstream Service</h2>
+
+<div class="task-board">
+  <div class="task-card">
+    <h4>1. Authentication</h4>
+    <ul>
+      <li>Validate JWT signature from IdG</li>
+      <li>Reject expired or malformed tokens</li>
+      <li>Support both user and service tokens</li>
+    </ul>
+  </div>
+  <div class="task-card">
+    <h4>2. Authorization</h4>
+    <ul>
+      <li>Enforce scope-based policies per endpoint</li>
+      <li>Distinguish user vs. service accounts</li>
+      <li>Delegate fine-grained checks to Authorization Service</li>
+    </ul>
+  </div>
+  <div class="task-card">
+    <h4>3. Identity context</h4>
+    <ul>
+      <li>Extract tenantId for data isolation</li>
+      <li>Read sub (user ID) and externalId</li>
+      <li>Handle on-behalf-of flows</li>
+    </ul>
+  </div>
+  <div class="task-card">
+    <h4>4. Outbound calls</h4>
+    <ul>
+      <li>Get a service-account token from IdG</li>
+      <li>Attach it to outbound API requests</li>
+      <li>Cache and renew before expiry</li>
+    </ul>
+  </div>
+</div>
+
+<hr>
+
+<h2>Phase 1: Project Setup &amp; NuGet Packages</h2>
+
+<div class="phase-label">Phase 1</div>
+
+<p>
+  The Equisoft ecosystem uses the <strong>DIT (Digital Insurance Tools)</strong> framework — an
+  internal library collection that wraps common infrastructure concerns. Here are the packages
+  every new API service needs:
+</p>
+
+<pre><code>&lt;!-- Core web API + identity + auth --&gt;
+&lt;PackageReference Include="DigitalInsuranceTools" /&gt;
+&lt;PackageReference Include="DigitalInsuranceTools.Auth" /&gt;        &lt;!-- JWT + Basic auth --&gt;
+&lt;PackageReference Include="DigitalInsuranceTools.Identity" /&gt;    &lt;!-- IIdentityContext --&gt;
+&lt;PackageReference Include="DigitalInsuranceTools.WebApi" /&gt;      &lt;!-- API utilities --&gt;
+
+&lt;!-- Calling other services --&gt;
+&lt;PackageReference Include="DigitalInsuranceTools.HTTP.Refit.AspNetCore" /&gt;
+
+&lt;!-- Authorization service client (if doing fine-grained checks) --&gt;
+&lt;PackageReference Include="DigitalInsuranceTools.Authorization.Client" /&gt;
+
+&lt;!-- Persistence --&gt;
+&lt;PackageReference Include="DigitalInsuranceTools.Persistence.SqlServer" /&gt;
+&lt;PackageReference Include="DigitalInsuranceTools.Persistence.Redis" /&gt;
+
+&lt;!-- Observability --&gt;
+&lt;PackageReference Include="DigitalInsuranceTools.Logging" /&gt;
+&lt;PackageReference Include="DigitalInsuranceTools.Metrics.ApplicationInsights" /&gt;</code></pre>
+
+<hr>
+
+<h2>Phase 2: Configure Authentication &amp; Authorization</h2>
+
+<div class="phase-label">Phase 2</div>
+
+<p>
+  Model your <span class="file-ref">Startup.cs</span> on AssistantManagement. The key lines:
+</p>
+
+<pre><code>// Startup.cs — ConfigureServices
+
+// Step 1: Authentication — validate incoming JWTs from the Identity Gateway
+services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme, builder =>
+{
+    builder.AddJwt();       // DIT wrapper for Microsoft.AspNetCore.Authentication.JwtBearer
+    builder.AddBasicAuth(); // For health check endpoints only
+});
+
+// Step 2: Authorization — define policies that controllers will use
+services.AddAuthorization(options =>
+{
+    // Scope-based policies:
+    options.AddPolicy("mynewservice.read",
+        p => p.Requirements.Add(new HasScopeRequirement("mynewservice.read")));
+    options.AddPolicy("mynewservice.write",
+        p => p.Requirements.Add(new HasScopeRequirement("write:mynewservice")));
+});
+
+// Register the DIT scope requirement handler:
+services.AddScoped&lt;IAuthorizationHandler, HasScopeRequirementHandler&gt;();
+
+// Step 3: Register IIdentityContext (reads claims from the validated JWT)
+services.AddIdentityPrincipal(); // or equivalent DIT registration</code></pre>
+
+<pre><code>// Startup.cs — Configure (middleware pipeline)
+app.UseAuthentication();    // MUST come before UseAuthorization
+app.UseAuthorization();
+app.UseIdentityPrincipal(); // DIT: populates IIdentityContext from the validated principal</code></pre>
+
+<div class="callout warn">
+  <strong>Order matters in the pipeline</strong>
+  <code>UseAuthentication</code> → <code>UseAuthorization</code> → <code>UseIdentityPrincipal</code>.
+  Reversing any of these causes 401s even with valid tokens.
+</div>
+
+<h3>appsettings.json</h3>
+
+<pre><code>{
+  "auth": {
+    "jwt": {
+      "authority": "https://api.dev.equisoft.com/identity",  // IdG discovery URL
+      "audience":  "mynewserviceapi",                         // must match ApiResource.Name in IdG
+      "issuer":    ""
+    },
+    "basic": {
+      "realm": "MyNewService"
+    }
+  }
+}</code></pre>
+
+<hr>
+
+<h2>Phase 3: Controllers — Enforcing Authorization</h2>
+
+<div class="phase-label">Phase 3</div>
+
+<p>
+  Apply <code>[Authorize]</code> attributes at the controller or action level.
+  Model on <span class="file-ref">AssistantsController.cs</span> from AssistantManagement:
+</p>
+
+<pre><code>[ApiController]
+[Route("api/v1/[controller]")]
+public class WidgetsController : ControllerBase
+{
+    private readonly IIdentityContext _identity;
+    private readonly IWidgetService   _service;
+
+    public WidgetsController(IIdentityContext identity, IWidgetService service)
+    {
+        _identity = identity;
+        _service  = service;
+    }
+
+    // Anyone with a valid JWT and the read scope can list widgets:
+    [HttpGet]
+    [Authorize("mynewservice.read")]
+    public async Task&lt;IActionResult&gt; GetWidgets()
+    {
+        // tenantId for data isolation — ALWAYS filter by this:
+        var tenantId = _identity.TenantId;
+
+        // sub — the user's local ID in the IdG database:
+        var userId = _identity.ResourceOwnerId;
+
+        var widgets = await _service.GetWidgetsAsync(tenantId, userId);
+        return Ok(widgets);
+    }
+
+    // Write operations require the write scope:
+    [HttpPost]
+    [Authorize("mynewservice.write")]
+    public async Task&lt;IActionResult&gt; CreateWidget([FromBody] CreateWidgetRequest request)
+    {
+        var tenantId = _identity.TenantId;
+        var result   = await _service.CreateWidgetAsync(tenantId, request);
+        return Created($"api/v1/widgets/{result.Id}", result);
+    }
+}
+
+// Management endpoints: service accounts only
+[ApiController]
+[Route("api/v1/management/[controller]")]
+[ServiceFilter(typeof(AuthorizeServiceAccountFilter))] // rejects non-service tokens
+public class WidgetsManagementController : ControllerBase
+{
+    // Only service-account tokens (service_isService: true) reach here
+}</code></pre>
+
+<h3>Implementing <code>AuthorizeServiceAccountFilter</code></h3>
+
+<p>
+  Copy the pattern from <span class="file-ref">AuthorizeServiceAccountFilter.cs</span> in both
+  AssistantManagement and Authorization Service:
+</p>
+
+<pre><code>public class AuthorizeServiceAccountFilter : IAuthorizationFilter
+{
+    private readonly IIdentityContext _identityContext;
+
+    public AuthorizeServiceAccountFilter(IIdentityContext identityContext)
+        => _identityContext = identityContext;
+
+    public void OnAuthorization(AuthorizationFilterContext context)
+    {
+        if (!_identityContext.IsAuthenticated)
+        {
+            context.Result = new UnauthorizedResult();
+            return;
+        }
+        if (_identityContext.IdentityType != IdentityType.Service)
+        {
+            context.Result = new ForbidResult();
+        }
+    }
+}
+
+// Register in Startup.cs:
+services.AddScoped&lt;AuthorizeServiceAccountFilter&gt;();</code></pre>
+
+<hr>
+
+<h2>Phase 4: Reading Identity Context</h2>
+
+<div class="phase-label">Phase 4</div>
+
+<p>
+  <code>IIdentityContext</code> gives you everything you need about the caller. Add the extension
+  method from <span class="file-ref">IdentityContextExtensions.cs</span> to extract the service
+  account name (useful for audit logging):
+</p>
+
+<pre><code>// Infrastructure/Extensions/IdentityContextExtensions.cs
+public static class IdentityContextExtensions
+{
+    // Extract service account name from the client_id claim:
+    public static string GetServiceAccountName(this IIdentityContext identityContext)
+    {
+        var claim = identityContext.Claims
+            .FirstOrDefault(c => c.Type == "client_id");
+        return claim?.Value ?? string.Empty;
+    }
+}
+
+// Usage in a controller or service:
+if (_identity.IdentityType == IdentityType.Service)
+{
+    var accountName = _identity.GetServiceAccountName();
+    // e.g. "assistmgntapi"
+}</code></pre>
+
+<h3>IIdentityContext quick reference</h3>
+
+<table>
+  <thead><tr><th>Property</th><th>JWT Claim</th><th>What it is</th></tr></thead>
+  <tbody>
+    <tr><td><code>TenantId</code></td><td><code>tenantId</code></td><td>Tenant GUID — use to filter all DB queries</td></tr>
+    <tr><td><code>ResourceOwnerId</code></td><td><code>sub</code></td><td>User's local ID in IdG's UserDb</td></tr>
+    <tr><td><code>ExternalPrincipalId</code></td><td><code>externalobjectidentifier</code></td><td>User's ID in the external IdP (Azure AD)</td></tr>
+    <tr><td><code>IsAuthenticated</code></td><td>—</td><td>Whether the token is valid</td></tr>
+    <tr><td><code>IdentityType</code></td><td><code>service_isService</code></td><td><code>User</code>, <code>Service</code>, or <code>Guest</code></td></tr>
+    <tr><td><code>IsOnBehalfOf</code></td><td>—</td><td>True if delegated context</td></tr>
+  </tbody>
+</table>
+
+<hr>
+
+<h2>Phase 5: Outbound Service-Account Calls</h2>
+
+<div class="phase-label">Phase 5</div>
+
+<p>
+  When your service needs to call another API on its own behalf (not the user's), use the
+  DIT token client. Model on AssistantManagement's configuration:
+</p>
+
+<pre><code>// appsettings.json — service account config:
+{
+  "ServiceAccounts": {
+    "TokenEndpoint": "https://api.dev.equisoft.com/identity/connect/token",
+    "PrincipalPrefix": "mynewserviceapi",    // your service's client_id
+    "TenantSecrets": {
+      "ACME": "the-client-secret-for-acme-tenant"
+    }
+  }
+}
+
+// Startup.cs — wire up the token client:
+services.ConfigureTokenClient(Configuration.GetSection("ServiceAccounts"));</code></pre>
+
+<pre><code>// Define the outbound client interface (Refit):
+// Infrastructure/Clients/IUserServiceClient.cs
+[Headers("Accept: application/json")]
+public interface IUserServiceClient
+{
+    [Get("/v2/user/identities")]
+    Task&lt;UserInfo&gt; GetUserAsync(
+        [Header("Authorization")] string authorization, // "Bearer {token}"
+        [Query] string externalUserId);
+}
+
+// Register in Startup.cs:
+services.AddRefitClient&lt;IUserServiceClient&gt;()
+    .ConfigureHttpClient(c =&gt; c.BaseAddress =
+        new Uri(Configuration["services:userService:endpoint"]));</code></pre>
+
+<pre><code>// In your service class — obtain and use a service-account token:
+public class WidgetService : IWidgetService
+{
+    private readonly IUserServiceClient _userClient;
+    private readonly ITokenClient       _tokenClient; // from DIT
+
+    public async Task&lt;Widget&gt; GetWidgetWithOwnerAsync(Guid tenantId, Guid widgetId)
+    {
+        var token = await _tokenClient.GetTokenAsync(tenantId);
+        var user  = await _userClient.GetUserAsync($"Bearer {token}", externalUserId);
+        // ...
+    }
+}</code></pre>
+
+<hr>
+
+<h2>Phase 6: Fine-Grained Authorization Service Checks</h2>
+
+<div class="phase-label">Phase 6</div>
+
+<p>
+  For operations that need finer control than scopes alone, forward the user's token to the
+  Authorization Service. Model on how AssistantManagement calls the cache endpoint:
+</p>
+
+<pre><code>// Infrastructure/Clients/IAuthorizationClient.cs (Refit)
+public interface IAuthorizationClient
+{
+    [Get("/api/v1/Authorize")]
+    Task&lt;HttpResponseMessage&gt; AuthorizeAsync(
+        [Header("Authorization")] string authorization,
+        [Query] string key);
+}
+
+// appsettings.json:
+{
+  "services": {
+    "authorization": {
+      "endpoint": "https://api.dev.equisoft.com/authorization"
+    }
+  }
+}
+
+// Usage in a service:
+public async Task&lt;IActionResult&gt; DeleteWidget(Guid widgetId,
+    [FromHeader] string authorization)
+{
+    // Check fine-grained permission before deleting:
+    var response = await _authzClient.AuthorizeAsync(
+        authorization,         // forwarded user token
+        key: "widgets.Delete"  // the access key to check
+    );
+
+    if (!response.IsSuccessStatusCode)
+        return Forbid();
+
+    await _service.DeleteWidgetAsync(widgetId);
+    return NoContent();
+}</code></pre>
+
+<div class="callout tip">
+  <strong>Forward the token, don't re-validate it</strong>
+  Pass the <code>Authorization: Bearer …</code> header value straight through to the Authorization
+  Service. It validates the token itself — you don't need to decode or verify it again.
+</div>
+
+<hr>
+
+<h2>Complete New-Service Checklist</h2>
+
+<table>
+  <thead><tr><th>#</th><th>Task</th><th>Where / reference</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>Add NuGet packages (DIT.Auth, DIT.Identity, DIT.WebApi)</td><td>Phase 1 above</td></tr>
+    <tr><td>2</td><td>Register API Resource + Scope in IdG DB (audience name)</td><td><a href="0005-registering-clients.html">Lesson 5</a></td></tr>
+    <tr><td>3</td><td>Register client in IdG DB for callers (scopes, CORS, PKCE)</td><td><a href="0005-registering-clients.html">Lesson 5</a></td></tr>
+    <tr><td>4</td><td>Configure <code>auth.jwt.authority</code> + <code>audience</code> in appsettings</td><td>Phase 2 above</td></tr>
+    <tr><td>5</td><td>Add <code>AddAuthentication(…AddJwt())</code> + <code>AddAuthorization(…)</code> in Startup</td><td>Phase 2 above</td></tr>
+    <tr><td>6</td><td>Add <code>UseAuthentication → UseAuthorization → UseIdentityPrincipal</code> to pipeline</td><td>Phase 2 above</td></tr>
+    <tr><td>7</td><td>Apply <code>[Authorize("scope")]</code> to all controllers / actions</td><td>Phase 3 above</td></tr>
+    <tr><td>8</td><td>Implement <code>AuthorizeServiceAccountFilter</code> for management endpoints</td><td>Phase 3 above</td></tr>
+    <tr><td>9</td><td>Filter all DB queries by <code>_identityContext.TenantId</code></td><td>Phase 4 above</td></tr>
+    <tr><td>10</td><td>Configure ServiceAccounts + <code>ConfigureTokenClient</code> for outbound calls</td><td>Phase 5 above</td></tr>
+    <tr><td>11</td><td>Add new access keys (role/policy/permission rows) in Authorization Service DB</td><td><a href="0004-authorization-service.html">Lesson 4</a></td></tr>
+    <tr><td>12</td><td>Test end-to-end: login → get token → call API → check 200 + correct tenantId</td><td>—</td></tr>
+  </tbody>
+</table>
+
+<hr>
+
+<div class="quiz" data-quiz="quiz6">
+  <h3>Final Knowledge Check — Putting It All Together</h3>
+
+  <div class="quiz-question" data-correct="c">
+    <p>1. Your new API returns 401 on every request even though the token is valid. The most likely cause is:</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz6-q0" value="a"> The token's <code>tenantId</code> claim is missing</label></li>
+      <li><label><input type="radio" name="quiz6-q0" value="b"> The user's role is not in the Authorization Service</label></li>
+      <li><label><input type="radio" name="quiz6-q0" value="c"> The token <code>aud</code> does not match the service's configured audience</label></li>
+      <li><label><input type="radio" name="quiz6-q0" value="d"> <code>UseAuthorization</code> was called before <code>UseAuthentication</code></label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="b">
+    <p>2. A controller action needs to ensure only service accounts can call it. The correct approach is:</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz6-q1" value="a"> Check <code>User.IsInRole("Service")</code> in the action body</label></li>
+      <li><label><input type="radio" name="quiz6-q1" value="b"> Apply <code>[ServiceFilter(typeof(AuthorizeServiceAccountFilter))]</code></label></li>
+      <li><label><input type="radio" name="quiz6-q1" value="c"> Add <code>[Authorize(Roles = "service")]</code> to the controller</label></li>
+      <li><label><input type="radio" name="quiz6-q1" value="d"> Register an <code>IsService</code> policy that checks the <code>identityRole</code> claim</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="d">
+    <p>3. To filter database records to the current user's tenant, you should use:</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz6-q2" value="a"> The <code>tenant</code> claim (short string key)</label></li>
+      <li><label><input type="radio" name="quiz6-q2" value="b"> The <code>sub</code> claim mapped to a local tenant table</label></li>
+      <li><label><input type="radio" name="quiz6-q2" value="c"> A header set by the API gateway (<code>X-Tenant-Id</code>)</label></li>
+      <li><label><input type="radio" name="quiz6-q2" value="d"> <code>_identityContext.TenantId</code> (the GUID from the <code>tenantId</code> JWT claim)</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="a">
+    <p>4. Your service needs to call the User Service as itself (not on behalf of a user). What is the correct token acquisition approach?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz6-q3" value="a"> Use <code>ITokenClient.GetTokenAsync(tenantId)</code> (DIT token client, client_credentials under the hood)</label></li>
+      <li><label><input type="radio" name="quiz6-q3" value="b"> Forward the incoming user's <code>Authorization: Bearer</code> header</label></li>
+      <li><label><input type="radio" name="quiz6-q3" value="c"> Call <code>/connect/authorize</code> with the service's credentials</label></li>
+      <li><label><input type="radio" name="quiz6-q3" value="d"> Use the refresh token from appsettings to get a new user token</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="c">
+    <p>5. After adding a new permission in the Authorization Service database, a user still does not see it. The Redis TTL has passed. What should you check next?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz6-q4" value="a"> Whether the Identity Gateway has re-issued the token with the new permission</label></li>
+      <li><label><input type="radio" name="quiz6-q4" value="b"> Whether the user's <code>identityRole</code> claim has been updated</label></li>
+      <li><label><input type="radio" name="quiz6-q4" value="c"> Whether the permission is mapped to the user's role via the policy hierarchy</label></li>
+      <li><label><input type="radio" name="quiz6-q4" value="d"> Whether the Authorization Service was restarted to reload the DB schema</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <button class="quiz-btn" data-quiz-submit="quiz6">Check Answers</button>
+  <div class="quiz-score"></div>
+</div>
+
+<script>
+window.quizExplanations = {
+  'quiz6-q0': 'JWT validation checks the aud claim. If it doesn\'t match the service\'s configured audience, the middleware rejects the token before your code even runs.',
+  'quiz6-q1': 'AuthorizeServiceAccountFilter checks IdentityType.Service (derived from service_isService claim). It runs as a filter before the action method, returning 403 cleanly.',
+  'quiz6-q2': 'TenantId is the GUID primary key — the right handle for SQL WHERE clauses. The short `tenant` key is for config lookups, not data queries.',
+  'quiz6-q3': 'ITokenClient handles client_credentials grant internally, caches the token, and renews before expiry. Never reuse a user token for machine-identity calls.',
+  'quiz6-q4': 'The permission must be mapped: Permission → PolicyPermissionMapping → Policy → PolicyRoleMapping → Role. Run spGetUserAccessKeys to verify the chain is complete.'
+};
+</script>
+
+<hr>
+
+<h2>What to Read Next</h2>
+<ul>
+  <li><a href="../reference/glossary.html">Glossary</a> — all terms in one place</li>
+  <li><a href="../reference/authorization-cheatsheet.html">Authorization Service Quick Reference</a></li>
+  <li>
+    <a href="https://docs.duendesoftware.com/identityserver/v7/fundamentals/clients/" target="_blank">
+      Duende IS — Client Configuration Reference
+    </a>
+  </li>
+  <li>
+    <a href="https://learn.microsoft.com/en-us/aspnet/core/security/authorization/policies" target="_blank">
+      ASP.NET Core — Policy-based Authorization
+    </a>
+  </li>
+</ul>
+
+<div class="ask-claude">
+  <strong>Congratulations — and keep going.</strong>
+  You've completed the core course. Open a new chat to dive deeper into any specific area:
+  <em>"Walk me through exactly what happens in the codebase when a SAML IdP user logs in for the first time."</em>
+  Or: <em>"How do I add a new external role provider type to the Authorization Service?"</em>
+</div>
+
+<div class="lesson-nav">
+  <a href="0005-registering-clients.html">← Lesson 5: Registering Clients &amp; APIs</a>
+  <span></span>
+</div>
+
+<div class="lesson-footer">
+  Equisoft Identity Learning · Lesson 6 (final) · Pattern sources: AssistantManagementService Startup.cs,
+  AuthorizeServiceAccountFilter.cs, IdentityContextExtensions.cs
+</div>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

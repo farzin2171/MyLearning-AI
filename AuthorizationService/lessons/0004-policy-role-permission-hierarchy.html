@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lesson 04 — Policy, Role &amp; Permission Hierarchy</title>
+  <link rel="stylesheet" href="../assets/style.css" />
+  <style>
+    /* ── Tree visualisation ─────────────────────────────── */
+    .tree {
+      font-family: var(--mono);
+      font-size: 0.84em;
+      line-height: 1.7;
+      background: #f8f9fa;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.2rem 1.5rem;
+      margin: 1.2rem 0;
+      overflow-x: auto;
+      white-space: pre;
+    }
+    /* ── Access key trace ───────────────────────────────── */
+    .trace-box {
+      border: 1px solid #c7d2fe;
+      background: #eef2ff;
+      border-radius: var(--radius);
+      padding: 1rem 1.2rem;
+      margin: 1.2rem 0;
+      font-family: sans-serif;
+      font-size: 0.88rem;
+    }
+    .trace-box .trace-title {
+      font-weight: 700;
+      margin-bottom: 0.6rem;
+      color: #3730a3;
+    }
+    .key-pill {
+      display: inline-block;
+      background: #1e40af;
+      color: #fff;
+      font-family: var(--mono);
+      font-size: 0.78em;
+      padding: 0.2em 0.6em;
+      border-radius: 4px;
+      margin: 0.15rem 0.2rem;
+    }
+    /* ── Predict exercise ───────────────────────────────── */
+    .predict-exercise {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.2rem;
+      margin: 1.5rem 0;
+    }
+    .predict-exercise h3 { margin: 0 0 0.5rem; font-size: 1rem; }
+    .reveal-btn {
+      display: inline-block;
+      margin-top: 0.8rem;
+      padding: 0.4rem 1rem;
+      background: var(--ink);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      font-family: sans-serif;
+      font-size: 0.83rem;
+      cursor: pointer;
+    }
+    .reveal-btn:hover { background: #333; }
+    .answer-block {
+      display: none;
+      margin-top: 0.8rem;
+      background: var(--success-bg);
+      border: 1px solid #15803d;
+      border-radius: var(--radius);
+      padding: 0.8rem 1rem;
+      font-family: sans-serif;
+      font-size: 0.86rem;
+    }
+    /* ── Schema table ───────────────────────────────────── */
+    .schema-table { width:100%; border-collapse:collapse; font-family:sans-serif; font-size:0.8rem; margin:0.8rem 0; }
+    .schema-table th { text-align:left; padding:0.35rem 0.6rem; border-bottom:2px solid #ddd; }
+    .schema-table td { padding:0.35rem 0.6rem; border-bottom:1px solid #eee; vertical-align:top; }
+    .schema-table tr:nth-child(even) td { background:#fafaf8; }
+  </style>
+</head>
+<body>
+<div class="lesson-container">
+
+  <!-- ── Header ─────────────────────────────────────────── -->
+  <header class="lesson-header">
+    <div class="lesson-meta">Lesson 04 · Authorization Service · Data Model</div>
+    <h1 class="lesson-title">Policy, Role &amp; Permission Hierarchy</h1>
+    <p class="lesson-subtitle">What access keys actually look like, how the policy tree produces them, and how to predict a user's access from first principles.</p>
+  </header>
+
+  <p>
+    You know from <a href="0002-the-authorization-request-flow.html">Lesson 02</a> that
+    <code>GET /authorize?key=X</code> checks whether the string <code>X</code> is in a cached list.
+    You know from <a href="0003-external-role-providers.html">Lesson 03</a> how external roles feed
+    into that list. This lesson answers the question you haven't fully answered yet:
+    <strong>what do those key strings actually look like, and how are they generated?</strong>
+  </p>
+
+  <!-- ── The Key Insight ────────────────────────────────── -->
+  <h2>Access Keys Are Paths, Not Names</h2>
+
+  <p>
+    An access key is <strong>not</strong> just a permission name like <code>"view"</code>.
+    It is a <strong>dot-separated path encoding the full location of a permission in the policy tree</strong>:
+  </p>
+
+  <div class="callout key">
+    <div class="callout-title">The access key format</div>
+    <p style="font-family: var(--mono); font-size: 1.05em; margin: 0.3rem 0;">
+      RootPolicy.ChildPolicy.GrandchildPolicy.PermissionKey<br/>
+      RootPolicy.ChildPolicy.RoleKey
+    </p>
+    <p style="margin-top: 0.6rem; margin-bottom: 0;">
+      Every segment is the <code>Key</code> field of a Policy, or the <code>Key</code> of a Permission/Role.
+      The hierarchy is encoded in the string itself.
+    </p>
+  </div>
+
+  <p>
+    This is why a caller can ask for <code>"platform.reports.export.run"</code> — not just <code>"run"</code>.
+    The path makes access keys <strong>globally unique</strong> across the entire tree, even if two
+    policies each have a permission named <code>"view"</code>.
+  </p>
+
+  <!-- ── Worked Example ─────────────────────────────────── -->
+  <h2>Worked Example: Reading a Policy Tree</h2>
+
+  <p>Consider this policy tree. Each indented level is a child policy.</p>
+
+  <div class="tree">platform  (root policy key: "platform")
+├── Permission: "login"
+├── reports  (child policy key: "reports")
+│   ├── Permission: "view"
+│   └── export  (grandchild policy key: "export")
+│         └── Permission: "run"
+└── admin  (child policy key: "admin")
+      ├── Role: "administrator"
+      └── Permission: "user.manage"</div>
+
+  <p>
+    Now suppose an external role <strong>Underwriter</strong> is mapped to:
+  </p>
+  <ul>
+    <li>The <code>login</code> permission inside <code>platform</code></li>
+    <li>The <code>view</code> permission inside <code>platform.reports</code></li>
+  </ul>
+
+  <p>The stored procedure builds these access keys for the Underwriter role:</p>
+
+  <div class="trace-box">
+    <div class="trace-title">Access keys returned by [dbo].[GetUserAccessKeys]</div>
+    <span class="key-pill">platform.login</span>
+    <span class="key-pill">platform.reports.view</span>
+  </div>
+
+  <p>
+    A call to <code>/authorize?key=platform.reports.export.run</code> for an Underwriter user would
+    return <strong>Deny</strong> — that path is not in the list, because the Underwriter role is not
+    mapped to the <code>export</code> permission inside <code>platform.reports.export</code>.
+  </p>
+
+  <!-- ── How the SP builds the paths ───────────────────── -->
+  <h2>How the Stored Procedure Builds Paths: The Recursive CTE</h2>
+
+  <p>
+    The stored procedure <code>[dbo].[GetUserAccessKeys]</code> uses a
+    <a href="https://learn.microsoft.com/en-us/sql/t-sql/queries/with-common-table-expression-transact-sql">SQL recursive CTE</a>
+    to flatten the entire policy tree into identifiers before joining to permissions.
+  </p>
+
+  <pre><code>-- Step 1: traverse the entire tree, building dot-separated identifiers
+WITH cte_data AS (
+    -- anchor: root policies (ParentPolicyId IS NULL)
+    SELECT PolicyId, CAST([Key] AS NVARCHAR(MAX)) AS Identifier
+    FROM tblPolicy WHERE ParentPolicyId IS NULL
+
+    UNION ALL
+
+    -- recursive: each child appends its Key to its parent's Identifier
+    SELECT Child.PolicyId,
+           CAST(Parent.Identifier + '.' + Child.[Key] AS NVARCHAR(MAX))
+    FROM tblPolicy AS Child
+    INNER JOIN cte_data AS Parent ON Child.ParentPolicyId = Parent.PolicyId
+)
+-- Step 2: for each external role, find its PolicyPermission/PolicyRole records
+-- and append the Permission/Role Key to form the final access key string</code></pre>
+
+  <p>
+    The result of Step 1 for the example tree above would be:
+  </p>
+
+  <div class="tree">PolicyId | Identifier
+---------+----------------------------
+1        | platform
+2        | platform.reports
+3        | platform.reports.export
+4        | platform.admin</div>
+
+  <p>
+    Step 2 then joins those identifiers to the permission/role records the external role is linked to,
+    appending <code>.PermissionKey</code> or <code>.RoleKey</code> to produce the final strings.
+  </p>
+
+  <!-- ── The Full Data Model ────────────────────────────── -->
+  <h2>The Full Data Model (All Tables)</h2>
+
+  <table class="schema-table">
+    <thead><tr><th>Table</th><th>What it stores</th><th>Hierarchical?</th></tr></thead>
+    <tbody>
+      <tr><td><code>tblPolicy</code></td><td>Policy definitions. <code>ParentPolicyId</code> links child to parent.</td><td>Yes — recursive</td></tr>
+      <tr><td><code>tblRole</code></td><td>Internal role definitions.</td><td>No — flat</td></tr>
+      <tr><td><code>tblPermission</code></td><td>Atomic permission definitions.</td><td>No — flat</td></tr>
+      <tr><td><code>tblPolicyRole</code></td><td>Many-to-many: which roles live inside which policy.</td><td>Via policy</td></tr>
+      <tr><td><code>tblPolicyPermission</code></td><td>Many-to-many: which permissions live inside which policy.</td><td>Via policy</td></tr>
+      <tr><td><code>tblExternalRoleToRole</code></td><td>Maps an ExternalRole to specific <code>tblPolicyRole</code> entries.</td><td>—</td></tr>
+      <tr><td><code>tblExternalRoleToPermission</code></td><td>Maps an ExternalRole to specific <code>tblPolicyPermission</code> entries.</td><td>—</td></tr>
+      <tr><td><code>tblPermissionGroup</code></td><td>Named group of permissions (for bulk OnBehalfOf intersection).</td><td>No — flat</td></tr>
+      <tr><td><code>tblPermissionGroupToPermission</code></td><td>Links a PermissionGroup to specific <code>tblPolicyPermission</code> entries.</td><td>—</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout info">
+    <div class="callout-title">Only the Policy table is hierarchical</div>
+    <p>
+      Roles and Permissions are flat lists. The tree structure lives entirely in <code>tblPolicy</code>
+      via the self-referential <code>ParentPolicyId</code> foreign key. The hierarchy is resolved
+      at query time by the recursive CTE — it is not stored pre-computed.
+    </p>
+  </div>
+
+  <!-- ── How to Assign ──────────────────────────────────── -->
+  <h2>How a User Gets Assigned to a Policy</h2>
+
+  <p>
+    There is no direct "user → policy" table. The chain is always:
+  </p>
+
+  <div class="diagram">External role name (from provider)
+  → tblExternalRole (ExternalSourceId matches the name)
+  → tblExternalRoleToPermission  →  tblPolicyPermission  →  tblPolicy
+  → tblExternalRoleToRole        →  tblPolicyRole        →  tblPolicy</div>
+
+  <p>
+    When you say "a user is assigned to the <code>reports</code> policy", what you really mean is:
+    the user has an external role that is mapped (via junction tables) to one or more
+    PolicyPermission or PolicyRole records that belong to the <code>reports</code> policy.
+  </p>
+
+  <p>
+    This is configured via the management API with a service account:
+  </p>
+  <pre><code>// POST /api/v1/management/policies
+{
+  "policies": [
+    {
+      "key": "platform",
+      "permissions": ["login"],
+      "policies": [
+        {
+          "key": "reports",
+          "permissions": ["view"],
+          "policies": [
+            { "key": "export", "permissions": ["run"] }
+          ]
+        }
+      ]
+    }
+  ]
+}</code></pre>
+
+  <p>
+    The repository creates this entire tree recursively in one transaction,
+    handling junction table entries automatically.
+  </p>
+
+  <!-- ── Predict Exercises ──────────────────────────────── -->
+  <h2>Practice: Predict the Access Keys</h2>
+
+  <p>
+    These exercises build the skill of reading a policy tree and predicting access keys.
+    <strong>Work out the answer before revealing it.</strong>
+  </p>
+
+  <div class="predict-exercise">
+    <h3>Exercise 1</h3>
+    <p>Given this policy tree:</p>
+    <div class="tree" style="margin:0.5rem 0 0.8rem;">crm  (root)
+├── Permission: "contact.view"
+└── premium  (child)
+      ├── Permission: "contact.edit"
+      └── Permission: "contact.delete"</div>
+    <p>
+      External role <strong>SalesRep</strong> is mapped to: the <code>contact.view</code> permission
+      in <code>crm</code>, and the <code>contact.edit</code> permission in <code>crm.premium</code>.
+    </p>
+    <p><em>What access keys does a SalesRep user get?</em></p>
+    <button class="reveal-btn" onclick="reveal(this)">Reveal answer</button>
+    <div class="answer-block">
+      <strong>crm.contact.view</strong> — the <code>contact.view</code> permission lives in the <code>crm</code> root policy.<br/>
+      <strong>crm.premium.contact.edit</strong> — the <code>contact.edit</code> permission lives in the <code>premium</code> child policy (path: crm → premium).<br/><br/>
+      <code>crm.premium.contact.delete</code> is <em>not</em> returned — SalesRep is not mapped to that permission.
+    </div>
+  </div>
+
+  <div class="predict-exercise">
+    <h3>Exercise 2</h3>
+    <p>Given this policy tree:</p>
+    <div class="tree" style="margin:0.5rem 0 0.8rem;">insurance  (root)
+└── underwriting  (child)
+      └── life  (grandchild)
+            ├── Role: "actuary"
+            └── Permission: "quote.approve"</div>
+    <p>
+      External role <strong>Actuary</strong> is mapped to: the <code>actuary</code> role
+      <em>and</em> the <code>quote.approve</code> permission, both inside <code>insurance.underwriting.life</code>.
+    </p>
+    <p><em>What access keys does an Actuary user get?</em></p>
+    <button class="reveal-btn" onclick="reveal(this)">Reveal answer</button>
+    <div class="answer-block">
+      <strong>insurance.underwriting.life.actuary</strong> — the <code>actuary</code> role lives at the grandchild level; full path is prefixed.<br/>
+      <strong>insurance.underwriting.life.quote.approve</strong> — the <code>quote.approve</code> permission also at grandchild level.<br/><br/>
+      Note how deep nesting makes the keys long — and how the caller must use the full string <code>insurance.underwriting.life.quote.approve</code>, not just <code>quote.approve</code>.
+    </div>
+  </div>
+
+  <div class="predict-exercise">
+    <h3>Exercise 3 — deletion edge case</h3>
+    <p>Given this policy tree:</p>
+    <div class="tree" style="margin:0.5rem 0 0.8rem;">app  (root)
+├── Permission: "settings.view"
+└── admin  (child)
+      └── Permission: "settings.edit"</div>
+    <p>
+      External role <strong>Admin</strong> is mapped to the <code>settings.edit</code> permission in <code>app.admin</code>.
+      A developer now <strong>deletes the <code>admin</code> child policy</strong> via the management API.
+    </p>
+    <p><em>After deletion, what access keys does an Admin user get?</em></p>
+    <button class="reveal-btn" onclick="reveal(this)">Reveal answer</button>
+    <div class="answer-block">
+      <strong>None.</strong> When a policy is deleted, the repository cascades: it deletes the PolicyPermissionMapping first, then the ExternalRoleToPermissionMapping pointing to it. The Admin external role now has no mappings left. The user gets an empty list — Deny on everything.<br/><br/>
+      Additionally, any cached results for Admin users remain valid until TTL expires, so the effect may be delayed by the Redis TTL. Use <code>DELETE /api/v1/cache/permissions/{userId}</code> to force immediate effect.
+    </div>
+  </div>
+
+  <!-- ── Quiz ───────────────────────────────────────────── -->
+  <h2>Check Your Understanding</h2>
+  <div class="quiz">
+    <div class="quiz-title">Retrieval practice — from memory first</div>
+
+    <div class="quiz-q">
+      <p>1. Permission <code>Key = "submit"</code> lives inside policy <code>Key = "forms"</code>, which is a child of root policy <code>Key = "app"</code>. What is the access key string a caller must use?</p>
+      <button class="quiz-option" data-correct="false">
+        submit
+      </button>
+      <button class="quiz-option" data-correct="false">
+        forms.submit
+      </button>
+      <button class="quiz-option" data-correct="true"
+        data-explanation="✓ Correct. The CTE builds the policy identifier as 'app.forms' (root + '.' + child key), then appends the permission key: 'app.forms.submit'.">
+        app.forms.submit
+      </button>
+      <button class="quiz-option" data-correct="false">
+        app.submit
+      </button>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-q">
+      <p>2. Two policies in the same tenant both have a permission with <code>Key = "view"</code>. What prevents these from colliding as access keys?</p>
+      <button class="quiz-option" data-correct="false">
+        Permission keys are globally unique across the entire database
+      </button>
+      <button class="quiz-option" data-correct="true"
+        data-explanation="✓ Correct. The access key includes the full policy path prefix. 'billing.view' and 'reporting.view' are different strings even though the permission Key is the same in both.">
+        Each is prefixed by its policy path, making 'billing.view' distinct from 'reporting.view'
+      </button>
+      <button class="quiz-option" data-correct="false">
+        Permissions are stored as globally unique GUIDs, not string keys
+      </button>
+      <button class="quiz-option" data-correct="false">
+        EF Core enforces a unique constraint on the permission key per tenant
+      </button>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-q">
+      <p>3. An external role is mapped to a PolicyPermission that belongs to a <em>child</em> policy. The recursive CTE also generates an identifier for the <em>root</em> policy. Does the external role automatically receive the root policy's permissions too?</p>
+      <button class="quiz-option" data-correct="false">
+        Yes — child assignment implies inheritance of all parent permissions
+      </button>
+      <button class="quiz-option" data-correct="true"
+        data-explanation="✓ Correct. The CTE builds identifiers for all policies, but the final JOIN only returns rows where the ExternalRole has a mapping in tblExternalRoleToPermission or tblExternalRoleToRole. Identifiers for unrelated policies are generated but never selected.">
+        No — the SP only returns permissions the external role is explicitly mapped to
+      </button>
+      <button class="quiz-option" data-correct="false">
+        Yes — the recursive CTE returns the full subtree for any matched policy
+      </button>
+      <button class="quiz-option" data-correct="false">
+        No — child policies are evaluated in a separate stored procedure call
+      </button>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-q">
+      <p>4. A PermissionGroup contains three PolicyPermission entries. An assistant acting OnBehalfOf a user has this group assigned. The user has 10 access keys. How many keys can the assistant act with?</p>
+      <button class="quiz-option" data-correct="false">
+        10 — the assistant acts with the full scope of the user's permissions
+      </button>
+      <button class="quiz-option" data-correct="false">
+        3 — the assistant only ever gets the permission group's permissions
+      </button>
+      <button class="quiz-option" data-correct="true"
+        data-explanation="✓ Correct. The OnBehalfOf evaluate service intersects the user's 10 keys with the 3 keys from GetUserAccessKeysFromPermissionGroups. Only keys present in BOTH sets are returned — that's at most 3, possibly fewer if the user doesn't have all 3.">
+        At most 3 — only keys in both the user's set and the permission group are kept
+      </button>
+      <button class="quiz-option" data-correct="false">
+        13 — the union of the user's keys and the permission group's keys
+      </button>
+      <div class="quiz-feedback"></div>
+    </div>
+
+  </div>
+
+  <!-- ── What's Next ─────────────────────────────────────── -->
+  <h2>What's Next</h2>
+  <p>
+    You now have all the conceptual pieces. Lesson 05 will bring them together in a
+    <strong>debugging scenario</strong>: a user who should have access but is getting Deny.
+    You will work through the real diagnostic steps — logs, SQL queries, cache checks —
+    using everything from Lessons 01–04.
+  </p>
+
+  <!-- ── Primary Source ─────────────────────────────────── -->
+  <h2>Primary Source</h2>
+  <p>
+    Read the stored procedure directly:
+    <code>src/Equisoft.AuthorizationService.Data/Scripts/StoredProcedures/spGetUserAccessKeys.sql</code>.
+    Focus on the two-part structure: the recursive CTE (Step 1) and the two UNION branches (Step 2).
+    The CTE is the architectural heart of the service — everything else is scaffolding around it.
+  </p>
+
+  <!-- ── Footer ─────────────────────────────────────────── -->
+  <footer class="lesson-footer">
+    <div>
+      Lesson 04 of the Authorization Service series · 2026-06-22 ·
+      <a href="0003-external-role-providers.html">← Lesson 03</a>
+    </div>
+    <div class="ask-teacher">
+      <strong>Questions?</strong> Ask your Claude Code agent anything unclear.
+      Good prompts: "Show me the full stored procedure SQL",
+      "What does the recursive CTE produce for a 4-level deep policy tree?", or
+      "How do I find which external role is granting a specific access key to a user?"
+    </div>
+  </footer>
+
+</div>
+<script src="../assets/quiz.js"></script>
+<script>
+function reveal(btn) {
+  var block = btn.nextElementSibling;
+  block.style.display = 'block';
+  btn.style.display = 'none';
+}
+</script>
+</body>
+</html>

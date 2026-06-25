@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lesson 8 — Debugging Failing Pipelines</title>
+  <link rel="stylesheet" href="../assets/style.css" />
+  <style>
+    /* Decision tree */
+    .dtree {
+      font-size: 0.87rem;
+      margin: 1.5rem 0;
+      line-height: 1.6;
+    }
+    .dtree ul { list-style: none; padding-left: 1.4rem; border-left: 2px solid var(--border); margin: 0.2rem 0 0.2rem 0.5rem; }
+    .dtree > ul { border-left: none; padding-left: 0; }
+    .dtree li { position: relative; padding: 0.1rem 0 0.1rem 1rem; }
+    .dtree li::before { content: ''; position: absolute; left: -1.4rem; top: 0.75em; width: 1rem; height: 2px; background: var(--border); }
+    .dtree > li::before { display: none; }
+    .dtree .q { font-weight: 600; color: var(--text); }
+    .dtree .a { color: var(--accent); }
+    .dtree .fix { color: var(--text-muted); font-style: italic; }
+
+    /* Mock pipeline log */
+    .log {
+      background: #1e1e1e;
+      color: #d4d4d4;
+      border-radius: 6px;
+      padding: 0.85rem 1rem;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      line-height: 1.7;
+      margin: 0.75rem 0 1.25rem;
+      overflow-x: auto;
+    }
+    .log .l-section { color: #4ec9b0; font-weight: bold; }
+    .log .l-command { color: #9cdcfe; }
+    .log .l-error   { color: #f44747; font-weight: bold; }
+    .log .l-warn    { color: #dcdcaa; }
+    .log .l-debug   { color: #569cd6; opacity: 0.7; }
+    .log .l-dim     { color: #6a9955; }
+
+    /* Stage grid */
+    .stage-grid {
+      display: flex;
+      gap: 0.5rem;
+      margin: 1.25rem 0;
+      flex-wrap: wrap;
+    }
+    .stage-tile {
+      border-radius: 5px;
+      padding: 0.5rem 0.85rem;
+      font-size: 0.82rem;
+      font-weight: 600;
+      border: 1.5px solid transparent;
+      min-width: 90px;
+      text-align: center;
+    }
+    .stage-tile.pass  { background: #dff6dd; border-color: var(--success); color: var(--success); }
+    .stage-tile.fail  { background: #fde7e9; border-color: var(--error); color: var(--error); }
+    .stage-tile.skip  { background: var(--code-bg); border-color: var(--border); color: var(--text-muted); }
+    .stage-tile.wait  { background: #fff4ce; border-color: var(--warn); color: var(--warn); }
+    .stage-tile .icon { font-size: 1rem; display: block; }
+
+    /* Error pattern cards */
+    .error-card {
+      border: 1.5px solid var(--border);
+      border-radius: 6px;
+      margin: 1rem 0;
+      overflow: hidden;
+    }
+    .error-card .ec-head {
+      background: var(--code-bg);
+      padding: 0.5rem 0.85rem;
+      font-weight: 600;
+      font-size: 0.88rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .error-card .ec-body {
+      padding: 0.6rem 0.85rem;
+      font-size: 0.87rem;
+    }
+    .error-card .ec-body p { margin: 0 0 0.4rem; }
+    .error-card .ec-body p:last-child { margin: 0; }
+
+    .callout {
+      border-left: 4px solid var(--accent);
+      background: #eef6ff;
+      padding: 0.9rem 1rem;
+      margin: 1.5rem 0;
+      border-radius: 0 4px 4px 0;
+    }
+    .callout.tip  { border-left-color: var(--success); background: #f0faf0; }
+    .callout.warn { border-left-color: var(--warn); background: #fdf6ec; }
+    .callout p { margin: 0; }
+    .callout p + p { margin-top: 0.5rem; }
+  </style>
+</head>
+<body>
+  <article>
+    <header>
+      <p class="lesson-number">Lesson 8 of <em>Azure CI/CD with Azure Pipelines</em></p>
+      <h1>Debugging Failing Pipelines</h1>
+      <p class="subtitle">Where to look, what the error means, and how to fix it fast</p>
+    </header>
+
+    <!-- ── MENTAL MODEL ────────────────────────────────── -->
+    <section>
+      <h2>The three-click rule</h2>
+      <p>Any pipeline failure can be reached in three clicks: <strong>run overview → job → step</strong>. Before reading anything else, narrow down <em>where</em> the failure is. Everything else is just reading carefully.</p>
+
+      <div class="stage-grid">
+        <div class="stage-tile pass"><span class="icon">✓</span>Build</div>
+        <div class="stage-tile fail"><span class="icon">✗</span>Publish</div>
+        <div class="stage-tile skip"><span class="icon">—</span>Deploy</div>
+      </div>
+      <p style="font-size:0.85rem; color:var(--text-muted); margin-top:-0.5rem;">The run overview shows every stage at a glance. Click the red stage → click the red job → click the red step → read the log.</p>
+    </section>
+
+    <!-- ── DECISION TREE ───────────────────────────────── -->
+    <section>
+      <h2>Diagnostic decision tree</h2>
+      <div class="dtree">
+        <ul>
+          <li><span class="q">Pipeline didn't start at all?</span>
+            <ul>
+              <li><span class="a">YAML parse error</span> — <span class="fix">open the pipeline in the editor; the "Issues" tab shows line numbers</span></li>
+              <li><span class="a">Trigger didn't fire</span> — <span class="fix">check trigger config in YAML; did you push to the right branch?</span></li>
+            </ul>
+          </li>
+          <li><span class="q">Stage shows "Skipped"?</span>
+            <ul>
+              <li><span class="a">Stage condition evaluated to false</span> — <span class="fix">add a diagnostic echo step; see section below</span></li>
+            </ul>
+          </li>
+          <li><span class="q">Stage shows "Waiting"?</span>
+            <ul>
+              <li><span class="a">Approval gate pending</span> — <span class="fix">go to Pipelines → Environments → approve it</span></li>
+            </ul>
+          </li>
+          <li><span class="q">Job failed with an error?</span>
+            <ul>
+              <li><span class="a">First red step</span> — <span class="fix">open that step's log; read from the bottom upward</span></li>
+              <li><span class="a">"Task not found"</span> — <span class="fix">extension not installed in your org</span></li>
+              <li><span class="a">"exited with code N"</span> — <span class="fix">your script failed; look at lines printed before this message</span></li>
+              <li><span class="a">"Template not found"</span> — <span class="fix">wrong path, wrong @alias, or repo resource not authorised</span></li>
+              <li><span class="a">"Resource not authorized"</span> — <span class="fix">service connection or agent pool needs pipeline permission</span></li>
+            </ul>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ── LOG FORMAT ─────────────────────────────────── -->
+    <section>
+      <h2>Reading the log: what the <code>##[prefix]</code> means</h2>
+      <p>Every line in an Azure Pipelines log is tagged with a severity prefix. Knowing these tells you what to ignore and what to focus on.</p>
+
+      <div class="log">
+        <span class="l-section">##[section]Starting: npm run build</span><br>
+        <span class="l-command">##[command]/bin/bash -e /tmp/azagent/_work/_temp/build.sh</span><br>
+        <span class="l-dim">&gt; my-app@1.3.0-beta.12 build</span><br>
+        <span class="l-dim">&gt; tsc --noEmit &amp;&amp; vite build</span><br>
+        <span class="l-warn">##[warning]Found 2 deprecated API usages. Build will succeed.</span><br>
+        <span class="l-error">##[error]src/App.tsx(42,5): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.</span><br>
+        <span class="l-error">##[error]TypeScript compilation failed. Exit code: 2</span><br>
+        <span class="l-dim">##[section]Finishing: npm run build</span>
+      </div>
+
+      <table style="width:100%; border-collapse:collapse; font-size:0.86rem; margin:0.5rem 0 1rem;">
+        <thead><tr>
+          <th style="background:var(--code-bg); padding:0.35rem 0.7rem; border-bottom:2px solid var(--border); text-align:left;">Prefix</th>
+          <th style="background:var(--code-bg); padding:0.35rem 0.7rem; border-bottom:2px solid var(--border); text-align:left;">Colour</th>
+          <th style="background:var(--code-bg); padding:0.35rem 0.7rem; border-bottom:2px solid var(--border); text-align:left;">Meaning</th>
+        </tr></thead>
+        <tbody>
+          <tr><td style="padding:0.35rem 0.7rem; border-bottom:1px solid var(--border);"><code>##[section]</code></td><td style="padding:0.35rem 0.7rem; border-bottom:1px solid var(--border);">teal</td><td style="padding:0.35rem 0.7rem; border-bottom:1px solid var(--border);">Step started / finished — structural marker, not an error</td></tr>
+          <tr><td style="padding:0.35rem 0.7rem; border-bottom:1px solid var(--border);"><code>##[command]</code></td><td style="padding:0.35rem 0.7rem; border-bottom:1px solid var(--border);">blue</td><td style="padding:0.35rem 0.7rem; border-bottom:1px solid var(--border);">Exact command the agent ran — useful for reproducing locally</td></tr>
+          <tr><td style="padding:0.35rem 0.7rem; border-bottom:1px solid var(--border);"><code>##[warning]</code></td><td style="padding:0.35rem 0.7rem; border-bottom:1px solid var(--border);">yellow</td><td style="padding:0.35rem 0.7rem; border-bottom:1px solid var(--border);">Non-fatal issue — step still succeeds unless <code>failOnStderr: true</code></td></tr>
+          <tr><td style="padding:0.35rem 0.7rem; border-bottom:1px solid var(--border);"><code>##[error]</code></td><td style="padding:0.35rem 0.7rem; border-bottom:1px solid var(--border);">red</td><td style="padding:0.35rem 0.7rem; border-bottom:1px solid var(--border);">Fatal — step will fail; these are the lines you actually need to read</td></tr>
+          <tr><td style="padding:0.35rem 0.7rem;"><code>##[debug]</code></td><td style="padding:0.35rem 0.7rem;">grey</td><td style="padding:0.35rem 0.7rem;">Only visible when <code>System.Debug</code> is true — very verbose internal detail</td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout tip">
+        <p><strong>Read error logs bottom-up.</strong> The root cause is usually the first <code>##[error]</code> line. Everything after it is cascading fallout. Scroll to the first red line, not the last.</p>
+      </div>
+    </section>
+
+    <!-- ── COMMON ERRORS ──────────────────────────────── -->
+    <section>
+      <h2>The five most common errors</h2>
+
+      <div class="error-card">
+        <div class="ec-head">1 — Script exited with non-zero code</div>
+        <div class="ec-body">
+          <div class="log" style="margin:0 0 0.6rem;">
+            <span class="l-error">##[error]Bash exited with code '1'.</span>
+          </div>
+          <p>Your shell script failed. The <code>##[error]</code> line is just the wrapper — the actual error is in the lines above it. Search upward for the real message (a compiler error, a missing file, a failed HTTP call).</p>
+          <p><strong>Quick check:</strong> Can you reproduce it by running the same command locally with the same Node version?</p>
+        </div>
+      </div>
+
+      <div class="error-card">
+        <div class="ec-head">2 — Task not found</div>
+        <div class="ec-body">
+          <div class="log" style="margin:0 0 0.6rem;">
+            <span class="l-error">##[error]Task 'gitversion/setup' not found. The pipeline references a task that does not exist.</span>
+          </div>
+          <p>The Azure DevOps extension that provides this task is not installed in your organisation. Go to <strong>Organisation Settings → Extensions → Browse marketplace</strong> and install it.</p>
+          <p>Also happens with a typo in the task name or a wrong major version (e.g. <code>Npm@2</code> instead of <code>Npm@1</code>).</p>
+        </div>
+      </div>
+
+      <div class="error-card">
+        <div class="ec-head">3 — Template or repository not found</div>
+        <div class="ec-body">
+          <div class="log" style="margin:0 0 0.6rem;">
+            <span class="l-error">##[error]Unable to resolve template: /CI/build-pipeline.yml@templates. Verify that the referenced template exists and that the pipeline has access to the repository.</span>
+          </div>
+          <p>One of three causes: (a) the path in <code>template:</code> is wrong — check spelling and the leading <code>/</code>; (b) the <code>@alias</code> doesn't match the name in <code>resources.repositories</code>; or (c) the pipeline hasn't been granted access to the <code>PipelineTemplates</code> repo — go to <strong>Project Settings → Repositories → [repo] → Security</strong> and allow the pipeline.</p>
+        </div>
+      </div>
+
+      <div class="error-card">
+        <div class="ec-head">4 — Resource not authorized</div>
+        <div class="ec-body">
+          <div class="log" style="margin:0 0 0.6rem;">
+            <span class="l-error">##[error]Resource not authorized. The pipeline is not permitted to use this service connection.</span>
+          </div>
+          <p>The service connection (e.g. the Octopus endpoint, the npm registry endpoint) hasn't been granted permission to this specific pipeline. Go to <strong>Project Settings → Service connections → [connection] → Security</strong> and add the pipeline, or tick "Grant access permission to all pipelines".</p>
+        </div>
+      </div>
+
+      <div class="error-card">
+        <div class="ec-head">5 — Variable is empty or undefined</div>
+        <div class="ec-body">
+          <div class="log" style="margin:0 0 0.6rem;">
+            <span class="l-warn">##[warning]Input required: versionSpec</span><br>
+            <span class="l-dim">or: release number is "" — Octopus rejects empty strings</span>
+          </div>
+          <p>The variable that should hold a value is empty at runtime. Common causes: (a) a <code>##vso[task.setvariable]</code> step didn't run or used a wrong scope; (b) GitVersion didn't run (often a <code>fetchDepth: 1</code> shallow clone problem); (c) the variable group isn't linked to this pipeline.</p>
+          <p><strong>Quick check:</strong> Add a <code>script: echo "var=$(MyVar)"</code> step immediately before the failing step to confirm what value it actually sees.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SYSTEM.DEBUG ────────────────────────────────── -->
+    <section>
+      <h2>Enabling diagnostic logging</h2>
+      <p>When the log doesn't show enough detail, turn on <strong><code>System.Debug</code></strong>. This floods the log with internal agent activity — task resolution, variable expansion, HTTP calls — but it's invaluable for tricky failures.</p>
+
+      <p><strong>Option A — for a single run:</strong> when queuing a run manually, click <em>Variables</em> and add <code>System.Debug = true</code>. It applies to that run only.</p>
+
+      <p><strong>Option B — in YAML (temporarily):</strong></p>
+      <pre><code>variables:
+  - group: Pipeline_Main
+  - name: System.Debug
+    value: true          # ← remove when you're done debugging</code></pre>
+
+      <div class="callout warn">
+        <p>Don't leave <code>System.Debug: true</code> permanently — it makes logs enormous and can expose sensitive variable values in plain text. Add it, reproduce the failure, then remove it.</p>
+      </div>
+    </section>
+
+    <!-- ── SKIPPED STAGES ─────────────────────────────── -->
+    <section>
+      <h2>Debugging a "Skipped" stage</h2>
+      <p>A stage that shows <strong>Skipped</strong> means its <code>condition:</code> evaluated to <code>false</code> at runtime. The challenge: conditions run silently — the UI just says "skipped", not "skipped because <code>isDevelop</code> was false".</p>
+
+      <p><strong>Step 1 — print the condition variables before the failing stage:</strong></p>
+      <pre><code>- stage: Diagnostics
+  condition: always()           # always runs, gives you the values
+  jobs:
+    - job: PrintVars
+      steps:
+        - script: |
+            echo "Build.SourceBranch:     $(Build.SourceBranch)"
+            echo "Build.SourceBranchName: $(Build.SourceBranchName)"
+            echo "isDevelop:              $(isDevelop)"
+            echo "isMaster:               $(isMaster)"
+            echo "isRelease:              $(isRelease)"
+          displayName: Print branch variables</code></pre>
+
+      <p>Run the pipeline and check what those variables actually contain. A common gotcha: the branch runtime expression sets <code>isDevelop</code> using a <code>startsWith</code> check on <code>refs/heads/develop</code>, and the actual branch name doesn't match that pattern exactly.</p>
+
+      <p><strong>Step 2 — temporarily remove the condition</strong> to confirm the stage itself works, then re-add it once you know what value to check against.</p>
+
+      <div class="callout">
+        <p><strong>Remember:</strong> runtime expressions (<code>${{ }}</code> compile-time vs <code>$[]</code> runtime vs <code>$()</code> macro) evaluate at different times. A <code>$[</code> condition that references a variable not yet set will silently evaluate to empty string — which is falsy. See <a href="0003-variables-and-variable-groups.html">Lesson 3</a> for the expression timing rules.</p>
+      </div>
+    </section>
+
+    <!-- ── DOWNLOAD FULL LOGS ─────────────────────────── -->
+    <section>
+      <h2>Downloading the full log</h2>
+      <p>The UI truncates long logs. For anything involving npm output, compiler errors, or verbose test runners, click <strong>Download logs</strong> (top-right of the job view) to get a zip of all step logs as plain text files — searchable in your editor.</p>
+      <p>Also useful: the <strong>Raw log</strong> link in each step expands the full text without pagination.</p>
+    </section>
+
+    <!-- ── QUIZ ───────────────────────────────────────── -->
+    <section>
+      <h2>Check your understanding</h2>
+      <div id="quiz"></div>
+    </section>
+
+    <!-- ── PRIMARY SOURCE ─────────────────────────────── -->
+    <section>
+      <h2>Primary source</h2>
+      <p>
+        <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/troubleshooting/troubleshooting?view=azure-devops" target="_blank" rel="noopener">
+          Troubleshoot pipeline runs — Microsoft Learn
+        </a><br>
+        The official troubleshooting guide covering common failure modes, diagnostic variables, agent diagnostics, and known issues.
+      </p>
+    </section>
+
+    <!-- ── RELATED LESSONS ────────────────────────────── -->
+    <section>
+      <h2>Related lessons</h2>
+      <ul>
+        <li><a href="0002-triggers-and-conditions.html">Lesson 2 — Triggers and Conditions</a> — how <code>isDevelop</code> conditions are written</li>
+        <li><a href="0003-variables-and-variable-groups.html">Lesson 3 — Variables and Variable Groups</a> — expression timing that causes silent empty variables</li>
+        <li><a href="0004-templates-and-extends.html">Lesson 4 — Templates and Extends</a> — template path and @alias errors</li>
+        <li><a href="0005-pipeline-artifacts.html">Lesson 5 — Pipeline Artifacts</a> — artifact and checkout errors</li>
+        <li><a href="0007-gitversion-semantic-versioning.html">Lesson 7 — GitVersion</a> — fetchDepth causing empty GitVersion variables</li>
+      </ul>
+    </section>
+
+    <div class="ask-question">
+      <strong>Something unclear?</strong> Ask your teacher — describe an error you've actually seen and Claude will walk through it with you.
+    </div>
+  </article>
+
+  <script src="../assets/quiz.js"></script>
+  <script>
+    new Quiz('quiz', [
+      {
+        q: 'What is the correct order to click when a pipeline run fails?',
+        options: [
+          'Run overview → red job → red step → read log',
+          'Run overview → variables tab → error → read log',
+          'Project settings → agent pools → job → read log',
+          'Run overview → red stage → diagnostics → read log'
+        ],
+        answer: 0,
+        explanation: 'Always narrow down first: run overview shows which stage failed, clicking the stage shows which job failed, clicking the job shows which step failed. Then you read the log for that step.'
+      },
+      {
+        q: 'A stage shows "Skipped" unexpectedly. What is the most likely cause?',
+        options: [
+          'The stage condition expression evaluated to false',
+          'The previous stage timed out before completing',
+          'The agent pool was busy and skipped the stage',
+          'The stage had no steps defined in YAML'
+        ],
+        answer: 0,
+        explanation: '"Skipped" means the condition: on the stage evaluated to false at runtime. The UI doesn\'t tell you why. Add a diagnostic step that echoes the variables used in the condition to find what value they actually held.'
+      },
+      {
+        q: 'How do you enable verbose diagnostic logging for one pipeline run only?',
+        options: [
+          'Queue the run with System.Debug set to true',
+          'Queue the run with Debug.Mode set to true',
+          'Queue the run with Pipeline.Debug set to true',
+          'Queue the run with Agent.Verbose set to true'
+        ],
+        answer: 0,
+        explanation: 'System.Debug=true is the standard Azure Pipelines diagnostic flag. Set it when manually queuing a run under the Variables section. It exposes detailed internal activity but should be removed when done — it makes logs enormous and can expose variable values.'
+      },
+      {
+        q: 'The log shows "Bash exited with code 1". Where is the actual error message?',
+        options: [
+          'Lines printed above the exit code message',
+          'Variables panel for the failed job step',
+          'Diagnostics tab within the pipeline run',
+          'Agent log file stored on the build server'
+        ],
+        answer: 0,
+        explanation: '"Bash exited with code 1" is the wrapper — it just tells you the script failed. The real error (compiler output, missing file, failed HTTP call) is in the lines printed before this message. Scroll upward from the red line to find the root cause.'
+      }
+    ]);
+  </script>
+</body>
+</html>

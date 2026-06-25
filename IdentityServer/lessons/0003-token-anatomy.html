@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 3 — Token Anatomy &amp; Equisoft Custom Claims</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="../MISSION.md">Identity &amp; Authorization</a> ›
+    <a href="0001-ecosystem-overview.html">Lesson 1</a> ›
+    <a href="0002-oauth-flows.html">Lesson 2</a> › Lesson 3 of 6
+  </div>
+  <h1>Token Anatomy &amp; Equisoft Custom Claims</h1>
+  <div class="meta">
+    <span>~25 minutes</span>
+    <span>Code-heavy</span>
+    <span>Prerequisites: <a href="0002-oauth-flows.html">Lesson 2</a></span>
+  </div>
+</div>
+
+<p>
+  Every request in the Equisoft ecosystem is authenticated by a JWT. Knowing exactly what is inside
+  that token — and where each claim comes from — is essential for writing correct authorization code,
+  debugging access issues, and onboarding new clients. This lesson dissects the token anatomy.
+</p>
+
+<h2>Three Token Types: Quick Recap</h2>
+
+<table>
+  <thead>
+    <tr><th>Token</th><th>Audience</th><th>What it proves</th><th>Used for</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Access Token</strong></td>
+      <td>API resources (e.g. <code>assistmgntapi</code>)</td>
+      <td>You are authorised to call this API</td>
+      <td>Sent as <code>Authorization: Bearer …</code> to APIs</td>
+    </tr>
+    <tr>
+      <td><strong>ID Token</strong></td>
+      <td>The client app itself</td>
+      <td>Who the user is (identity)</td>
+      <td>Used by the frontend; never sent to APIs</td>
+    </tr>
+    <tr>
+      <td><strong>Refresh Token</strong></td>
+      <td>Identity Gateway only</td>
+      <td>You may request new access tokens</td>
+      <td>Stored securely server-side; never in browser local storage</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout warn">
+  <strong>Common mistake</strong>
+  Do not send the ID Token to an API. APIs validate <em>Access Tokens</em>. The ID Token is for the
+  application to read user information (name, email); it is not an authorization credential.
+</div>
+
+<hr>
+
+<h2>Anatomy of an Equisoft Access Token</h2>
+
+<p>
+  Here is a representative decoded access token issued by the Identity Gateway. Each section is
+  annotated with where the claim comes from.
+</p>
+
+<h3>Header</h3>
+<pre><code>{
+  "alg": "RS256",     // Signing algorithm — RSA with SHA-256
+  "kid": "abc123",    // Key ID — maps to the signing key in IdG's JWKS endpoint
+  "typ": "at+JWT"     // Token type — "at" marks this as an Access Token (OIDC spec)
+}</code></pre>
+
+<h3>Payload — Standard Claims</h3>
+<pre><code>{
+  // ── Standard JWT claims (RFC 7519) ────────────────────────────
+  "iss": "https://identity.equisoft.com",   // Issuer — the Identity Gateway URL
+  "aud": ["assistmgntapi", "authorizationapi"], // Audiences — which APIs accept this token
+  "sub": "d4e5f6a7-...",                    // Subject — the user's local ID in IdG's UserDb
+  "iat": 1700000000,                         // Issued at (Unix timestamp)
+  "exp": 1700003600,                         // Expires at (iat + token lifetime)
+  "jti": "unique-token-id",                  // JWT ID — unique per token
+
+  // ── Standard OIDC / OAuth claims ─────────────────────────────
+  "client_id": "my-spa-app",                // Which OAuth client requested this token
+  "scope": "openid profile assistmgntapi",  // Granted OAuth scopes</code></pre>
+
+<h3>Payload — Equisoft Custom Claims</h3>
+<pre><code>  // ── Added by EquisoftTokenResponseGenerator ──────────────────
+  "tenantId": "00000000-aaaa-bbbb-cccc-000000000001", // Tenant GUID — from TenantClient
+  "identityRole": "Advisor",               // User's role — from UserClient (can be null)
+
+  // ── From user record (EquisoftProfileService) ─────────────────
+  "tenant": "ACME",                        // Tenant key (short name) — from UserProvider
+  "externalobjectidentifier": "aad-oid-…", // External IdP user ID — from Azure AD "oid" claim
+  "idp": "aad",                            // Which external IdP authenticated the user
+
+  // ── Standard OpenID Connect identity claims ───────────────────
+  "name":  "Jane Doe",
+  "email": "jane@acme.com",
+  "given_name": "Jane",
+  "family_name": "Doe"
+}</code></pre>
+
+<div class="callout key">
+  <strong>Key insight: two sources of custom claims</strong>
+  Claims added by <code>EquisoftTokenResponseGenerator</code> (<code>tenantId</code>, <code>identityRole</code>)
+  require outbound HTTP calls at token issuance time. Claims loaded by <code>EquisoftProfileService</code>
+  come from the Identity Gateway's own database. If a Tenant or User service is down, token issuance
+  degrades gracefully — those claims are omitted rather than failing the whole request.
+</div>
+
+<hr>
+
+<h2>Custom Claims Reference</h2>
+
+<table>
+  <thead>
+    <tr><th>Claim</th><th>Type</th><th>Source</th><th>What it is</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>tenantId</code></td>
+      <td>GUID string</td>
+      <td><code>EquisoftTokenResponseGenerator</code> → TenantClient</td>
+      <td>The SQL primary key of the user's tenant. Used for data isolation in all services.</td>
+    </tr>
+    <tr>
+      <td><code>tenant</code></td>
+      <td>Short string</td>
+      <td><code>EquisoftProfileService</code> → UserProvider table</td>
+      <td>Human-readable tenant key (e.g. <code>ACME</code>). Used in service account secrets config and log correlation.</td>
+    </tr>
+    <tr>
+      <td><code>identityRole</code></td>
+      <td>String</td>
+      <td><code>EquisoftTokenResponseGenerator</code> → UserClient</td>
+      <td>The user's platform role (e.g. <code>Advisor</code>, <code>Admin</code>, <code>Guest</code>). The Authorization Service uses this as the starting point for permission resolution.</td>
+    </tr>
+    <tr>
+      <td><code>externalobjectidentifier</code></td>
+      <td>String</td>
+      <td><code>EquisoftProfileService</code> — mapped from IdP <code>oid</code> claim</td>
+      <td>The user's ID in the external identity provider (Azure AD object ID). Used to call the User Service and resolve roles.</td>
+    </tr>
+    <tr>
+      <td><code>isGuest</code></td>
+      <td><code>"true"</code> / absent</td>
+      <td>Guest authentication handler</td>
+      <td>Present and <code>true</code> for guest users. <code>EquisoftTokenResponseGenerator</code> short-circuits role lookup and sets <code>identityRole = "Guest"</code> for these users.</td>
+    </tr>
+    <tr>
+      <td><code>service_isService</code></td>
+      <td><code>"true"</code> / absent</td>
+      <td>Client Credentials grant only</td>
+      <td>Only present on service-account tokens. The DIT framework reads this to set <code>IdentityType.Service</code>. The Authorization Service's <code>IsService</code> policy requires it.</td>
+    </tr>
+    <tr>
+      <td><code>service_role</code></td>
+      <td>String</td>
+      <td>Client Credentials grant</td>
+      <td>The service's role name. Used by the Authorization Service for role-based permission lookup for service accounts.</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr>
+
+<h2>How Claims Are Used in Downstream Services</h2>
+
+<h3>In AssistantManagement</h3>
+<p>
+  The DIT Identity middleware (<code>app.UseIdentityPrincipal()</code>) parses the JWT and populates
+  <code>IIdentityContext</code>. Controllers access it via dependency injection:
+</p>
+<pre><code>// AssistantRelationsController.cs
+public class AssistantRelationsController : ControllerBase
+{
+    private readonly IIdentityContext _identityContext;
+
+    public async Task&lt;IActionResult&gt; GetRelations()
+    {
+        var tenantId    = _identityContext.TenantId;           // from "tenantId" claim
+        var userId      = _identityContext.ResourceOwnerId;    // from "sub" claim
+        var externalId  = _identityContext.ExternalPrincipalId; // from "externalobjectidentifier"
+        var isOnBehalf  = _identityContext.IsOnBehalfOf;       // true if delegated context
+
+        // All queries are filtered by tenantId for data isolation
+        var relations = await _service.GetRelationsAsync(tenantId, userId);
+        return Ok(relations);
+    }
+}</code></pre>
+
+<h3>In the Authorization Service</h3>
+<p>
+  The Authorization Service similarly reads <code>IIdentityContext</code> and also uses claims
+  directly for permission resolution:
+</p>
+<pre><code>// The service reads the identityRole claim from the token to determine
+// which external roles to load (from the ExternalRoles table / providers)
+// Then maps those to internal roles → policies → permissions → access keys
+
+// GET /api/v1/Authorize?key=shared.eapp.Lock
+// 200 OK    → user has the permission
+// 403 Forbidden → user does not have the permission</code></pre>
+
+<hr>
+
+<h2>Validating a Token (as a New API Service)</h2>
+
+<p>
+  When you build a new API service, here is the minimal setup to validate Equisoft tokens correctly
+  (following the pattern in AssistantManagement's <code>Startup.cs</code>):
+</p>
+
+<pre><code>// Startup.cs (or Program.cs in minimal API)
+services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme, builder =>
+{
+    builder.AddJwt();   // DIT helper — wraps Microsoft.AspNetCore.Authentication.JwtBearer
+    builder.AddBasicAuth(); // Optional — for health check endpoints
+});
+
+// appsettings.json
+{
+  "auth": {
+    "jwt": {
+      "authority": "https://api.dev.equisoft.com/identity",  // IdG discovery endpoint
+      "audience":  "my-new-service-api",                      // This service's audience name
+      "issuer":    ""
+    }
+  }
+}</code></pre>
+
+<p>
+  The JWT middleware automatically fetches the Identity Gateway's public keys from
+  <code>{authority}/.well-known/openid-configuration</code> and caches them. Token signatures are
+  validated against those keys on every request.
+</p>
+
+<div class="callout tip">
+  <strong>You must register your service's audience with the Identity Gateway</strong>
+  The <code>audience</code> value in your appsettings must match an API Resource defined in the
+  Identity Gateway's configuration database. Contact your team lead to add the new audience, or
+  run an EF Core migration to seed it. See Lesson 5 for details on client/resource registration.
+</div>
+
+<hr>
+
+<h2>Interactive Exercise: Token Decoder</h2>
+<p>
+  Decode a real token from your development environment and find these claims:
+  <code>tenantId</code>, <code>identityRole</code>, <code>tenant</code>, <code>sub</code>, <code>client_id</code>.
+</p>
+<ol>
+  <li>Log into a dev application that uses the Identity Gateway.</li>
+  <li>Open browser DevTools → Network → find a request with <code>Authorization: Bearer …</code> header.</li>
+  <li>Copy the token value and paste it into <a href="https://jwt.io" target="_blank">jwt.io</a>.</li>
+  <li>Confirm you can locate all five claims listed above.</li>
+  <li>Check the <code>exp</code> claim — when does this token expire?</li>
+</ol>
+
+<div class="callout">
+  <strong>If you do not see <code>tenantId</code></strong>
+  This means either the Tenant service was unavailable during token issuance, or the client app's
+  scope did not request the <code>tenantId</code> claim. Check the client's configured scopes in the
+  Identity Gateway database.
+</div>
+
+<hr>
+
+<!-- QUIZ -->
+<div class="quiz" data-quiz="quiz3">
+  <h3>Knowledge Check</h3>
+
+  <div class="quiz-question" data-correct="c">
+    <p>1. A downstream API receives a token. Which claim tells it the database tenant to query?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz3-q0" value="a"> <code>tenant</code> (the short key)</label></li>
+      <li><label><input type="radio" name="quiz3-q0" value="b"> <code>sub</code> (the user's local ID)</label></li>
+      <li><label><input type="radio" name="quiz3-q0" value="c"> <code>tenantId</code> (the GUID)</label></li>
+      <li><label><input type="radio" name="quiz3-q0" value="d"> <code>aud</code> (the audience)</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="b">
+    <p>2. What does the <code>typ: at+JWT</code> header claim indicate?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz3-q1" value="a"> The token uses an asymmetric algorithm</label></li>
+      <li><label><input type="radio" name="quiz3-q1" value="b"> This is an Access Token, not an ID Token</label></li>
+      <li><label><input type="radio" name="quiz3-q1" value="c"> The token was issued by an Equisoft service</label></li>
+      <li><label><input type="radio" name="quiz3-q1" value="d"> The token has already been validated</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="d">
+    <p>3. For a Guest user, which component sets the <code>identityRole</code> claim to <code>"Guest"</code>?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz3-q2" value="a"> The User Service (UserClient)</label></li>
+      <li><label><input type="radio" name="quiz3-q2" value="b"> The Authorization Service</label></li>
+      <li><label><input type="radio" name="quiz3-q2" value="c"> The frontend application</label></li>
+      <li><label><input type="radio" name="quiz3-q2" value="d"> <code>EquisoftTokenResponseGenerator</code> (short-circuits the UserClient call)</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="a">
+    <p>4. A new API service you're building needs to validate Equisoft tokens. What is the minimum configuration required?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz3-q3" value="a"> JWT authority (IdG URL) and the service's audience name</label></li>
+      <li><label><input type="radio" name="quiz3-q3" value="b"> The IdG's signing certificate thumbprint and the service's audience</label></li>
+      <li><label><input type="radio" name="quiz3-q3" value="c"> The client_id of the calling app and the service's audience</label></li>
+      <li><label><input type="radio" name="quiz3-q3" value="d"> JWT authority, audience, and a client_secret for token introspection</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <button class="quiz-btn" data-quiz-submit="quiz3">Check Answers</button>
+  <div class="quiz-score"></div>
+</div>
+
+<script>
+window.quizExplanations = {
+  'quiz3-q0': 'tenantId is the GUID used as the SQL foreign key for data isolation. The short `tenant` key is used for config lookups (e.g. service account secrets).',
+  'quiz3-q1': 'at+JWT is defined by RFC 9068. It tells the receiving API that this is an access token, preventing ID Tokens from being accidentally accepted.',
+  'quiz3-q2': 'EquisoftTokenResponseGenerator checks the isGuest claim first. If true, it sets identityRole="Guest" without calling the User Service.',
+  'quiz3-q3': 'The JWT bearer middleware fetches the signing keys automatically from the authority\'s discovery endpoint. You need the authority URL and the audience claim your service expects.'
+};
+</script>
+
+<hr>
+
+<h2>Primary Source</h2>
+<p>
+  Read the Duende documentation on the Profile Service to understand how claims are loaded for tokens:
+  <a href="https://docs.duendesoftware.com/identityserver/v7/fundamentals/claims/" target="_blank">
+    Duende IS v7 — Claims and the Profile Service
+  </a>
+</p>
+
+<div class="ask-claude">
+  <strong>Questions? Ask your teacher.</strong>
+  Try: <em>"Why is there both a <code>tenant</code> claim (short key) and a <code>tenantId</code> claim (GUID)? When would I use one over the other?"</em>
+</div>
+
+<div class="lesson-nav">
+  <a href="0002-oauth-flows.html">← Lesson 2: OAuth Flows</a>
+  <a class="next" href="0004-authorization-service.html">Next → Lesson 4: The Authorization Service</a>
+</div>
+
+<div class="lesson-footer">
+  Equisoft Identity Learning · Lesson 3 · Sources:
+  <code>EquisoftTokenResponseGenerator.cs</code>, <code>EquisoftProfileService.cs</code>,
+  <code>IdentityContextExtensions.cs</code>
+</div>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

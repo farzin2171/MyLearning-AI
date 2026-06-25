@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lesson 5 — Pipeline Artifacts</title>
+  <link rel="stylesheet" href="../assets/style.css" />
+  <style>
+    /* Artifact flow diagram */
+    .flow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0;
+      margin: 2rem 0;
+      flex-wrap: wrap;
+    }
+    .flow-box {
+      background: var(--surface);
+      border: 1.5px solid var(--border);
+      border-radius: 6px;
+      padding: 1rem 1.25rem;
+      min-width: 160px;
+      text-align: center;
+      font-size: 0.85rem;
+    }
+    .flow-box strong {
+      display: block;
+      font-size: 0.95rem;
+      margin-bottom: 0.3rem;
+      color: var(--accent);
+    }
+    .flow-box.store {
+      border-color: var(--accent);
+      background: #eef6ff;
+      border-style: dashed;
+    }
+    .flow-arrow {
+      font-size: 1.5rem;
+      color: var(--text-muted);
+      padding: 0 0.5rem;
+      user-select: none;
+    }
+    .flow-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.25rem;
+    }
+
+    /* Key param table */
+    .param-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+      margin: 1rem 0;
+    }
+    .param-table th {
+      background: var(--code-bg);
+      text-align: left;
+      padding: 0.45rem 0.75rem;
+      border-bottom: 2px solid var(--border);
+    }
+    .param-table td {
+      padding: 0.45rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    .param-table code {
+      background: var(--code-bg);
+      padding: 0.1em 0.3em;
+      border-radius: 3px;
+      font-size: 0.85em;
+    }
+    .param-table tr:last-child td { border-bottom: none; }
+
+    /* Callout box */
+    .callout {
+      border-left: 4px solid var(--accent);
+      background: #eef6ff;
+      padding: 0.9rem 1rem;
+      margin: 1.5rem 0;
+      border-radius: 0 4px 4px 0;
+    }
+    .callout.warn {
+      border-left-color: var(--warn);
+      background: #fdf6ec;
+    }
+    .callout.tip {
+      border-left-color: var(--success);
+      background: #f0faf0;
+    }
+    .callout p { margin: 0; }
+    .callout p + p { margin-top: 0.5rem; }
+  </style>
+</head>
+<body>
+  <article>
+    <header>
+      <p class="lesson-number">Lesson 5 of <em>Azure CI/CD with Azure Pipelines</em></p>
+      <h1>Pipeline Artifacts</h1>
+      <p class="subtitle">Passing build output between stages so build and publish never share an agent</p>
+    </header>
+
+    <!-- ── WHY ─────────────────────────────────────────── -->
+    <section>
+      <h2>The problem artifacts solve</h2>
+      <p>Each stage in an Azure Pipeline can run on a different agent — and by default it <em>does</em>. The build agent compiles your TypeScript, runs tests, and produces a <code>dist/</code> folder. Then it's done. The publish stage starts on a brand-new agent that has <strong>never seen your source tree</strong>.</p>
+      <p><strong>Artifacts</strong> are how you hand the <code>dist/</code> folder from one stage to the next. Azure Pipelines stores them in a managed artifact store attached to the run, outside any agent's filesystem.</p>
+
+      <div class="flow">
+        <div class="flow-box">
+          <strong>Build Stage</strong>
+          <div>npm ci</div>
+          <div>npm run build</div>
+          <div>PublishArtifact ▸</div>
+          <div class="flow-label">agent A</div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-box store">
+          <strong>Artifact Store</strong>
+          <div>name: <em>drop</em></div>
+          <div class="flow-label">managed by Azure Pipelines</div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-box">
+          <strong>Publish Stage</strong>
+          <div>download: drop</div>
+          <div>Octopus Create</div>
+          <div class="flow-label">agent B (fresh)</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── PUBLISHING ──────────────────────────────────── -->
+    <section>
+      <h2>Publishing an artifact</h2>
+      <p>Use <strong><code>PublishPipelineArtifact@1</code></strong> at the end of your build job.</p>
+
+      <pre><code>- task: PublishPipelineArtifact@1
+  displayName: Publish drop
+  inputs:
+    targetPath: $(Build.ArtifactStagingDirectory)   # what to upload
+    artifactName: drop                               # the name other stages use to reference it
+    publishLocation: pipeline                        # always 'pipeline' (not 'filepath')</code></pre>
+
+      <table class="param-table">
+        <thead>
+          <tr><th>Input</th><th>Meaning</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>targetPath</code></td>
+            <td>Folder or file to upload. Anything not under this path is <em>not</em> included.</td>
+          </tr>
+          <tr>
+            <td><code>artifactName</code></td>
+            <td>The name you'll use in <code>download:</code> downstream. Defaults to <code>drop</code> if omitted.</td>
+          </tr>
+          <tr>
+            <td><code>publishLocation</code></td>
+            <td>Always use <code>pipeline</code>. The legacy <code>filepath</code> mode requires a file share.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="callout tip">
+        <p><strong>Convention:</strong> copy files into <code>$(Build.ArtifactStagingDirectory)</code> before publishing. This is a dedicated staging folder that's always clean at the start of each build. Never publish directly from <code>$(Build.SourcesDirectory)</code> — you'd upload your entire repo.</p>
+      </div>
+
+      <p>A typical Node build job ends like this:</p>
+
+      <pre><code>steps:
+  - task: NodeTool@0
+    inputs:
+      versionSpec: 24.x
+
+  - task: Npm@1
+    displayName: npm ci
+    inputs:
+      command: ci
+
+  - task: Npm@1
+    displayName: npm run build
+    inputs:
+      command: custom
+      customCommand: run build
+
+  - task: CopyFiles@2
+    displayName: Stage build output
+    inputs:
+      SourceFolder: dist
+      TargetFolder: $(Build.ArtifactStagingDirectory)
+
+  - task: PublishPipelineArtifact@1
+    displayName: Publish drop
+    inputs:
+      targetPath: $(Build.ArtifactStagingDirectory)
+      artifactName: drop
+      publishLocation: pipeline</code></pre>
+    </section>
+
+    <!-- ── DOWNLOADING ────────────────────────────────── -->
+    <section>
+      <h2>Downloading an artifact</h2>
+      <p>In a downstream stage, use either the task form or the shorthand:</p>
+
+      <h3>Shorthand (preferred)</h3>
+      <pre><code>steps:
+  - download: current        # 'current' = this pipeline run
+    artifact: drop           # matches the artifactName above
+    # Downloaded to: $(Pipeline.Workspace)/drop/</code></pre>
+
+      <h3>Task form (when you need more control)</h3>
+      <pre><code>- task: DownloadPipelineArtifact@2
+  inputs:
+    source: current
+    artifact: drop
+    targetPath: $(Build.ArtifactStagingDirectory)</code></pre>
+
+      <div class="callout">
+        <p><strong>Default download path:</strong> The shorthand puts files at <code>$(Pipeline.Workspace)/&lt;artifactName&gt;/</code>. If you used <code>artifactName: drop</code>, look in <code>$(Pipeline.Workspace)/drop/</code>.</p>
+        <p>The task form lets you redirect to <code>$(Build.ArtifactStagingDirectory)</code> — the same path your publish stage expects — which keeps scripts consistent.</p>
+      </div>
+    </section>
+
+    <!-- ── DOWNLOAD NONE ──────────────────────────────── -->
+    <section>
+      <h2><code>download: none</code> — skipping the auto-download</h2>
+      <p><strong>Deployment jobs</strong> (<code>job:</code> blocks under a <code>deployment:</code> key) automatically download <em>all</em> artifacts at startup. This is convenient but wasteful if the job only triggers a remote action (e.g., creating an Octopus Deploy release).</p>
+
+      <pre><code>jobs:
+  - deployment: PublishToOctopus
+    displayName: Create Octopus release
+    environment: Production
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - download: none     # ← skip the auto-download; we don't need the files here
+            - task: OctopusCreateRelease@3
+              ...</code></pre>
+
+      <div class="callout warn">
+        <p><strong>Regular jobs</strong> do <em>not</em> auto-download — they start with an empty workspace. Only deployment jobs have the auto-download behaviour. If you're in a regular job and need an artifact, always add an explicit <code>download:</code> step.</p>
+      </div>
+    </section>
+
+    <!-- ── TEAM PATTERNS ──────────────────────────────── -->
+    <section>
+      <h2>Team template pattern</h2>
+      <p>In your team's <code>PipelineTemplates</code> repo, the Build stage ends with a publish step, and the subsequent Publish/Deploy stages set <code>checkout: none</code> (no source needed) and use <code>download: current</code>. Here's a condensed example matching that style:</p>
+
+      <pre><code>stages:
+  - stage: Build
+    condition: and(succeeded(), or(eq(variables.isDevelop, true), eq(variables.isMaster, true)))
+    jobs:
+      - job: BuildApp
+        pool:
+          name: $(CILinuxAgentPool)
+        workspace:
+          clean: all
+        steps:
+          - task: NodeTool@0
+            inputs: { versionSpec: 24.x }
+
+          - task: Npm@1
+            inputs: { command: ci, customRegistry: useNpmrc, customEndpoint: 'Equisoft.npm' }
+
+          - task: Npm@1
+            inputs: { command: custom, customCommand: run build }
+
+          - task: CopyFiles@2
+            inputs:
+              SourceFolder: dist
+              TargetFolder: $(Build.ArtifactStagingDirectory)
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: $(Build.ArtifactStagingDirectory)
+              artifactName: drop
+              publishLocation: pipeline
+
+  - stage: Publish
+    dependsOn: Build
+    condition: and(succeeded('Build'), eq(variables.isDevelop, true))
+    jobs:
+      - deployment: CreateOctopusRelease
+        environment: Development
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: none             # ← no source code needed
+                - download: current
+                  artifact: drop             # ← grab what Build published
+                - task: OctopusCreateRelease@3
+                  inputs:
+                    OctopusServerEndpoint: ...
+                    Space: Default
+                    Project: my-app
+                    Packages: |
+                      MyApp.Web:$(GitVersion.SemVer)</code></pre>
+
+      <p>Notice: the Publish stage does two things in order — <code>checkout: none</code> to skip the source clone, then <code>download: current</code> to get the artifact. This keeps the publish job fast: it only touches the pre-built package, never the source tree.</p>
+    </section>
+
+    <!-- ── QUIZ ───────────────────────────────────────── -->
+    <section>
+      <h2>Check your understanding</h2>
+      <div id="quiz"></div>
+    </section>
+
+    <!-- ── PRIMARY SOURCE ─────────────────────────────── -->
+    <section>
+      <h2>Primary source</h2>
+      <p>
+        <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/artifacts/pipeline-artifacts?view=azure-devops&tabs=yaml" target="_blank" rel="noopener">
+          Publish and download pipeline artifacts — Microsoft Learn
+        </a><br>
+        The authoritative reference for both tasks, all inputs, download path conventions, and multi-pipeline artifact sharing.
+      </p>
+    </section>
+
+    <!-- ── RELATED LESSONS ────────────────────────────── -->
+    <section>
+      <h2>Related lessons</h2>
+      <ul>
+        <li><a href="0001-yaml-pipeline-anatomy.html">Lesson 1 — YAML Pipeline Anatomy</a> — stages and jobs structure</li>
+        <li><a href="0002-triggers-and-conditions.html">Lesson 2 — Triggers and Conditions</a> — stage conditions like <code>isDevelop</code></li>
+        <li><a href="0003-variables-and-variable-groups.html">Lesson 3 — Variables and Variable Groups</a> — <code>$(CILinuxAgentPool)</code> and similar</li>
+        <li><a href="0004-templates-and-extends.html">Lesson 4 — Templates and Extends</a> — how app repos consume templates</li>
+      </ul>
+    </section>
+
+    <div class="ask-question">
+      <strong>Something unclear?</strong> Ask your teacher — type a follow-up question and Claude will answer it in the context of this lesson.
+    </div>
+  </article>
+
+  <script src="../assets/quiz.js"></script>
+  <script>
+    new Quiz('quiz', [
+      {
+        q: 'What is the default behaviour when a deployment job starts?',
+        options: [
+          'All pipeline artifacts are downloaded automatically',
+          'No pipeline artifacts are downloaded at all',
+          'Only the most recent artifact is downloaded',
+          'Only artifacts named "drop" are downloaded'
+        ],
+        answer: 0,
+        explanation: 'Deployment jobs automatically download all artifacts produced by upstream jobs. Regular jobs do not — they start with an empty workspace.'
+      },
+      {
+        q: 'Which keyword in a deployment job skips the automatic artifact download?',
+        options: [
+          'download: none',
+          'artifacts: skip',
+          'fetch: none',
+          'checkout: skip'
+        ],
+        answer: 0,
+        explanation: 'download: none tells the deployment job to skip the automatic artifact download. Use it when the job doesn\'t need the files (e.g., just triggering a remote deploy).'
+      },
+      {
+        q: 'Where does the shorthand "download: current" place files by default?',
+        options: [
+          '$(Pipeline.Workspace)/<artifactName>/',
+          '$(Build.ArtifactStagingDirectory)/',
+          '$(Build.SourcesDirectory)/artifacts/',
+          '$(System.DefaultWorkingDirectory)/drop/'
+        ],
+        answer: 0,
+        explanation: 'The shorthand puts files at $(Pipeline.Workspace)/<artifactName>/. For an artifact named "drop", that\'s $(Pipeline.Workspace)/drop/. The task form lets you redirect to a different path.'
+      },
+      {
+        q: 'Why is checkout: none added to a publish/deploy job?',
+        options: [
+          'The stage only needs the artifact, not the source tree',
+          'Checkout always fails on deploy agents by default',
+          'The source tree is already present from the build job',
+          'Checkout is incompatible with deployment job strategy'
+        ],
+        answer: 0,
+        explanation: 'A publish job that just packages and deploys the artifact has no reason to clone the source. checkout: none skips the clone entirely, making the job faster and cleaner.'
+      }
+    ]);
+  </script>
+</body>
+</html>

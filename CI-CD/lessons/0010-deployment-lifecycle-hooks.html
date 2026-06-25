@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lesson 10 — Deployment Lifecycle Hooks</title>
+  <link rel="stylesheet" href="../assets/style.css" />
+  <style>
+    /* Lifecycle timeline */
+    .lifecycle {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      margin: 1.5rem 0;
+      position: relative;
+    }
+    .lc-step {
+      display: flex;
+      gap: 1rem;
+      align-items: flex-start;
+    }
+    .lc-line {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 36px;
+      flex-shrink: 0;
+    }
+    .lc-dot {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 2px solid var(--accent);
+      background: var(--surface);
+      flex-shrink: 0;
+      margin-top: 0.35rem;
+    }
+    .lc-dot.active { background: var(--accent); }
+    .lc-dot.warn { border-color: var(--warn); background: var(--warn); }
+    .lc-dot.success { border-color: var(--success); background: var(--success); }
+    .lc-connector {
+      width: 2px;
+      flex: 1;
+      min-height: 24px;
+      background: var(--border);
+      margin: 2px 0;
+    }
+    .lc-connector.dashed {
+      background: repeating-linear-gradient(
+        to bottom, var(--warn) 0, var(--warn) 4px, transparent 4px, transparent 8px
+      );
+    }
+    .lc-content {
+      padding-bottom: 1.1rem;
+      flex: 1;
+    }
+    .lc-content h4 {
+      font-size: 0.95rem;
+      margin-bottom: 0.2rem;
+    }
+    .lc-content p {
+      font-size: 0.86rem;
+      color: var(--text-muted);
+      margin: 0;
+    }
+    .lc-badge {
+      display: inline-block;
+      font-size: 0.72rem;
+      padding: 0.1em 0.5em;
+      border-radius: 10px;
+      font-family: var(--font-mono);
+      vertical-align: middle;
+      margin-left: 0.4em;
+    }
+    .lc-badge.always { background: var(--code-bg); border: 1px solid var(--border); }
+    .lc-badge.fail   { background: #fde7e9; border: 1px solid var(--error); color: var(--error); }
+    .lc-badge.after  { background: #dff6dd; border: 1px solid var(--success); color: var(--success); }
+
+    /* Hook comparison table */
+    .hook-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.86rem;
+      margin: 1rem 0;
+    }
+    .hook-table th {
+      background: var(--code-bg);
+      text-align: left;
+      padding: 0.4rem 0.75rem;
+      border-bottom: 2px solid var(--border);
+    }
+    .hook-table td {
+      padding: 0.4rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    .hook-table tr:last-child td { border-bottom: none; }
+    code { background: var(--code-bg); padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.84em; }
+
+    .callout {
+      border-left: 4px solid var(--accent);
+      background: #eef6ff;
+      padding: 0.9rem 1rem;
+      margin: 1.5rem 0;
+      border-radius: 0 4px 4px 0;
+    }
+    .callout.tip  { border-left-color: var(--success); background: #f0faf0; }
+    .callout.warn { border-left-color: var(--warn); background: #fdf6ec; }
+    .callout p { margin: 0; }
+    .callout p + p { margin-top: 0.5rem; }
+  </style>
+</head>
+<body>
+  <article>
+    <header>
+      <p class="lesson-number">Lesson 10 of <em>Azure CI/CD with Azure Pipelines</em> — from <em>Applications.Apply</em></p>
+      <h1>Deployment Lifecycle Hooks</h1>
+      <p class="subtitle">How <code>deploy</code>, <code>postRouteTraffic</code>, and <code>on.failure</code> turn a deployment into a pipeline</p>
+    </header>
+
+    <!-- ── WHY ─────────────────────────────────────────── -->
+    <section>
+      <h2>Beyond just "run the deploy"</h2>
+      <p>In <a href="0006-environments-and-approvals.html">Lesson 6</a> you saw a basic deployment job with a single <code>deploy:</code> section. The <code>Applications.Apply</code> pipeline goes further: after the Octopus deploy runs, it automatically runs Playwright smoke tests against the live environment — and if anything fails, it fires a Slack alert. All of this is wired through the three lifecycle hooks of <code>strategy: runOnce</code>.</p>
+    </section>
+
+    <!-- ── LIFECYCLE TIMELINE ─────────────────────────── -->
+    <section>
+      <h2>The three hooks, in order</h2>
+
+      <div class="lifecycle">
+        <div class="lc-step">
+          <div class="lc-line"><div class="lc-dot active"></div><div class="lc-connector"></div></div>
+          <div class="lc-content">
+            <h4><code>deploy:</code> <span class="lc-badge always">always runs</span></h4>
+            <p>The main deployment steps. In Apply: sets the Octopus channel, runs <code>deploy-release-steps.yml</code>. Uses <code>checkout: none</code> — source not needed, Octopus takes care of the actual file deployment.</p>
+          </div>
+        </div>
+        <div class="lc-step">
+          <div class="lc-line"><div class="lc-dot success"></div><div class="lc-connector dashed"></div></div>
+          <div class="lc-content">
+            <h4><code>postRouteTraffic:</code> <span class="lc-badge after">only if deploy: succeeded</span></h4>
+            <p>Runs after traffic is routed to the new version. In Apply: runs Playwright automated tests against the live Dev or QA URL. Uses <code>checkout: self</code> because <code>automated-tests.yml</code> needs the test project source to build and run.</p>
+          </div>
+        </div>
+        <div class="lc-step">
+          <div class="lc-line"><div class="lc-dot warn"></div></div>
+          <div class="lc-content">
+            <h4><code>on.failure:</code> <span class="lc-badge fail">only if job failed</span></h4>
+            <p>Runs when any earlier hook failed (deploy or postRouteTraffic). In Apply: sends a Slack block-kit message to <code>#dit-apply</code> with a link to the failing build. Uses <code>checkout: none</code>.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── YAML ───────────────────────────────────────── -->
+    <section>
+      <h2>The exact YAML from Applications.Apply</h2>
+
+      <pre><code># From azure-pipelines.yml — Development stage
+
+- deployment: DeployOctopusRelease
+  displayName: 'Deploy on Dev'
+  environment: Development
+  strategy:
+    runOnce:
+
+      deploy:                                         # ← hook 1: the actual deploy
+        steps:
+          - checkout: none
+
+          - powershell: |
+              $branch = "$(Build.SourceBranch)"
+              $channel = "Development"
+              if ($branch.StartsWith("refs/heads/feature/")) {
+                  $channel = "Testing-Feature"
+              }
+              Write-Host "##vso[task.setvariable variable=channel]$channel"
+            displayName: 'Set Octopus channel'
+
+          - template: CD/octopus/deploy-release-steps.yml@templates
+            parameters:
+              octopusProjectName: '$(ditManageIISProjectName)'
+              octopusProjectChannel: '$(channel)'
+              octopusProjectEnvironment: 'Development'
+
+      postRouteTraffic:                               # ← hook 2: smoke tests
+        steps:
+          - checkout: self                            # needs source for test project!
+
+          - template: automated-tests.yml
+            parameters:
+              baseUrl: '$(baseUrlAcmeDev)'
+              deviceName: '$(deviceName)'
+              browserName: '$(browserName)'
+              testRunTitle: 'Automated tests - Dev'
+
+      on:
+        failure:                                      # ← hook 3: alert on failure
+          steps:
+            - checkout: none
+
+            - template: slack-failed-deployment-notification.yml
+              parameters:
+                notificationWebHook: '$(notificationWebHook)'
+                notificationChannel: '$(notificationChannel)'
+                environment: 'Dev'</code></pre>
+
+      <div class="callout warn">
+        <p><strong>Why <code>checkout: self</code> in <code>postRouteTraffic</code>?</strong> The <code>automated-tests.yml</code> template needs to build and run the <code>Equisoft.Apply.AutomationTests</code> .NET project. That project lives in the source repo. Without <code>checkout: self</code>, the source directory is empty and <code>dotnet build</code> fails. Every other hook uses <code>checkout: none</code> because Octopus and Slack just need variables, not files.</p>
+      </div>
+    </section>
+
+    <!-- ── COMPARISON TABLE ───────────────────────────── -->
+    <section>
+      <h2>Hook reference</h2>
+      <table class="hook-table">
+        <thead>
+          <tr><th>Hook</th><th>When it runs</th><th>Apply uses it for</th><th>Checkout</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>deploy:</code></td>
+            <td>Always — the main hook</td>
+            <td>Octopus Deploy release</td>
+            <td><code>checkout: none</code></td>
+          </tr>
+          <tr>
+            <td><code>postRouteTraffic:</code></td>
+            <td>Only if <code>deploy:</code> succeeded</td>
+            <td>Playwright smoke tests against live URL</td>
+            <td><code>checkout: self</code> (needs test source)</td>
+          </tr>
+          <tr>
+            <td><code>on.failure:</code></td>
+            <td>Only if the job failed (either hook)</td>
+            <td>Slack alert with build link</td>
+            <td><code>checkout: none</code></td>
+          </tr>
+          <tr>
+            <td><code>on.success:</code></td>
+            <td>Only if all hooks succeeded</td>
+            <td>(not used in Apply)</td>
+            <td>—</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="callout tip">
+        <p><strong>There is also <code>preDeploy:</code></strong> which runs before <code>deploy:</code> — useful for pre-flight checks (verify the environment is available, warm up a cache). The Apply pipeline doesn't use it, but it exists. Full hook order: <code>preDeploy</code> → <code>deploy</code> → <code>routeTraffic</code> → <code>postRouteTraffic</code> → <code>on.success</code> / <code>on.failure</code>.</p>
+      </div>
+    </section>
+
+    <!-- ── WHAT "FAILED" MEANS ────────────────────────── -->
+    <section>
+      <h2>What counts as a failure for <code>on.failure:</code></h2>
+      <p><code>on.failure:</code> triggers when <strong>either</strong> the <code>deploy:</code> hook <strong>or</strong> the <code>postRouteTraffic:</code> hook fails. This means in the Apply pipeline:</p>
+      <ul>
+        <li>Octopus deploy failed → Slack fires</li>
+        <li>Octopus deploy succeeded but Playwright tests failed → Slack also fires</li>
+      </ul>
+      <p>The Slack message links to the pipeline run, so the team can click through to see which step failed — the deploy itself or the post-deploy smoke tests.</p>
+
+      <pre><code># The Slack notification template builds this payload:
+# - Header: "⚠ Failed deployment on Dev"
+# - Link: $(System.TeamFoundationCollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)
+# - Branch: $(Build.SourceBranch)
+# - Commit: $(Build.SourceVersion)</code></pre>
+    </section>
+
+    <!-- ── NIGHTLY MATRIX ─────────────────────────────── -->
+    <section>
+      <h2>The same template, eight ways at once</h2>
+      <p>The <code>automated-tests.yml</code> template referenced in <code>postRouteTraffic</code> is also used in the nightly test pipeline (<code>azure-pipelines-tests.yml</code>), which runs it across 8 device/browser combinations in parallel using a matrix strategy:</p>
+
+      <pre><code># azure-pipelines-tests.yml (simplified)
+strategy:
+  matrix:
+    Desktop_Chrome:
+      deviceName: "Desktop Chrome"
+      browserName: "chromium"
+    iPhone_15_Pro_Max:
+      deviceName: "iPhone 15 Pro Max"
+      browserName: "webkit"
+    Desktop_Firefox:
+      deviceName: "Desktop Firefox"
+      browserName: "firefox"
+    # ... 5 more device/browser combos
+  maxParallel: 8</code></pre>
+
+      <p>One template, two usages: the deployment pipeline runs it once (smoke test with the team's default browser) and the nightly pipeline fans it out across all 8 browsers. This is the value of a well-designed reusable template.</p>
+    </section>
+
+    <!-- ── QUIZ ───────────────────────────────────────── -->
+    <section>
+      <h2>Check your understanding</h2>
+      <div id="quiz"></div>
+    </section>
+
+    <!-- ── PRIMARY SOURCE ─────────────────────────────── -->
+    <section>
+      <h2>Primary source</h2>
+      <p>
+        <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/process/deployment-jobs?view=azure-devops#descriptions-of-lifecycle-hooks" target="_blank" rel="noopener">
+          Deployment job lifecycle hooks — Microsoft Learn
+        </a><br>
+        Full reference for all hooks (preDeploy, deploy, routeTraffic, postRouteTraffic, on.success, on.failure) and their execution conditions.
+      </p>
+    </section>
+
+    <!-- ── RELATED LESSONS ────────────────────────────── -->
+    <section>
+      <h2>Related lessons</h2>
+      <ul>
+        <li><a href="0006-environments-and-approvals.html">Lesson 6 — Environments and Approvals</a> — <code>environment: Development</code> that wraps these hooks</li>
+        <li><a href="0005-pipeline-artifacts.html">Lesson 5 — Artifacts</a> — <code>checkout: none</code> / <code>download: none</code> in deployment jobs</li>
+        <li><a href="0009-service-containers.html">Lesson 9 — Service Containers</a> — the SQL Server + Redis setup in the Build job this deployment depends on</li>
+      </ul>
+    </section>
+
+    <div class="ask-question">
+      <strong>Something unclear?</strong> Ask your teacher — type a follow-up and Claude will answer it in context.
+    </div>
+  </article>
+
+  <script src="../assets/quiz.js"></script>
+  <script>
+    new Quiz('quiz', [
+      {
+        q: 'In the Applications.Apply pipeline, what does postRouteTraffic: run?',
+        options: [
+          'Playwright automated smoke tests against the live URL',
+          'Octopus Deploy release creation for the environment',
+          'Slack notification about the deployment outcome',
+          'Docker image build and push to the registry'
+        ],
+        answer: 0,
+        explanation: 'postRouteTraffic: runs after the deploy: hook succeeds. In Apply, it runs automated-tests.yml which builds and executes Playwright tests against the live Dev or QA environment URL to verify the deployment is working.'
+      },
+      {
+        q: 'Why does postRouteTraffic: use checkout: self when deploy: uses checkout: none?',
+        options: [
+          'The test template needs source code to build the test project',
+          'Octopus Deploy requires source code to create the release',
+          'Playwright cannot run without the application source files',
+          'The postRouteTraffic hook always requires a source checkout'
+        ],
+        answer: 0,
+        explanation: 'automated-tests.yml builds and runs the Equisoft.Apply.AutomationTests .NET project. That project\'s source is in the repository. Without checkout: self, the workspace is empty and dotnet build fails. The deploy hook only needs pipeline variables and the Octopus connection — no source files.'
+      },
+      {
+        q: 'When does on.failure: fire in the Applications.Apply Development stage?',
+        options: [
+          'When either deploy or postRouteTraffic fails',
+          'Only when the Octopus deploy step specifically fails',
+          'Only when the Playwright smoke tests specifically fail',
+          'When the environment approval gate is rejected'
+        ],
+        answer: 0,
+        explanation: 'on.failure: triggers when any hook in the deployment job fails — whether that\'s the deploy: section (Octopus failure) or the postRouteTraffic: section (test failure). Both result in a Slack alert pointing to the failing build.'
+      },
+      {
+        q: 'What does the nightly azure-pipelines-tests.yml use to run tests across 8 browsers at once?',
+        options: [
+          'A matrix strategy with device and browser variables',
+          'Eight separate job definitions with different inputs',
+          'Eight calls to the automated-tests.yml template in parallel',
+          'A parameter list passed to a single automated-tests job'
+        ],
+        answer: 0,
+        explanation: 'The matrix strategy under a job generates parallel job instances — one per matrix entry. Each instance gets the variables defined in that matrix row (deviceName, browserName). This is more concise than writing eight separate job definitions and achieves the same parallelism.'
+      }
+    ]);
+  </script>
+</body>
+</html>

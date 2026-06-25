@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 1 — The Equisoft Identity Ecosystem</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="../MISSION.md">Identity &amp; Authorization</a> › Lesson 1 of 6
+  </div>
+  <h1>The Equisoft Identity Ecosystem</h1>
+  <div class="meta">
+    <span>~25 minutes</span>
+    <span>Conceptual + interactive</span>
+    <span>Prerequisites: OAuth 2.0 &amp; OIDC basics</span>
+  </div>
+</div>
+
+<p>
+  Before writing a single line of authentication code, you need a mental map of the three services
+  that handle identity and authorization across the Equisoft platform. This lesson gives you that map
+  and explains why the responsibilities are split the way they are.
+</p>
+
+<h2>The Three Services at a Glance</h2>
+
+<div class="service-grid">
+  <div class="service-card">
+    <div class="tag">Applications.IdentityGateway</div>
+    <h4>Identity Gateway (IdG)</h4>
+    <p>Issues tokens. Knows who you <em>are</em>. Authenticates users via local accounts, Azure AD, Azure AD B2C, SAML providers, and a custom JWT Bearer assertion grant.</p>
+  </div>
+  <div class="service-card">
+    <div class="tag">Services.Authorization</div>
+    <h4>Authorization Service</h4>
+    <p>Decides what you <em>can do</em>. Translates roles into a flat list of access keys using a policy hierarchy stored in its own database.</p>
+  </div>
+  <div class="service-card">
+    <div class="tag">Services.AssistantManagement</div>
+    <h4>Assistant Management</h4>
+    <p>A downstream API that <em>uses</em> identity. Shows the standard pattern: accept JWT tokens from IdG, enforce scope-based policies, call other services with service-account tokens.</p>
+  </div>
+</div>
+
+<div class="callout">
+  <strong>Key principle</strong>
+  Authentication (who are you?) lives in the Identity Gateway. Authorization (what can you do?) lives
+  in the Authorization Service. Downstream APIs trust both via standard JWT validation.
+</div>
+
+<h2>The Full Request Lifecycle</h2>
+
+<p>
+  Here is what happens when a user logs into a frontend app and calls a protected API endpoint. Follow
+  the numbered steps — you will see all three services in action.
+</p>
+
+<h3>Step 1 — Authentication: Getting a token</h3>
+<div class="flow">
+  <div class="flow-node highlight">Browser</div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-node highlight">Identity Gateway<br><small>/connect/authorize</small></div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-node">Login page<br>(local or external IdP)</div>
+</div>
+<p>
+  The browser initiates the <strong>Authorization Code flow with PKCE</strong>. The Identity Gateway
+  shows a login page or redirects to an external provider (Azure AD, SAML IdP, etc.). After successful
+  login, IdG issues an <strong>authorization code</strong>.
+</p>
+
+<h3>Step 2 — Token issuance: The code exchange</h3>
+<div class="flow">
+  <div class="flow-node highlight">Frontend app</div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-node highlight">IdG <small>/connect/token</small></div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-node">Access Token + ID Token + Refresh Token</div>
+</div>
+<p>
+  The app exchanges the code for tokens. This is where Equisoft's customisation kicks in: the
+  <code>EquisoftTokenResponseGenerator</code> enriches the access token with two Equisoft-specific claims
+  before returning it:
+</p>
+<ul>
+  <li><code>tenantId</code> — looked up from the Tenant Management service via the tenant key in the user's claims</li>
+  <li><code>identityRole</code> — looked up from the User service (e.g. <code>"Admin"</code>, <code>"Advisor"</code>)</li>
+</ul>
+
+<h3>Step 3 — API call: The downstream service validates the token</h3>
+<div class="flow">
+  <div class="flow-node">Frontend</div>
+  <div class="flow-arrow">→<br><small>Bearer token</small></div>
+  <div class="flow-node service">AssistantManagement API</div>
+  <div class="flow-arrow">→<br><small>validates</small></div>
+  <div class="flow-node">IdG JWKS endpoint<br><small>/connect/discovery</small></div>
+</div>
+<p>
+  The API receives the token in the <code>Authorization: Bearer …</code> header. It validates the
+  JWT signature using the Identity Gateway's public keys (fetched via discovery), then enforces
+  scope-based policies using ASP.NET Core's authorization middleware.
+</p>
+
+<h3>Step 4 — Permission check: Asking the Authorization Service</h3>
+<div class="flow">
+  <div class="flow-node service">AssistantManagement API</div>
+  <div class="flow-arrow">→<br><small>GET /api/v1/Authorize?key=…</small></div>
+  <div class="flow-node service">Authorization Service</div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-node db">Redis cache<br>+ SQL DB</div>
+</div>
+<p>
+  For fine-grained permission checks, the API calls the Authorization Service. It passes the user's
+  token (forwarded as <code>Authorization: Bearer …</code>) and asks "does this user have access key
+  <code>shared.eapp.Lock</code>?" The Authorization Service resolves roles → policies → permissions
+  and returns a binary Allow/Deny.
+</p>
+
+<h3>Step 5 — Service-to-service: Machine identity</h3>
+<div class="flow">
+  <div class="flow-node service">AssistantManagement</div>
+  <div class="flow-arrow">→<br><small>client_credentials grant</small></div>
+  <div class="flow-node highlight">IdG <small>/connect/token</small></div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-node">Service access token</div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-node service">User Service</div>
+</div>
+<p>
+  When AssistantManagement needs to call the User Service on its own behalf (not on behalf of a user),
+  it uses the <strong>Client Credentials</strong> grant. It requests a service-account token from IdG
+  using its <code>client_id</code> and <code>client_secret</code>, then uses that token to call the
+  downstream API.
+</p>
+
+<hr>
+
+<h2>Why Is Authorization a Separate Service?</h2>
+
+<p>
+  New developers often ask: "why not just put roles in the JWT and check them in the API?"
+  There are three reasons for the separation:
+</p>
+
+<ol>
+  <li>
+    <strong>Tokens are point-in-time snapshots.</strong> A JWT is typically valid for minutes to hours.
+    If a user's role changes, the old token keeps the old role. The Authorization Service queries
+    a live database (with a short Redis TTL), so permission changes take effect almost immediately.
+  </li>
+  <li>
+    <strong>Roles alone are too coarse.</strong> The authorization model uses a <em>policy hierarchy</em>:
+    a role maps to a policy, a policy contains permissions, and permissions are organised into a tree
+    of <em>access keys</em> (e.g., <code>shared.eapp.Lock</code>). This cannot fit cleanly into a JWT
+    without bloating it.
+  </li>
+  <li>
+    <strong>External role sources.</strong> Permissions can come from Azure AD groups, a custom API,
+    or OIPA computations. The Authorization Service abstracts over all these <em>external role providers</em>
+    so individual APIs do not have to know about them.
+  </li>
+</ol>
+
+<div class="callout tip">
+  <strong>Tip — for new devs</strong>
+  On your first day, ask your team lead: which external role provider is used in your tenant?
+  This determines where group/role assignments are managed (Azure AD vs. internal DB vs. custom API).
+</div>
+
+<hr>
+
+<h2>The Identity Gateway Is Not a Simple OIDC Provider</h2>
+
+<p>
+  The Identity Gateway is built on <strong>Duende IdentityServer v7.3.2</strong> but with significant
+  customisations layered on top. Key things that are non-standard:
+</p>
+
+<table>
+  <thead>
+    <tr><th>Feature</th><th>Standard Duende IS</th><th>Equisoft Customisation</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Token enrichment</td>
+      <td>Claims from profile service only</td>
+      <td><code>EquisoftTokenResponseGenerator</code> adds <code>tenantId</code> and <code>identityRole</code> by calling external services at issuance time</td>
+    </tr>
+    <tr>
+      <td>Redirect URIs</td>
+      <td>Exact match</td>
+      <td><code>WildcardRedirectUriValidator</code> supports wildcard patterns (e.g. <code>https://*.equisoft.com/*</code>)</td>
+    </tr>
+    <tr>
+      <td>CORS origins</td>
+      <td>Exact match</td>
+      <td><code>WildcardCorsPolicyService</code> supports SQL LIKE patterns</td>
+    </tr>
+    <tr>
+      <td>Grant types</td>
+      <td>Standard (code, client_credentials, refresh)</td>
+      <td>+ custom <code>urn:ietf:params:oauth:grant-type:jwt-bearer</code> for federated authentication</td>
+    </tr>
+    <tr>
+      <td>Session management</td>
+      <td>Cookie-based</td>
+      <td>Refresh tokens linked to external IdP sessions in Redis; session validated on every refresh</td>
+    </tr>
+    <tr>
+      <td>User provisioning</td>
+      <td>Manual</td>
+      <td>Auto-provisioning on first external login via <code>UserStore.ProvisionUserAsync()</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<hr>
+
+<h2>Repository Map</h2>
+
+<p>
+  Bookmark these source paths — you will use them constantly:
+</p>
+
+<table>
+  <thead>
+    <tr><th>Service</th><th>Key Path</th><th>What to find there</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Identity Gateway</td>
+      <td><code>Applications.IdentityGateway\src\Equisoft.IdentityGateway\</code></td>
+      <td>Startup, Profile Service, Token Response Generator, Validators</td>
+    </tr>
+    <tr>
+      <td>Authorization</td>
+      <td><code>Services.Authorization\src\Equisoft.AuthorizationService\</code></td>
+      <td>AuthorizeController, EvaluateController, CacheController</td>
+    </tr>
+    <tr>
+      <td>Authorization DB</td>
+      <td><code>Services.Authorization\src\Equisoft.AuthorizationService.Data\Scripts\</code></td>
+      <td><code>spGetUserAccessKeys.sql</code> — the core permission resolution logic</td>
+    </tr>
+    <tr>
+      <td>AssistantManagement</td>
+      <td><code>Services.AssistantManagement\src\AssistantManagementService\</code></td>
+      <td>Startup, AuthorizeServiceAccountFilter, IdentityContextExtensions</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr>
+
+<!-- QUIZ -->
+<div class="quiz" data-quiz="quiz1">
+  <h3>Knowledge Check</h3>
+
+  <div class="quiz-question" data-correct="b">
+    <p>1. Which service decides whether a user has the access key <code>shared.eapp.Lock</code>?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz1-q0" value="a"> The Identity Gateway</label></li>
+      <li><label><input type="radio" name="quiz1-q0" value="b"> The Authorization Service</label></li>
+      <li><label><input type="radio" name="quiz1-q0" value="c"> The AssistantManagement service</label></li>
+      <li><label><input type="radio" name="quiz1-q0" value="d"> The frontend application</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="c">
+    <p>2. The <code>tenantId</code> claim in an access token is added by which component?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz1-q1" value="a"> The Authorization Service during token validation</label></li>
+      <li><label><input type="radio" name="quiz1-q1" value="b"> The frontend app when it stores the token</label></li>
+      <li><label><input type="radio" name="quiz1-q1" value="c"> <code>EquisoftTokenResponseGenerator</code> during token issuance</label></li>
+      <li><label><input type="radio" name="quiz1-q1" value="d"> The ASP.NET Core DIT.Identity middleware</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="a">
+    <p>3. When AssistantManagement calls the User Service on its own behalf (not a user's behalf), which OAuth grant type does it use?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz1-q2" value="a"> Client Credentials</label></li>
+      <li><label><input type="radio" name="quiz1-q2" value="b"> Authorization Code with PKCE</label></li>
+      <li><label><input type="radio" name="quiz1-q2" value="c"> Refresh Token</label></li>
+      <li><label><input type="radio" name="quiz1-q2" value="d"> JWT Bearer Assertion</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="d">
+    <p>4. Why does the Equisoft architecture have a separate Authorization Service instead of encoding all permissions in the JWT?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz1-q3" value="a"> JWTs cannot contain custom claims</label></li>
+      <li><label><input type="radio" name="quiz1-q3" value="b"> It's required by the OAuth 2.0 specification</label></li>
+      <li><label><input type="radio" name="quiz1-q3" value="c"> JWTs would be too large to fit in HTTP headers</label></li>
+      <li><label><input type="radio" name="quiz1-q3" value="d"> Tokens are point-in-time; permissions change, and the model is too rich for a JWT</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <button class="quiz-btn" data-quiz-submit="quiz1">Check Answers</button>
+  <div class="quiz-score"></div>
+</div>
+
+<script>
+window.quizExplanations = {
+  'quiz1-q0': 'The Authorization Service resolves roles → policies → permissions and answers binary authorize/deny questions.',
+  'quiz1-q1': 'EquisoftTokenResponseGenerator calls the Tenant Management service at token issuance time to look up the tenantId.',
+  'quiz1-q2': 'Client Credentials is the OAuth flow for machine-to-machine calls. The service authenticates with its own client_id and secret.',
+  'quiz1-q3': 'All three reasons matter, but the most fundamental is that tokens are immutable snapshots while permissions need near-real-time updates.'
+};
+</script>
+
+<hr>
+
+<h2>Primary Source</h2>
+<p>
+  Read the Duende IdentityServer overview to understand what the Identity Gateway is built on:
+  <a href="https://docs.duendesoftware.com/identityserver/v7/overview/" target="_blank">
+    Duende IdentityServer v7 — Overview &amp; Big Picture
+  </a>
+</p>
+
+<div class="ask-claude">
+  <strong>Questions? Ask your teacher.</strong>
+  Something unclear? Open a new chat and ask — for example:
+  <em>"Why does IdG call the Tenant service at token issuance time rather than storing the tenantId directly on the user?"</em>
+</div>
+
+<div class="lesson-nav">
+  <span></span>
+  <a class="next" href="0002-oauth-flows.html">Next → Lesson 2: OAuth Flows in the Ecosystem</a>
+</div>
+
+<div class="lesson-footer">
+  Equisoft Identity Learning · Lesson 1 · References: Duende IS v7.3.2 source in
+  <code>Applications.IdentityGateway</code>
+</div>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

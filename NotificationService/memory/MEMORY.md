@@ -1,0 +1,1 @@
+- [User: Taking ownership of Notification Service](user_notif_ownership.md) — Equisoft developer taking ownership of the Notification Service; wants end-to-end understanding before making code changes

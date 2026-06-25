@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Glossary — Equisoft Identity &amp; Authorization</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    .glossary-entry { margin-bottom: 1.6rem; }
+    .glossary-entry dt {
+      font-family: var(--font-ui);
+      font-weight: 700;
+      font-size: 0.95rem;
+      margin-bottom: 0.2rem;
+    }
+    .glossary-entry dt code {
+      font-size: 0.9rem;
+      background: var(--code-bg);
+      padding: 0.1em 0.4em;
+      border-radius: 3px;
+    }
+    .glossary-entry dd {
+      margin-left: 0;
+      color: #333;
+      font-size: 0.93rem;
+      line-height: 1.6;
+    }
+    .glossary-entry dd .source {
+      display: inline-block;
+      font-family: var(--font-ui);
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-top: 0.2rem;
+    }
+    .alpha-index {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin-bottom: 2rem;
+      font-family: var(--font-ui);
+      font-size: 0.82rem;
+    }
+    .alpha-index a {
+      padding: 0.2rem 0.5rem;
+      background: var(--code-bg);
+      border-radius: 3px;
+      color: var(--accent);
+    }
+    h2.alpha { border-bottom: 1px solid var(--border); padding-bottom: 0.2rem; margin-top: 2rem; }
+  </style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb"><a href="../MISSION.md">Identity &amp; Authorization</a> › Reference</div>
+  <h1>Glossary</h1>
+  <div class="meta">
+    <span>Quick reference</span>
+    <span>Updated as lessons progress</span>
+  </div>
+</div>
+
+<p>
+  Canonical definitions for all terms used across the Equisoft Identity learning course. When a lesson
+  uses a term, it matches the definition here.
+</p>
+
+<div class="alpha-index">
+  <a href="#A">A</a><a href="#C">C</a><a href="#D">D</a><a href="#E">E</a>
+  <a href="#G">G</a><a href="#I">I</a><a href="#J">J</a><a href="#O">O</a>
+  <a href="#P">P</a><a href="#R">R</a><a href="#S">S</a><a href="#T">T</a>
+  <a href="#W">W</a>
+</div>
+
+<hr>
+
+<h2 class="alpha" id="A">A</h2>
+<dl>
+  <div class="glossary-entry">
+    <dt>Access Key</dt>
+    <dd>
+      A dot-separated string that represents a single permission in the Authorization Service's
+      policy hierarchy. Format: <code>policy.subpolicy.permissionOrRole</code>.
+      Example: <code>shared.eapp.Lock</code>.<br>
+      The <code>GET /api/v1/Authorize?key=…</code> endpoint returns Allow/Deny for a given access key.
+      <span class="source">Source: Services.Authorization — AuthorizationConstants.cs, spGetUserAccessKeys.sql</span>
+    </dd>
+  </div>
+  <div class="glossary-entry">
+    <dt>Access Token</dt>
+    <dd>
+      A short-lived JWT presented to APIs in the <code>Authorization: Bearer …</code> header.
+      Contains audience, scopes, subject, and Equisoft custom claims (<code>tenantId</code>,
+      <code>identityRole</code>, etc.). Not to be confused with the ID Token.
+      <span class="source">Source: RFC 6749, RFC 9068</span>
+    </dd>
+  </div>
+  <div class="glossary-entry">
+    <dt>Authorization Code Flow</dt>
+    <dd>
+      The OAuth 2.0 grant type used by user-facing applications. The client receives a short-lived
+      code via the browser redirect, then exchanges it for tokens server-side. Always used with PKCE
+      in the Equisoft ecosystem.
+      <span class="source">Source: RFC 6749 §4.1, <a href="../lessons/0002-oauth-flows.html">Lesson 2</a></span>
+    </dd>
+  </div>
+  <div class="glossary-entry">
+    <dt>Authorization Service</dt>
+    <dd>
+      <code>Services.Authorization</code>. The Equisoft microservice that translates a user's roles
+      into a flat set of access keys using a policy hierarchy stored in SQL. It does not issue tokens;
+      it only answers "does this user have permission X?".
+      <span class="source">Source: <a href="../lessons/0001-ecosystem-overview.html">Lesson 1</a></span>
+    </dd>
+  </div>
+</dl>
+
+<h2 class="alpha" id="C">C</h2>
+<dl>
+  <div class="glossary-entry">
+    <dt>Client Credentials Grant</dt>
+    <dd>
+      The OAuth 2.0 grant type for service-to-service calls. The service authenticates with its own
+      <code>client_id</code> and <code>client_secret</code>. Tokens issued do not contain a
+      <code>sub</code> claim (no user subject) but do contain <code>service_isService: true</code>.
+      <span class="source">Source: RFC 6749 §4.4, <a href="../lessons/0002-oauth-flows.html">Lesson 2</a></span>
+    </dd>
+  </div>
+  <div class="glossary-entry">
+    <dt>Claims</dt>
+    <dd>
+      Key-value pairs in a JWT payload that assert facts about the user or the token itself.
+      Standard claims: <code>sub</code>, <code>iss</code>, <code>aud</code>, <code>exp</code>.
+      Equisoft custom claims: <code>tenantId</code>, <code>tenant</code>, <code>identityRole</code>,
+      <code>externalobjectidentifier</code>, <code>isGuest</code>, <code>service_isService</code>.
+      <span class="source">Source: RFC 7519, <a href="../lessons/0003-token-anatomy.html">Lesson 3</a></span>
+    </dd>
+  </div>
+</dl>
+
+<h2 class="alpha" id="D">D</h2>
+<dl>
+  <div class="glossary-entry">
+    <dt>Duende IdentityServer</dt>
+    <dd>
+      The commercial .NET library used to build the Identity Gateway. Version 7.3.2 in the Equisoft
+      ecosystem. It implements OAuth 2.0 and OpenID Connect. The Identity Gateway extends it with
+      custom validators, token generators, and profile service implementations.
+      <span class="source">Source: <a href="https://docs.duendesoftware.com/identityserver/v7/" target="_blank">docs.duendesoftware.com</a></span>
+    </dd>
+  </div>
+  <div class="glossary-entry">
+    <dt>Discovery Endpoint</dt>
+    <dd>
+      The <code>/.well-known/openid-configuration</code> URL on the Identity Gateway. Returns the
+      JWKS URI, token endpoint, authorization endpoint, and supported grant types. API services
+      use it to fetch signing keys for JWT validation. Never hard-code signing keys — use discovery.
+      <span class="source">Source: OpenID Connect Discovery 1.0</span>
+    </dd>
+  </div>
+</dl>
+
+<h2 class="alpha" id="E">E</h2>
+<dl>
+  <div class="glossary-entry">
+    <dt><code>EquisoftProfileService</code></dt>
+    <dd>
+      Custom Duende IS <code>IProfileService</code> implementation in the Identity Gateway. Loads
+      user claims from the local UserDb (name, email, external provider claims) and filters which
+      extra claims are included in tokens. Source: <code>IdentityGateway/IdentityServer/Services/EquisoftProfileService.cs</code>.
+    </dd>
+  </div>
+  <div class="glossary-entry">
+    <dt><code>EquisoftTokenResponseGenerator</code></dt>
+    <dd>
+      Custom component that fires after the standard token response is built. Makes outbound HTTP
+      calls to the Tenant Service and User Service to enrich tokens with <code>tenantId</code> and
+      <code>identityRole</code>. Source: <code>IdentityGateway/IdentityServer/Services/EquisoftTokenResponseGenerator.cs</code>.
+    </dd>
+  </div>
+  <div class="glossary-entry">
+    <dt>External Role Provider</dt>
+    <dd>
+      A pluggable component in the Authorization Service that fetches a user's roles from an
+      external source. Types: <code>ClaimBased</code>, <code>MicrosoftGraph</code>,
+      <code>CustomApi</code>, <code>OipaExposedComputation</code>, <code>Assistant</code>.
+      Configured per tenant in the Authorization Service database.
+      <span class="source">Source: Services.Authorization — ExternalRole/Providers/</span>
+    </dd>
+  </div>
+  <div class="glossary-entry">
+    <dt><code>externalobjectidentifier</code></dt>
+    <dd>
+      Equisoft custom JWT claim. Holds the user's identifier in the external identity provider
+      (e.g. the Azure AD Object ID). Mapped from the IdP's <code>oid</code> claim during login.
+      Used by the User Service and Authorization Service to look up the user's role.
+      <span class="source">Source: <a href="../lessons/0003-token-anatomy.html">Lesson 3</a></span>
+    </dd>
+  </div>
+</dl>
+
+<h2 class="alpha" id="G">G</h2>
+<dl>
+  <div class="glossary-entry">
+    <dt>Grant Type</dt>
+    <dd>
+      The OAuth 2.0 mechanism by which a client obtains tokens. The three grant types used in
+      Equisoft: <strong>Authorization Code + PKCE</strong> (user login), <strong>Client Credentials</strong>
+      (service-to-service), and <strong>JWT Bearer Assertion</strong> (federated SSO).
+      See <a href="../lessons/0002-oauth-flows.html">Lesson 2</a>.
+    </dd>
+  </div>
+</dl>
+
+<h2 class="alpha" id="I">I</h2>
+<dl>
+  <div class="glossary-entry">
+    <dt>ID Token</dt>
+    <dd>
+      A JWT issued alongside the access token in the Authorization Code flow. Intended for the
+      <em>client application</em> — not for APIs. Contains user identity information (name, email,
+      sub). Never send the ID Token in an API's <code>Authorization</code> header.
+      <span class="source">Source: OpenID Connect Core 1.0 §2</span>
+    </dd>
+  </div>
+  <div class="glossary-entry">
+    <dt>Identity Gateway (IdG)</dt>
+    <dd>
+      <code>Applications.IdentityGateway</code>. The central OAuth 2.0 / OpenID Connect provider
+      for the Equisoft platform, built on Duende IdentityServer v7.3.2. Issues access tokens, ID
+      tokens, and refresh tokens. Authenticates users via local accounts and external providers.
+      <span class="source">Source: <a href="../lessons/0001-ecosystem-overview.html">Lesson 1</a></span>
+    </dd>
+  </div>
+  <div class="glossary-entry">
+    <dt><code>identityRole</code></dt>
+    <dd>
+      Equisoft custom JWT claim. The user's platform role (e.g. <code>Advisor</code>, <code>Admin</code>,
+      <code>Guest</code>). Added to tokens by <code>EquisoftTokenResponseGenerator</code> via a
+      call to the User Service. Guest users get this set to <code>"Guest"</code> without an external
+      call.
+      <span class="source">Source: <a href="../lessons/0003-token-anatomy.html">Lesson 3</a></span>
+    </dd>
+  </div>
+  <div class="glossary-entry">
+    <dt><code>IIdentityContext</code></dt>
+    <dd>
+      DIT (Digital Insurance Tools) framework interface. Available via DI in ASP.NET Core services.
+      Parsed from the incoming JWT. Key properties: <code>TenantId</code>, <code>ResourceOwnerId</code>
+      (sub), <code>ExternalPrincipalId</code>, <code>IdentityType</code>, <code>IsOnBehalfOf</code>.
+      <span class="source">Source: AssistantManagement + Authorization services — IdentityContextExtensions.cs</span>
+    </dd>
+  </div>
+  <div class="glossary-entry">
+    <dt><code>isGuest</code></dt>
+    <dd>
+      Equisoft custom JWT claim. Present and <code>"true"</code> on guest user tokens. Used by
+      <code>EquisoftTokenResponseGenerator</code> to short-circuit role lookup and set
+      <code>identityRole = "Guest"</code>.
+      <span class="source">Source: <a href="../lessons/0003-token-anatomy.html">Lesson 3</a></span>
+    </dd>
+  </div>
+</dl>
+
+<h2 class="alpha" id="J">J</h2>
+<dl>
+  <div class="glossary-entry">
+    <dt>JWT Bearer Assertion Grant</dt>
+    <dd>
+      Custom grant type (<code>urn:ietf:params:oauth:grant-type:jwt-bearer</code>) used for
+      federated SSO. A trusted external system presents a signed JWT asserting a user's identity.
+      The Identity Gateway validates the signature and issues a standard Equisoft access token.
+      Defined in RFC 7523.
+      <span class="source">Source: RFC 7523, JwtBearerAuthorizeAssertionExtensionGrantValidator.cs, <a href="../lessons/0002-oauth-flows.html">Lesson 2</a></span>
+    </dd>
+  </div>
+  <div class="glossary-entry">
+    <dt>JWKS (JSON Web Key Set)</dt>
+    <dd>
+      The set of public keys published by the Identity Gateway at its JWKS URI (found via discovery).
+      API services use these keys to verify the signature on incoming JWTs without needing to call
+      the Identity Gateway on every request.
+    </dd>
+  </div>
+</dl>
+
+<h2 class="alpha" id="O">O</h2>
+<dl>
+  <div class="glossary-entry">
+    <dt>OpenID Connect (OIDC)</dt>
+    <dd>
+      An identity layer on top of OAuth 2.0. Adds the concept of an ID Token, UserInfo endpoint,
+      and discovery document. The Identity Gateway implements OIDC on top of Duende IdentityServer.
+      <span class="source">Source: OpenID Connect Core 1.0</span>
+    </dd>
+  </div>
+</dl>
+
+<h2 class="alpha" id="P">P</h2>
+<dl>
+  <div class="glossary-entry">
+    <dt>Permission</dt>
+    <dd>
+      The most granular unit in the Authorization Service's hierarchy. A permission has a <code>Key</code>
+      (string) and can be assigned directly to a Policy. Example: <code>Lock</code>.
+      Combined with the policy path to form an Access Key: <code>shared.eapp.Lock</code>.
+      <span class="source">Source: Services.Authorization — Permission.cs</span>
+    </dd>
+  </div>
+  <div class="glossary-entry">
+    <dt>PKCE (Proof Key for Code Exchange)</dt>
+    <dd>
+      A security extension to the Authorization Code flow (RFC 7636). The client generates a
+      <code>code_verifier</code>, hashes it to a <code>code_challenge</code>, and sends the challenge
+      with the authorization request. The verifier is sent with the token request. Prevents
+      authorization code interception attacks. Mandatory for all public clients in Equisoft.
+    </dd>
+  </div>
+  <div class="glossary-entry">
+    <dt>Policy</dt>
+    <dd>
+      A node in the Authorization Service's hierarchical permission model. Policies can be nested
+      (parent/child). A policy contains roles and permissions. Access keys are formed by concatenating
+      the policy path with a permission or role key using <code>.</code> as separator.
+      <span class="source">Source: Services.Authorization — Policy.cs, spGetUserAccessKeys.sql</span>
+    </dd>
+  </div>
+</dl>
+
+<h2 class="alpha" id="R">R</h2>
+<dl>
+  <div class="glossary-entry">
+    <dt>Refresh Token</dt>
+    <dd>
+      A long-lived credential used to obtain new access tokens without re-authenticating the user.
+      In the Identity Gateway, refresh tokens are stored in Redis alongside the external IdP session
+      expiry. If the external session expires, the refresh is rejected even if the refresh token
+      itself is still valid.
+      <span class="source">Source: <a href="../lessons/0002-oauth-flows.html">Lesson 2</a>, EquisoftTokenRequestValidator.cs</span>
+    </dd>
+  </div>
+  <div class="glossary-entry">
+    <dt>Role</dt>
+    <dd>
+      A named group in the Authorization Service. Roles are mapped to Policies. A user's
+      <code>identityRole</code> claim (or external role from a provider) is resolved to an
+      internal Role, which is then used to compute the user's access keys.
+      <span class="source">Source: Services.Authorization — Role.cs</span>
+    </dd>
+  </div>
+</dl>
+
+<h2 class="alpha" id="S">S</h2>
+<dl>
+  <div class="glossary-entry">
+    <dt>Scope</dt>
+    <dd>
+      An OAuth 2.0 concept that limits what a token can access. In the Equisoft ecosystem, scopes
+      represent API resources and fine-grained permissions (e.g. <code>assistantManagement.create</code>,
+      <code>write:assistantManagement</code>). A client must request the right scopes; the user
+      (or admin) must have consented.
+    </dd>
+  </div>
+  <div class="glossary-entry">
+    <dt><code>service_isService</code></dt>
+    <dd>
+      Equisoft custom JWT claim. Present only on service-account tokens (Client Credentials grant).
+      The value is <code>"true"</code>. The DIT Identity framework reads this to set
+      <code>IdentityType.Service</code>. The Authorization Service's <code>IsService</code> policy
+      requires this claim on management endpoints.
+      <span class="source">Source: <a href="../lessons/0003-token-anatomy.html">Lesson 3</a></span>
+    </dd>
+  </div>
+</dl>
+
+<h2 class="alpha" id="T">T</h2>
+<dl>
+  <div class="glossary-entry">
+    <dt><code>tenant</code></dt>
+    <dd>
+      Equisoft custom JWT claim. Short human-readable key for the user's tenant (e.g. <code>ACME</code>).
+      Used for service account secrets lookup in config (<code>TenantSecrets</code>) and log
+      correlation. Different from <code>tenantId</code> (GUID). Loaded from the UserProvider table
+      by <code>EquisoftProfileService</code>.
+      <span class="source">Source: <a href="../lessons/0003-token-anatomy.html">Lesson 3</a></span>
+    </dd>
+  </div>
+  <div class="glossary-entry">
+    <dt><code>tenantId</code></dt>
+    <dd>
+      Equisoft custom JWT claim. GUID primary key of the user's tenant in the platform database.
+      Used by downstream services as the foreign key for data isolation (every query filtered by
+      <code>_identityContext.TenantId</code>). Added by <code>EquisoftTokenResponseGenerator</code>
+      via a call to the Tenant Service.
+      <span class="source">Source: <a href="../lessons/0003-token-anatomy.html">Lesson 3</a></span>
+    </dd>
+  </div>
+</dl>
+
+<h2 class="alpha" id="W">W</h2>
+<dl>
+  <div class="glossary-entry">
+    <dt>Wildcard Redirect URI / CORS</dt>
+    <dd>
+      Equisoft extensions to standard Duende IS that allow clients to register redirect URIs and
+      CORS origins with wildcards (e.g. <code>https://*.equisoft.com/*</code>).
+      Implemented by <code>WildcardRedirectUriValidator</code> and <code>WildcardCorsPolicyService</code>
+      in the Identity Gateway. Standard Duende IS requires exact matches.
+    </dd>
+  </div>
+</dl>
+
+<hr>
+
+<div class="lesson-footer">
+  Equisoft Identity Learning · Glossary · All terms match definitions in the source lessons.
+  See <a href="../lessons/0001-ecosystem-overview.html">Lesson 1</a> to start.
+</div>
+
+</body>
+</html>

@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 15 — Pipeline Code Review: Find the Bug</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    /* ── Bug card ──────────────────────────────────────────── */
+    .bug-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 2rem;
+      overflow: hidden;
+    }
+    .bug-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.9rem 1.25rem;
+      background: var(--code-bg);
+      border-bottom: 1px solid var(--border);
+    }
+    .bug-number {
+      background: var(--accent);
+      color: white;
+      border-radius: 50%;
+      width: 1.8rem;
+      height: 1.8rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.85rem;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    .bug-header h3 {
+      font-size: 1rem;
+      font-weight: 700;
+      flex: 1;
+    }
+    .bug-lesson-tag {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      background: var(--bg);
+      padding: 0.2em 0.55em;
+      border-radius: 3px;
+      border: 1px solid var(--border);
+    }
+    .bug-body {
+      padding: 1.25rem 1.5rem;
+    }
+    .bug-prompt {
+      font-size: 0.95rem;
+      color: var(--text-muted);
+      margin-bottom: 1rem;
+      font-style: italic;
+    }
+
+    /* Inline hint annotation */
+    .hint-line {
+      display: inline-block;
+      background: var(--highlight);
+      border-left: 3px solid var(--warn);
+      width: 100%;
+      padding: 0 0.4em;
+      font-style: italic;
+      color: #8a6a00;
+    }
+
+    /* Reveal button and answer */
+    .reveal-btn {
+      display: inline-block;
+      margin-top: 1rem;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 0.5em 1.1em;
+      font-size: 0.9rem;
+      font-family: var(--font-body);
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .reveal-btn:hover { background: var(--accent-dark); }
+    .reveal-btn.revealed {
+      background: var(--success);
+      cursor: default;
+    }
+
+    .answer-box {
+      display: none;
+      margin-top: 1.25rem;
+      background: #e6f4ea;
+      border: 1px solid #b7dfb8;
+      border-radius: 6px;
+      padding: 1rem 1.25rem;
+    }
+    .answer-box.show { display: block; }
+    .answer-box h4 {
+      color: var(--success);
+      font-size: 0.95rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+    }
+    .answer-box .fix-label {
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin: 0.75rem 0 0.4rem;
+    }
+    .answer-box p {
+      font-size: 0.92rem;
+      color: #1a3a1a;
+    }
+
+    /* Score banner */
+    #score-banner {
+      display: none;
+      background: var(--accent);
+      color: white;
+      border-radius: 8px;
+      padding: 1.25rem 1.5rem;
+      margin: 2rem 0 1rem;
+      text-align: center;
+      font-size: 1.05rem;
+      font-weight: 600;
+    }
+
+    /* Callout */
+    .callout {
+      padding: 0.9rem 1.1rem;
+      border-radius: 6px;
+      margin: 1rem 0;
+      font-size: 0.93rem;
+      border-left: 4px solid;
+    }
+    .callout.info  { background: #e8f4fd; border-color: var(--accent);  color: #003f6b; }
+    .callout.warn  { background: #fff8e1; border-color: var(--warn);    color: #5a3a00; }
+
+    /* Self-assessment */
+    .self-check {
+      display: flex;
+      gap: 0.6rem;
+      margin-top: 0.9rem;
+    }
+    .self-check button {
+      flex: 1;
+      padding: 0.5em 0.5em;
+      border-radius: 4px;
+      border: 1.5px solid var(--border);
+      background: var(--surface);
+      font-family: var(--font-body);
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .self-check button:hover { border-color: var(--accent); color: var(--accent); }
+    .self-check button.got-it  { border-color: var(--success); background: #e6f4ea; color: var(--success); }
+    .self-check button.missed  { border-color: var(--error);   background: #fde8e8; color: var(--error); }
+  </style>
+</head>
+<body>
+<main>
+
+  <!-- ── HEADER ─────────────────────────────────────────────── -->
+  <header class="lesson-header">
+    <p class="breadcrumb">Azure CI/CD · Lesson 15</p>
+    <h1>Pipeline Code Review: Find the Bug</h1>
+    <p style="color:var(--text-muted); margin-top:0.5rem;">
+      Five real pipeline snippets, each with one misconfiguration. Study each one,
+      work out what's wrong <em>before</em> you click Reveal. This is retrieval practice
+      — the discomfort of not knowing is what makes the knowledge stick.
+    </p>
+  </header>
+
+  <div class="callout info" style="margin-bottom:2rem;">
+    <strong>How to use this lesson:</strong> Read each pipeline snippet carefully.
+    Try to name the bug out loud (or write it down) before you reveal the answer.
+    After each reveal, rate yourself: <em>Got it</em> or <em>Missed it</em>.
+    Your score is shown at the end.
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       BUG 1 — fetchDepth / GitVersion
+       ═══════════════════════════════════════════════════════════ -->
+  <div class="bug-card">
+    <div class="bug-header">
+      <span class="bug-number">1</span>
+      <h3>The version calculation that sometimes fails in CI</h3>
+      <span class="bug-lesson-tag">Lesson 7</span>
+    </div>
+    <div class="bug-body">
+      <p class="bug-prompt">
+        This pipeline works fine for the developer who cloned the repo last month —
+        but a new team member set up a fresh clone today and the pipeline fails with
+        <code>"GitVersion.exe" exited with code 1: Unable to determine the commit count.</code>
+        The YAML is identical on both machines. What is the misconfiguration?
+      </p>
+
+      <pre><code>- stage: Build
+  jobs:
+    - job: BuildJob
+      pool:
+        vmImage: 'ubuntu-latest'
+      steps:
+        - checkout: self
+
+        - task: gitversion/setup@3.2.1
+          inputs:
+            versionSpec: '5.x'
+
+        - task: gitversion/execute@3.2.1
+          name: GitVersion
+
+        - task: DotNetCoreCLI@2
+          displayName: 'Build'
+          inputs:
+            command: 'build'
+            arguments: '/p:Version=$(GitVersion.SemVer)'</code></pre>
+
+      <button class="reveal-btn" onclick="reveal(this, 'ans1')">Reveal answer</button>
+      <div class="self-check" id="sc1" style="display:none;">
+        <button onclick="score(this,'got')">✓ Got it before revealing</button>
+        <button onclick="score(this,'missed')">✗ Missed it</button>
+      </div>
+
+      <div class="answer-box" id="ans1">
+        <h4>Bug: <code>checkout: self</code> defaults to a shallow clone (<code>fetchDepth: 1</code>)</h4>
+        <p>
+          GitVersion reads the <em>entire</em> commit history to calculate a correct semantic
+          version. A shallow clone gives it only one commit, so it cannot count commits since
+          the last tag. On a fresh CI agent the history is always shallow unless you opt out.
+        </p>
+        <div class="fix-label">Fix</div>
+        <pre><code>- checkout: self
+  fetchDepth: 0    ← add this line</code></pre>
+        <p style="margin-top:0.5rem;">
+          <code>fetchDepth: 0</code> fetches the full history. This is required on every repo
+          that uses GitVersion. Without it, the error is intermittent — it depends on how many
+          commits have been made since cloning.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       BUG 2 — Artifact path in deployment job
+       ═══════════════════════════════════════════════════════════ -->
+  <div class="bug-card">
+    <div class="bug-header">
+      <span class="bug-number">2</span>
+      <h3>The deploy that always errors "No package found at the specified location"</h3>
+      <span class="bug-lesson-tag">Lessons 5 + 13</span>
+    </div>
+    <div class="bug-body">
+      <p class="bug-prompt">
+        The Build stage publishes a <code>drop</code> artifact and succeeds. The Deploy stage
+        starts and immediately fails: <em>"No package found at the specified location"</em>.
+        The path looks reasonable to you. What is wrong?
+      </p>
+
+      <pre><code>- stage: Build
+  jobs:
+    - job: BuildJob
+      steps:
+        - task: DotNetCoreCLI@2
+          inputs:
+            command: 'publish'
+            zipAfterPublish: true
+            arguments: '--output $(Build.ArtifactStagingDirectory)'
+        - task: PublishPipelineArtifact@1
+          inputs:
+            targetPath: '$(Build.ArtifactStagingDirectory)'
+            artifact: 'drop'
+
+- stage: Deploy
+  dependsOn: Build
+  jobs:
+    - deployment: DeployToDev
+      environment: 'dev'
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+              - checkout: none
+              - task: AzureWebApp@1
+                inputs:
+                  azureSubscription: '$(azureServiceConnection)'
+                  appName: '$(appServiceNameDev)'
+                  package: '$(Build.ArtifactStagingDirectory)/**/*.zip'</code></pre>
+
+      <button class="reveal-btn" onclick="reveal(this, 'ans2')">Reveal answer</button>
+      <div class="self-check" id="sc2" style="display:none;">
+        <button onclick="score(this,'got')">✓ Got it before revealing</button>
+        <button onclick="score(this,'missed')">✗ Missed it</button>
+      </div>
+
+      <div class="answer-box" id="ans2">
+        <h4>Bug: <code>$(Build.ArtifactStagingDirectory)</code> is the <em>build agent's</em> staging folder — a different machine</h4>
+        <p>
+          <code>Build.ArtifactStagingDirectory</code> is a local path on the build job's agent.
+          The deployment job runs on a <em>different</em> agent. That folder does not exist there.
+          Deployment jobs automatically download published artifacts into
+          <code>$(Pipeline.Workspace)/&lt;artifact-name&gt;/</code>.
+        </p>
+        <div class="fix-label">Fix</div>
+        <pre><code>package: '$(Pipeline.Workspace)/drop/**/*.zip'</code></pre>
+        <p style="margin-top:0.5rem;">
+          <code>Pipeline.Workspace</code> is the cross-agent workspace root that Azure Pipelines
+          sets up on every agent in the pipeline run. Published artifacts land here, not in
+          <code>Build.ArtifactStagingDirectory</code>.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       BUG 3 — job: instead of deployment: bypasses approval gate
+       ═══════════════════════════════════════════════════════════ -->
+  <div class="bug-card">
+    <div class="bug-header">
+      <span class="bug-number">3</span>
+      <h3>The approval gate that was configured but never fires</h3>
+      <span class="bug-lesson-tag">Lesson 6</span>
+    </div>
+    <div class="bug-body">
+      <p class="bug-prompt">
+        A team configured a manual approval on the <code>prod</code> environment in
+        Azure DevOps (Pipelines → Environments → prod → Approvals). But every pipeline
+        run deploys to production immediately — no one is ever asked to approve.
+        Can you see why from the YAML?
+      </p>
+
+      <pre><code>- stage: DeployProd
+  displayName: 'Deploy → Prod'
+  dependsOn: DeployDev
+  condition: and(succeeded(), eq(variables.isMain, true))
+  jobs:
+    - job: DeployToProd
+      pool:
+        vmImage: 'ubuntu-latest'
+      steps:
+        - checkout: none
+        - task: AzureWebApp@1
+          inputs:
+            azureSubscription: '$(azureServiceConnection)'
+            appType: 'webAppLinux'
+            appName: '$(appServiceNameProd)'
+            package: '$(Pipeline.Workspace)/drop/**/*.zip'</code></pre>
+
+      <button class="reveal-btn" onclick="reveal(this, 'ans3')">Reveal answer</button>
+      <div class="self-check" id="sc3" style="display:none;">
+        <button onclick="score(this,'got')">✓ Got it before revealing</button>
+        <button onclick="score(this,'missed')">✗ Missed it</button>
+      </div>
+
+      <div class="answer-box" id="ans3">
+        <h4>Bug: <code>job:</code> instead of <code>deployment:</code> — environment checks are never consulted</h4>
+        <p>
+          The <code>environment:</code> keyword — which links a job to an Azure DevOps Environment
+          and enforces its approval gates — is only available on <code>deployment:</code> jobs.
+          A regular <code>job:</code> has no <code>environment:</code> property. The approval
+          configured in the portal is simply never reached.
+        </p>
+        <div class="fix-label">Fix</div>
+        <pre><code>    - deployment: DeployToProd   ← change job → deployment
+      pool:
+        vmImage: 'ubuntu-latest'
+      environment: 'prod'         ← add this — links to the approval gate
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+              - checkout: none
+              - task: AzureWebApp@1
+                ...</code></pre>
+        <p style="margin-top:0.5rem;">
+          This is a silent misconfiguration — the pipeline runs successfully and deploys,
+          but the governance control is completely absent. Teams often discover it only when
+          auditing why a hotfix deployed to production without a sign-off.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       BUG 4 — PR builds deploying to Dev
+       ═══════════════════════════════════════════════════════════ -->
+  <div class="bug-card">
+    <div class="bug-header">
+      <span class="bug-number">4</span>
+      <h3>Every pull request deploys to Dev — including draft PRs and WIP branches</h3>
+      <span class="bug-lesson-tag">Lessons 2 + 13</span>
+    </div>
+    <div class="bug-body">
+      <p class="bug-prompt">
+        The team notices that opening a PR to <code>develop</code> triggers a full deployment
+        to the Dev App Service — not just a build-and-test validation. This causes noise: Dev
+        is constantly being overwritten by unfinished branches. Why does this happen?
+      </p>
+
+      <pre><code>trigger:
+  branches:
+    include:
+      - develop
+      - 'release/*'
+
+pr:
+  branches:
+    include:
+      - develop
+
+variables:
+  - name: isDevelop
+    value: $[eq(variables['Build.SourceBranch'], 'refs/heads/develop')]
+
+stages:
+  - stage: Build
+    jobs:
+      - job: BuildJob
+        steps:
+          - checkout: self
+            fetchDepth: 0
+          # ... build steps ...
+
+  - stage: DeployDev
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - deployment: DeployToDev
+        environment: 'dev'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureWebApp@1
+                  inputs:
+                    appName: '$(appServiceNameDev)'
+                    package: '$(Pipeline.Workspace)/drop/**/*.zip'</code></pre>
+
+      <button class="reveal-btn" onclick="reveal(this, 'ans4')">Reveal answer</button>
+      <div class="self-check" id="sc4" style="display:none;">
+        <button onclick="score(this,'got')">✓ Got it before revealing</button>
+        <button onclick="score(this,'missed')">✗ Missed it</button>
+      </div>
+
+      <div class="answer-box" id="ans4">
+        <h4>Bug: <code>DeployDev</code> condition does not exclude PR builds</h4>
+        <p>
+          The <code>pr:</code> block correctly allows PR validation to run the Build stage.
+          But the <code>DeployDev</code> condition is just <code>succeeded()</code> — it runs
+          whenever Build succeeds, including when the trigger was a pull request.
+          <code>Build.Reason</code> is <code>PullRequest</code> on PR runs, which is not checked
+          anywhere in the deploy condition.
+        </p>
+        <div class="fix-label">Fix</div>
+        <pre><code>  - stage: DeployDev
+    dependsOn: Build
+    condition: |
+      and(
+        succeeded(),
+        ne(variables['Build.Reason'], 'PullRequest')
+      )</code></pre>
+        <p style="margin-top:0.5rem;">
+          The <code>ne(variables['Build.Reason'], 'PullRequest')</code> guard gates the entire
+          deploy stage. PR runs validate (Build stage), then stop. Only real branch pushes proceed
+          to deployment.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       BUG 5 — Skipped parent kills DeployProd
+       ═══════════════════════════════════════════════════════════ -->
+  <div class="bug-card">
+    <div class="bug-header">
+      <span class="bug-number">5</span>
+      <h3>Prod never deploys on <code>release/*</code> branches — but the condition looks correct</h3>
+      <span class="bug-lesson-tag">Lesson 13</span>
+    </div>
+    <div class="bug-body">
+      <p class="bug-prompt">
+        On a push to <code>release/2.0</code>, the Build stage succeeds, DeployDev is skipped
+        (intentionally — the team only deploys release branches to Dev via main),
+        and DeployProd also gets skipped — even though its condition <em>should</em> make it
+        run. No error, just "skipped." Why?
+      </p>
+
+      <pre><code>variables:
+  - name: isDevelop
+    value: $[eq(variables['Build.SourceBranch'], 'refs/heads/develop')]
+  - name: isMain
+    value: $[eq(variables['Build.SourceBranch'], 'refs/heads/main')]
+  - name: isRelease
+    value: $[startsWith(variables['Build.SourceBranch'], 'refs/heads/release/')]
+
+stages:
+  - stage: Build
+    ...
+
+  - stage: DeployDev
+    dependsOn: Build
+    condition: |
+      and(
+        succeeded(),
+        eq(variables.isDevelop, true)
+      )
+
+  - stage: DeployProd
+    dependsOn: DeployDev
+    condition: |
+      and(
+        succeeded(),
+        or(
+          eq(variables.isMain, true),
+          eq(variables.isRelease, true)
+        )
+      )</code></pre>
+
+      <button class="reveal-btn" onclick="reveal(this, 'ans5')">Reveal answer</button>
+      <div class="self-check" id="sc5" style="display:none;">
+        <button onclick="score(this,'got')">✓ Got it before revealing</button>
+        <button onclick="score(this,'missed')">✗ Missed it</button>
+      </div>
+
+      <div class="answer-box" id="ans5">
+        <h4>Bug: <code>succeeded()</code> is <code>false</code> when the dependency was <em>skipped</em></h4>
+        <p>
+          On a <code>release/2.0</code> push, <code>DeployDev</code> is skipped (its condition
+          is false). <code>DeployProd</code> depends on <code>DeployDev</code>.
+          <code>succeeded()</code> only returns <code>true</code> if the dependency actually
+          <em>ran and passed</em>. A skipped stage counts as not-succeeded, so the entire
+          <code>DeployProd</code> condition is false before the <code>isRelease</code> check
+          even runs.
+        </p>
+        <div class="fix-label">Fix — two options</div>
+        <p><strong>Option A:</strong> Allow the parent to be skipped:</p>
+        <pre><code>  - stage: DeployProd
+    dependsOn: DeployDev
+    condition: |
+      and(
+        in(dependencies.DeployDev.result, 'Succeeded', 'Skipped'),
+        or(
+          eq(variables.isMain, true),
+          eq(variables.isRelease, true)
+        )
+      )</code></pre>
+        <p style="margin-top:0.75rem;"><strong>Option B:</strong> Depend on Build instead of DeployDev:</p>
+        <pre><code>  - stage: DeployProd
+    dependsOn: Build     ← skip the middle stage entirely for release/main
+    condition: |
+      and(
+        succeeded(),
+        or(eq(variables.isMain, true), eq(variables.isRelease, true))
+      )</code></pre>
+        <p style="margin-top:0.5rem;">
+          Option A is safer for complex pipelines. Option B is simpler when Dev and Prod are
+          truly independent paths.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── SCORE ──────────────────────────────────────────────── -->
+  <div id="score-banner"></div>
+
+  <!-- ── SUMMARY TABLE ──────────────────────────────────────── -->
+  <section style="margin-top:2rem;">
+    <h2 style="margin-bottom:0.75rem;">The five bugs at a glance</h2>
+    <table style="width:100%; border-collapse:collapse; font-size:0.88rem;">
+      <thead>
+        <tr>
+          <th style="background:var(--code-bg); padding:0.5rem 0.75rem; text-align:left; border-bottom:2px solid var(--border);">Bug</th>
+          <th style="background:var(--code-bg); padding:0.5rem 0.75rem; text-align:left; border-bottom:2px solid var(--border);">Root cause</th>
+          <th style="background:var(--code-bg); padding:0.5rem 0.75rem; text-align:left; border-bottom:2px solid var(--border);">Symptom</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:0.5rem 0.75rem; border-bottom:1px solid var(--border);">1 — GitVersion</td>
+          <td style="padding:0.5rem 0.75rem; border-bottom:1px solid var(--border);">Missing <code>fetchDepth: 0</code></td>
+          <td style="padding:0.5rem 0.75rem; border-bottom:1px solid var(--border);">Intermittent "Unable to determine commit count"</td>
+        </tr>
+        <tr>
+          <td style="padding:0.5rem 0.75rem; border-bottom:1px solid var(--border);">2 — Artifact path</td>
+          <td style="padding:0.5rem 0.75rem; border-bottom:1px solid var(--border);"><code>Build.ArtifactStagingDirectory</code> in deploy job</td>
+          <td style="padding:0.5rem 0.75rem; border-bottom:1px solid var(--border);">"No package found at the specified location"</td>
+        </tr>
+        <tr>
+          <td style="padding:0.5rem 0.75rem; border-bottom:1px solid var(--border);">3 — Approval gate</td>
+          <td style="padding:0.5rem 0.75rem; border-bottom:1px solid var(--border);"><code>job:</code> instead of <code>deployment:</code></td>
+          <td style="padding:0.5rem 0.75rem; border-bottom:1px solid var(--border);">Prod approval gate silently never fires</td>
+        </tr>
+        <tr>
+          <td style="padding:0.5rem 0.75rem; border-bottom:1px solid var(--border);">4 — PR deploys</td>
+          <td style="padding:0.5rem 0.75rem; border-bottom:1px solid var(--border);">No <code>Build.Reason != PullRequest</code> guard</td>
+          <td style="padding:0.5rem 0.75rem; border-bottom:1px solid var(--border);">Every PR overwrites Dev App Service</td>
+        </tr>
+        <tr>
+          <td style="padding:0.5rem 0.75rem;">5 — Skipped parent</td>
+          <td style="padding:0.5rem 0.75rem;"><code>succeeded()</code> is false when parent was skipped</td>
+          <td style="padding:0.5rem 0.75rem;">DeployProd silently skipped on release branches</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ── WHAT TO LOOK FOR IN A REAL REVIEW ──────────────────── -->
+  <section style="margin-top:2rem;">
+    <h2 style="margin-bottom:0.75rem;">Your mental checklist for pipeline reviews</h2>
+    <ol style="line-height:2; color:var(--text-muted); font-size:0.95rem; margin-left:1.5rem;">
+      <li><code>checkout: self</code> — is <code>fetchDepth: 0</code> set if GitVersion is used?</li>
+      <li>Deployment jobs — does <code>package:</code> use <code>$(Pipeline.Workspace)/...</code> not <code>$(Build.ArtifactStagingDirectory)</code>?</li>
+      <li>Prod deploy jobs — is it <code>deployment:</code> with <code>environment:</code>, not <code>job:</code>?</li>
+      <li>Deploy conditions — does each one include <code>ne(variables['Build.Reason'], 'PullRequest')</code>?</li>
+      <li>Stage dependencies — does any stage depend on a stage that might be <em>skipped</em>? If so, does the condition use <code>in(dependencies.X.result, 'Succeeded', 'Skipped')</code>?</li>
+    </ol>
+  </section>
+
+  <!-- ── PRIMARY SOURCE ─────────────────────────────────────── -->
+  <section class="primary-source" style="margin-top:2.5rem; padding:1.25rem; background:var(--highlight); border-radius:8px;">
+    <h3 style="margin-bottom:0.5rem;">Primary source</h3>
+    <p>
+      <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/process/conditions" target="_blank">
+        Specify conditions — Azure Pipelines (Microsoft Learn)
+      </a>
+    </p>
+    <p style="font-size:0.9rem; color:var(--text-muted); margin-top:0.5rem;">
+      Documents <code>succeeded()</code>, <code>succeededOrSkipped()</code>,
+      <code>dependencies.StageName.result</code>, and all other condition expressions.
+      Essential reference when debugging "why did my stage get skipped?"
+    </p>
+  </section>
+
+  <p style="margin-top:2.5rem; color:var(--text-muted); font-size:0.9rem; border-top:1px solid var(--border); padding-top:1rem;">
+    Any of these bugs still unclear? Ask your teacher agent — quote the bug number and what confused you.
+    <br>
+    <a href="0013-build-your-own-pipeline-azure-app-service.html">← Lesson 13 (capstone pipeline)</a>
+    &nbsp;·&nbsp;
+    <a href="0014-deployment-slots-zero-downtime.html">← Lesson 14 (deployment slots)</a>
+  </p>
+
+</main>
+
+<script>
+  let gotCount   = 0;
+  let missedCount = 0;
+  let totalRevealed = 0;
+
+  function reveal(btn, answerId) {
+    const box = document.getElementById(answerId);
+    box.classList.add('show');
+    btn.textContent = 'Answer revealed';
+    btn.classList.add('revealed');
+    btn.disabled = true;
+
+    // Show self-check buttons
+    const num = answerId.replace('ans', '');
+    document.getElementById('sc' + num).style.display = 'flex';
+
+    totalRevealed++;
+  }
+
+  function score(btn, result) {
+    const scDiv = btn.parentElement;
+
+    // Disable both buttons
+    Array.from(scDiv.querySelectorAll('button')).forEach(b => {
+      b.disabled = true;
+    });
+
+    if (result === 'got') {
+      btn.classList.add('got-it');
+      gotCount++;
+    } else {
+      btn.classList.add('missed');
+      missedCount++;
+    }
+
+    const total = gotCount + missedCount;
+    const banner = document.getElementById('score-banner');
+
+    if (total === 5) {
+      const pct = Math.round((gotCount / 5) * 100);
+      let msg, bg;
+      if (gotCount === 5)      { msg = "5/5 — Flawless. You're ready to review real pipelines."; bg = '#107c10'; }
+      else if (gotCount >= 3)  { msg = `${gotCount}/5 — Solid. Revisit the ones you missed before your next review.`; bg = '#0078d4'; }
+      else                      { msg = `${gotCount}/5 — Keep at it. Re-read the explanations, then redo this lesson in a few days.`; bg = '#c17f24'; }
+
+      banner.textContent = msg;
+      banner.style.background = bg;
+      banner.style.display = 'block';
+      banner.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } else {
+      banner.textContent = `${total}/5 rated — ${gotCount} got it · ${missedCount} missed`;
+      banner.style.display = 'block';
+    }
+  }
+</script>
+</body>
+</html>

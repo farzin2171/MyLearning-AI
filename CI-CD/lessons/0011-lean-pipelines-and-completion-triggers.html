@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lesson 11 — Lean Pipelines and Pipeline Completion Triggers</title>
+  <link rel="stylesheet" href="../assets/style.css" />
+  <style>
+    /* Side-by-side comparison */
+    .compare {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.9rem;
+      margin: 1.5rem 0;
+    }
+    @media (max-width: 600px) { .compare { grid-template-columns: 1fr; } }
+    .compare-box {
+      border: 1.5px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .compare-box .cb-head {
+      padding: 0.45rem 0.8rem;
+      font-weight: 700;
+      font-size: 0.82rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .compare-box.apply .cb-head  { background: #eef6ff; color: var(--accent); }
+    .compare-box.auth .cb-head   { background: #f0faf0; color: var(--success); }
+    .compare-box .cb-body {
+      padding: 0.6rem 0.8rem;
+      font-size: 0.82rem;
+    }
+    .compare-box .cb-body ul { padding-left: 1.2rem; margin: 0; }
+    .compare-box .cb-body li { margin-bottom: 0.25rem; }
+    .compare-box .lines {
+      font-family: var(--font-mono);
+      font-size: 2rem;
+      font-weight: 700;
+      text-align: center;
+      padding: 0.5rem 0 0.25rem;
+    }
+    .compare-box.apply .lines { color: var(--accent); }
+    .compare-box.auth .lines  { color: var(--success); }
+    .compare-box .lines-label { text-align: center; font-size: 0.75rem; color: var(--text-muted); padding-bottom: 0.5rem; }
+
+    /* Trigger source diagram */
+    .trigger-sources {
+      display: flex;
+      flex-direction: column;
+      gap: 0.65rem;
+      margin: 1.25rem 0;
+    }
+    .trig-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .trig-source {
+      background: var(--code-bg);
+      border: 1.5px solid var(--border);
+      border-radius: 5px;
+      padding: 0.4rem 0.75rem;
+      font-size: 0.83rem;
+      min-width: 200px;
+      font-family: var(--font-mono);
+    }
+    .trig-arrow { color: var(--text-muted); font-size: 1rem; }
+    .trig-target {
+      background: #eef6ff;
+      border: 1.5px solid var(--accent);
+      border-radius: 5px;
+      padding: 0.4rem 0.75rem;
+      font-size: 0.83rem;
+      font-family: var(--font-mono);
+      color: var(--accent);
+    }
+    .trig-badge {
+      font-size: 0.72rem;
+      padding: 0.1em 0.4em;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--code-bg);
+      font-family: var(--font-mono);
+      margin-left: 0.4rem;
+      white-space: nowrap;
+    }
+    .trig-badge.new { background: #fff4ce; border-color: var(--warn); }
+
+    .callout {
+      border-left: 4px solid var(--accent);
+      background: #eef6ff;
+      padding: 0.9rem 1rem;
+      margin: 1.5rem 0;
+      border-radius: 0 4px 4px 0;
+    }
+    .callout.tip  { border-left-color: var(--success); background: #f0faf0; }
+    .callout.warn { border-left-color: var(--warn); background: #fdf6ec; }
+    .callout p { margin: 0; }
+    .callout p + p { margin-top: 0.5rem; }
+
+    code { background: var(--code-bg); padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.84em; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.87rem; margin: 0.75rem 0 1.25rem; }
+    th { background: var(--code-bg); text-align: left; padding: 0.38rem 0.7rem; border-bottom: 2px solid var(--border); }
+    td { padding: 0.38rem 0.7rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+    tr:last-child td { border-bottom: none; }
+  </style>
+</head>
+<body>
+  <article>
+    <header>
+      <p class="lesson-number">Lesson 11 of <em>Azure CI/CD with Azure Pipelines</em> — comparing <em>Applications.Apply</em> and <em>Services.Authorization</em></p>
+      <h1>Lean Pipelines and Pipeline Completion Triggers</h1>
+      <p class="subtitle">Why two teams can achieve the same CI/CD outcome with very different YAML lengths — and how pipelines can trigger other pipelines</p>
+    </header>
+
+    <!-- ── THE CONTRAST ────────────────────────────────── -->
+    <section>
+      <h2>Two repos, two philosophies</h2>
+      <p>Both <code>Applications.Apply</code> and <code>Services.Authorization</code> build, test, package, and deploy via Octopus. Yet their main pipeline files look nothing alike.</p>
+
+      <div class="compare">
+        <div class="compare-box apply">
+          <div class="cb-head">Applications.Apply / azure-pipelines.yml</div>
+          <div class="cb-body">
+            <div class="lines">~270</div>
+            <div class="lines-label">lines of YAML</div>
+            <ul>
+              <li>6 local template files</li>
+              <li>Inline stage/job definitions</li>
+              <li>Service containers declared here</li>
+              <li>Lifecycle hooks written out in full</li>
+              <li>Team owns the build + deploy logic</li>
+            </ul>
+          </div>
+        </div>
+        <div class="compare-box auth">
+          <div class="cb-head">Services.Authorization / azure-pipelines.yml</div>
+          <div class="cb-body">
+            <div class="lines">~30</div>
+            <div class="lines-label">lines of YAML</div>
+            <ul>
+              <li>No local templates</li>
+              <li>Single <code>extends:</code> call</li>
+              <li>Only parameters (names, IDs, flags)</li>
+              <li>Build + deploy logic lives in V2 template</li>
+              <li>Team only defines "what", not "how"</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <p>The Authorization pipeline <em>isn't simpler</em> — it does everything Apply does. It's just expressed entirely through <code>extends:</code> with parameters. This is the <strong>lean pipeline pattern</strong>: push complexity into the shared template, keep the app repo's YAML minimal.</p>
+    </section>
+
+    <!-- ── LEAN PATTERN ───────────────────────────────── -->
+    <section>
+      <h2>The lean pipeline: complete file</h2>
+      <p>Here is the entire main pipeline for <code>Services.Authorization</code> — unabridged:</p>
+
+      <pre><code>resources:
+  repositories:
+    - repository: templates
+      type: git
+      name: PipelineTemplates
+
+trigger:
+  branches:
+    include:
+      - 'develop'
+      - 'release/*'
+      - 'hotfix/*'
+  tags:
+    include:
+      - '*'
+
+extends:
+  template: /V2/build-dotnet-service-pipeline.yml@templates
+  parameters:
+    buildDocumentation: true
+    documentationProjectName: 'Authorization'
+
+    applicationBuildList:
+      - name: 'AuthorizationService'
+        projectName: 'Equisoft.AuthorizationService.csproj'
+        packageId: 'microservices.authorization'
+        packageTitle: 'Equisoft Authorization Microservice'
+        packageDescription: 'The service responsible for the authorization...'
+        packageType: 'publish'
+        packageDocs: true
+        octopusProjectList:
+          - projectSpace: 'Spaces-222'
+            projectGroup: 'Microservices (IIS)'
+            projectName: 'Authorization Service (IIS)'
+            deployRelease: true
+          - projectSpace: 'Spaces-222'
+            projectGroup: 'Microservices'
+            projectName: 'Authorization Service'
+            channel: 'Release'</code></pre>
+
+      <p>That's it. GitVersion, CodeQL scanning, NuGet packaging, Octopus release creation, deployment — all handled by <code>/V2/build-dotnet-service-pipeline.yml@templates</code>. The app team provides the project-specific values; the template provides everything else.</p>
+
+      <div class="callout tip">
+        <p><strong>The <code>applicationBuildList</code> parameter</strong> is an object list — the template iterates it with <code>${{ each item in parameters.applicationBuildList }}</code> (the same <code>${{ each }}</code> pattern from <a href="0004-templates-and-extends.html">Lesson 4</a>). Each entry can define multiple Octopus projects, flags like <code>deployRelease: true</code>, and packaging options — all without the app team needing to know how Octopus releases are created.</p>
+      </div>
+    </section>
+
+    <!-- ── WHEN TO USE WHICH ──────────────────────────── -->
+    <section>
+      <h2>Explicit (Apply) vs lean (Authorization) — when to choose</h2>
+
+      <table>
+        <thead><tr><th></th><th>Explicit (Apply-style)</th><th>Lean extends-first (Auth-style)</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Good when</strong></td><td>Unique build steps, multiple front-ends, bespoke deploy targets</td><td>Services following the same standard pattern as a dozen other repos</td></tr>
+          <tr><td><strong>Maintenance</strong></td><td>Team owns the logic — changes need PRs in this repo</td><td>Template team updates V2 once; all services inherit the improvement</td></tr>
+          <tr><td><strong>Visibility</strong></td><td>Everything is explicit; easy to read and debug without context</td><td>Requires knowing what the template does; harder to debug template bugs</td></tr>
+          <tr><td><strong>Security</strong></td><td>Anyone who can edit this repo can change the pipeline</td><td><code>extends:</code> enables <em>required templates</em> — org can enforce security gates</td></tr>
+        </tbody>
+      </table>
+
+      <p>Most services that follow a standard pattern should use the lean approach. The Apply application is unusual: it has a React front-end, integration test service containers, Playwright smoke tests, and Docker publishing — all custom. A single shared template couldn't cover all of it without becoming unwieldy.</p>
+    </section>
+
+    <!-- ── PIPELINE COMPLETION TRIGGERS ──────────────── -->
+    <section>
+      <h2>Pipeline completion triggers — a new kind of trigger</h2>
+      <p>The Authorization repo's GHAS scan pipeline uses something you haven't seen before: a <strong>pipeline completion trigger</strong>. Instead of watching for commits, it fires when <em>another pipeline run</em> finishes.</p>
+
+      <p>Here are all three ways <code>azure-pipelines-ghas-scan.yml</code> can be triggered:</p>
+
+      <div class="trigger-sources">
+        <div class="trig-row">
+          <div class="trig-source">git tag pushed</div>
+          <div class="trig-arrow">→</div>
+          <div class="trig-target">ghas-scan.yml</div>
+          <span class="trig-badge">trigger: tags</span>
+        </div>
+        <div class="trig-row">
+          <div class="trig-source">main pipeline completes<br><small style="opacity:0.7">on release/* or hotfix/*</small></div>
+          <div class="trig-arrow">→</div>
+          <div class="trig-target">ghas-scan.yml</div>
+          <span class="trig-badge new">resources.pipelines — new!</span>
+        </div>
+        <div class="trig-row">
+          <div class="trig-source">3 AM every night (develop)</div>
+          <div class="trig-arrow">→</div>
+          <div class="trig-target">ghas-scan.yml</div>
+          <span class="trig-badge">schedules:</span>
+        </div>
+      </div>
+
+      <pre><code># From azure-pipelines-ghas-scan.yml
+
+resources:
+  pipelines:
+    - pipeline: AuthorizationService          # a name for this reference
+      source: Services\Services.Authorization # the OTHER pipeline's display name in Azure DevOps
+      trigger:
+        branches:
+          include:
+            - 'release/*'
+            - 'hotfix/*'                      # only trigger when those branches build
+
+trigger:
+  tags:
+    include:
+      - '*'
+
+schedules:
+  - cron: "0 3 * * *"
+    displayName: Daily Nightly scan
+    branches:
+      include:
+        - develop
+    always: true                              # run even if develop has no new commits</code></pre>
+
+      <div class="callout">
+        <p><strong>Why use a pipeline completion trigger here?</strong> The GHAS security scan is expensive and only makes sense after a real build artifact exists. Rather than integrating the scan into the main pipeline (which would slow every build), it runs <em>after</em> the main pipeline finishes on release branches. The two pipelines stay independent — the scan can be updated or rerun without rebuilding the app.</p>
+      </div>
+    </section>
+
+    <!-- ── ALWAYS: TRUE ───────────────────────────────── -->
+    <section>
+      <h2><code>always: true</code> on scheduled triggers</h2>
+      <p>By default, a scheduled pipeline run is skipped if the target branch hasn't changed since the last run. <code>always: true</code> overrides that — the schedule fires regardless of whether there are new commits.</p>
+
+      <pre><code>schedules:
+  - cron: "0 3 * * *"
+    displayName: Daily Nightly scan
+    branches:
+      include:
+        - develop
+    always: true          # ← without this, a quiet develop branch skips the run</code></pre>
+
+      <p>For security scans, <code>always: true</code> is essential — new vulnerabilities are discovered in dependencies every day. If develop has no commits for a week, you still want a daily scan to catch newly-disclosed CVEs.</p>
+
+      <div class="callout warn">
+        <p><strong>Don't use <code>always: true</code> on expensive pipelines</strong> you don't actually need to run daily. Full integration builds on every schedule even without changes wastes agent minutes. Reserve it for monitoring pipelines (security scans, dependency audits, uptime checks) where freshness matters more than efficiency.</p>
+      </div>
+    </section>
+
+    <!-- ── HOW RESOURCES.PIPELINES WORKS ─────────────── -->
+    <section>
+      <h2>How <code>resources.pipelines</code> works</h2>
+
+      <table>
+        <thead><tr><th>Key</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>pipeline:</code></td><td>An alias for this reference (used elsewhere in your YAML)</td></tr>
+          <tr><td><code>source:</code></td><td>The display name of the other pipeline, exactly as shown in Azure DevOps</td></tr>
+          <tr><td><code>trigger.branches.include:</code></td><td>Only fire this pipeline when the other pipeline ran from these branches</td></tr>
+          <tr><td><code>trigger: true</code></td><td>Short form — fire on any branch of the source pipeline</td></tr>
+          <tr><td><code>trigger: none</code></td><td>Never auto-trigger; use it as a data source only (to download artifacts)</td></tr>
+        </tbody>
+      </table>
+
+      <p>You can also use the pipeline resource to download artifacts from the triggering run — useful when a deploy pipeline needs the build artifact from the build pipeline that triggered it:</p>
+
+      <pre><code>resources:
+  pipelines:
+    - pipeline: myBuild
+      source: MyApp Build Pipeline
+      trigger: true
+
+steps:
+  - download: myBuild      # downloads artifacts from the run that triggered this pipeline
+    artifact: drop</code></pre>
+    </section>
+
+    <!-- ── QUIZ ───────────────────────────────────────── -->
+    <section>
+      <h2>Check your understanding</h2>
+      <div id="quiz"></div>
+    </section>
+
+    <!-- ── PRIMARY SOURCE ─────────────────────────────── -->
+    <section>
+      <h2>Primary source</h2>
+      <p>
+        <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/process/pipeline-triggers?view=azure-devops" target="_blank" rel="noopener">
+          Trigger a pipeline from another pipeline — Microsoft Learn
+        </a><br>
+        Full reference for <code>resources.pipelines</code>, completion triggers, branch filters, and downloading artifacts from the triggering run.
+      </p>
+    </section>
+
+    <!-- ── RELATED LESSONS ────────────────────────────── -->
+    <section>
+      <h2>Related lessons</h2>
+      <ul>
+        <li><a href="0004-templates-and-extends.html">Lesson 4 — Templates and Extends</a> — the <code>extends:</code> security boundary and <code>${{ each }}</code> iteration this lesson builds on</li>
+        <li><a href="0002-triggers-and-conditions.html">Lesson 2 — Triggers and Conditions</a> — branch and tag triggers; schedules are the third trigger type covered here</li>
+        <li><a href="0010-deployment-lifecycle-hooks.html">Lesson 10 — Lifecycle Hooks</a> — how the Apply pipeline's explicit deployment stages compare to Authorization's template-delegated approach</li>
+      </ul>
+    </section>
+
+    <div class="ask-question">
+      <strong>Something unclear?</strong> Ask your teacher — type a follow-up and Claude will answer it in context. Good starting questions: "What is a required template and how does it enforce security?" or "How does the V2 template know which environment to deploy to?"
+    </div>
+  </article>
+
+  <script src="../assets/quiz.js"></script>
+  <script>
+    new Quiz('quiz', [
+      {
+        q: 'What does the Services.Authorization azure-pipelines.yml contain, in full?',
+        options: [
+          'A trigger, a resources block, and a single extends call',
+          'A trigger, build stages, publish stages, and deploy stages',
+          'An extends call, local templates, and inline deploy jobs',
+          'A trigger, variable groups, and inline multi-stage YAML'
+        ],
+        answer: 0,
+        explanation: 'The entire Authorization main pipeline is a trigger, a resources.repositories block, and extends: pointing to /V2/build-dotnet-service-pipeline.yml@templates with parameters. All the stages, jobs, and steps live inside the shared template — not in this file.'
+      },
+      {
+        q: 'What triggers azure-pipelines-ghas-scan.yml when a release/* build completes?',
+        options: [
+          'A pipeline completion trigger via resources.pipelines',
+          'A branch trigger configured for release/* branches',
+          'A schedule trigger timed to run after release builds',
+          'A webhook from Octopus after the release is deployed'
+        ],
+        answer: 0,
+        explanation: 'resources.pipelines lets you watch another pipeline and fire when it completes. The GHAS scan watches Services.Authorization and triggers when that pipeline finishes on release/* or hotfix/* branches. This keeps the security scan decoupled from the main build.'
+      },
+      {
+        q: 'What does adding always: true to a schedules: block change?',
+        options: [
+          'The pipeline runs even when the branch has no new commits',
+          'The pipeline runs more often than the cron interval allows',
+          'The pipeline runs on all branches, not just the listed ones',
+          'The pipeline runs as a high-priority job on any agent'
+        ],
+        answer: 0,
+        explanation: 'By default, Azure Pipelines skips a scheduled run if the branch hasn\'t changed. always: true disables this optimisation — the pipeline runs on every schedule tick regardless. Used for security scans because new CVEs appear daily even when code doesn\'t change.'
+      },
+      {
+        q: 'What does the Authorization lean approach give up compared to Apply\'s explicit approach?',
+        options: [
+          'Flexibility to customise pipeline behaviour beyond template parameters',
+          'Speed of execution due to extra template resolution overhead',
+          'Security because secrets are stored inside the shared template',
+          'Visibility into logs because templates suppress all step output'
+        ],
+        answer: 0,
+        explanation: 'With extends:, your customisation surface is limited to what the template exposes as parameters. If you need a step the template doesn\'t support, you either modify the shared template (impacting all consumers) or switch to an explicit approach. The tradeoff is less code in exchange for less flexibility.'
+      }
+    ]);
+  </script>
+</body>
+</html>

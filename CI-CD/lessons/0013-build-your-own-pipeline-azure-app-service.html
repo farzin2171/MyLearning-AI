@@ -1,0 +1,892 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 13 — Build Your Own CI/CD Pipeline to Azure App Service</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    /* ── Lesson-specific styles ─────────────────────────────── */
+    .phase {
+      margin: 2.5rem 0;
+      border-left: 3px solid var(--accent);
+      padding-left: 1.25rem;
+    }
+    .phase h2 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--accent-dark);
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .phase-badge {
+      background: var(--accent);
+      color: white;
+      border-radius: 50%;
+      width: 1.8rem;
+      height: 1.8rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.85rem;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    /* Numbered step */
+    .step {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 1rem;
+    }
+    .step-title {
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: flex-start;
+      gap: 0.6rem;
+    }
+    .step-num {
+      background: var(--code-bg);
+      color: var(--text-muted);
+      border-radius: 4px;
+      padding: 0.1em 0.45em;
+      font-size: 0.8rem;
+      font-family: var(--font-mono);
+      flex-shrink: 0;
+      margin-top: 0.15em;
+    }
+    .step p { margin-top: 0.5rem; color: var(--text-muted); font-size: 0.95rem; }
+    .step ul { margin: 0.5rem 0 0 1.25rem; color: var(--text-muted); font-size: 0.95rem; }
+    .step ul li { margin-bottom: 0.25rem; }
+
+    /* Callout boxes */
+    .callout {
+      padding: 0.9rem 1.1rem;
+      border-radius: 6px;
+      margin: 1rem 0;
+      font-size: 0.93rem;
+      border-left: 4px solid;
+    }
+    .callout.info  { background: #e8f4fd; border-color: var(--accent);  color: #003f6b; }
+    .callout.warn  { background: #fff8e1; border-color: var(--warn);    color: #5a3a00; }
+    .callout.ok    { background: #e6f4ea; border-color: var(--success);  color: #1a4a1a; }
+    .callout strong { font-weight: 700; }
+
+    /* Flow diagram */
+    .flow {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+      margin: 1.25rem 0;
+      font-size: 0.9rem;
+      font-family: var(--font-mono);
+    }
+    .flow-box {
+      background: var(--accent);
+      color: white;
+      padding: 0.35em 0.75em;
+      border-radius: 4px;
+      white-space: nowrap;
+    }
+    .flow-box.secondary { background: #005a9e; }
+    .flow-box.success   { background: var(--success); }
+    .flow-box.warn      { background: var(--warn); color: white; }
+    .flow-arrow { color: var(--text-muted); font-size: 1rem; }
+
+    /* vs table */
+    table.compare {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+      margin: 1rem 0;
+    }
+    table.compare th {
+      background: var(--code-bg);
+      padding: 0.5rem 0.75rem;
+      text-align: left;
+      font-weight: 600;
+      border-bottom: 2px solid var(--border);
+    }
+    table.compare td {
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    table.compare td:first-child { font-weight: 600; color: var(--text-muted); }
+    table.compare .yes { color: var(--success); font-weight: 700; }
+    table.compare .no  { color: var(--error);   font-weight: 700; }
+
+    /* Code annotation lines */
+    .code-note {
+      background: var(--highlight);
+      border-left: 3px solid var(--warn);
+      padding: 0.6rem 0.9rem;
+      margin: 0.5rem 0;
+      font-size: 0.87rem;
+      border-radius: 0 4px 4px 0;
+    }
+
+    /* Checklist */
+    .checklist { list-style: none; padding: 0; margin: 0.75rem 0; }
+    .checklist li {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.5rem;
+      padding: 0.3rem 0;
+      font-size: 0.95rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .checklist li:last-child { border-bottom: none; }
+    .checklist li::before {
+      content: "☐";
+      font-size: 1.1rem;
+      color: var(--accent);
+      flex-shrink: 0;
+      line-height: 1.4;
+    }
+    .checklist li.done::before { content: "☑"; color: var(--success); }
+
+    .tag {
+      display: inline-block;
+      background: var(--code-bg);
+      color: var(--text-muted);
+      border-radius: 3px;
+      padding: 0.1em 0.45em;
+      font-size: 0.78rem;
+      font-family: var(--font-mono);
+      vertical-align: middle;
+    }
+  </style>
+</head>
+<body>
+<main>
+
+  <!-- ── HEADER ─────────────────────────────────────────────── -->
+  <header class="lesson-header">
+    <p class="breadcrumb">Azure CI/CD · Lesson 13 · Capstone</p>
+    <h1>Build Your Own CI/CD Pipeline to Azure App Service</h1>
+    <p style="color:var(--text-muted); margin-top:0.5rem;">
+      A complete, step-by-step walkthrough — from empty repository to a running pipeline
+      that builds, tests, and deploys to Azure App Service. No Octopus needed.
+    </p>
+  </header>
+
+  <!-- ── WHY THIS LESSON ────────────────────────────────────── -->
+  <section style="margin-bottom:2rem;">
+    <p>
+      You have spent 12 lessons learning individual pipeline concepts. This lesson puts them
+      all together into one coherent system you own end-to-end. The model is
+      <strong>Services.Authorization</strong> (the team's sample .NET 8 service) — but the
+      pipeline pattern here replaces Octopus with a direct Azure App Service deploy, so you
+      can use it independently for any project.
+    </p>
+
+    <h3 style="margin:1.25rem 0 0.5rem;">What you will end up with</h3>
+    <div class="flow">
+      <span class="flow-box">Push code</span>
+      <span class="flow-arrow">→</span>
+      <span class="flow-box">① Build &amp; Test</span>
+      <span class="flow-arrow">→</span>
+      <span class="flow-box secondary">② Deploy → Dev</span>
+      <span class="flow-arrow">→</span>
+      <span class="flow-box warn">Approval gate</span>
+      <span class="flow-arrow">→</span>
+      <span class="flow-box success">③ Deploy → Prod</span>
+    </div>
+
+    <h3 style="margin:1.25rem 0 0.5rem;">How this differs from the team's current setup</h3>
+    <table class="compare">
+      <thead>
+        <tr><th>Concern</th><th>Team (Octopus)</th><th>This guide (Azure App Service)</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Artifact format</td>
+          <td>NuGet / Octopus package</td>
+          <td>.zip (dotnet publish output)</td>
+        </tr>
+        <tr>
+          <td>Deploy mechanism</td>
+          <td>Octopus Deploy release</td>
+          <td><code>AzureWebApp@1</code> task</td>
+        </tr>
+        <tr>
+          <td>Environment approval</td>
+          <td>Octopus lifecycle</td>
+          <td>Azure DevOps Environments</td>
+        </tr>
+        <tr>
+          <td>External tool required</td>
+          <td class="no">Yes — Octopus server</td>
+          <td class="yes">No — built into Azure Pipelines</td>
+        </tr>
+        <tr>
+          <td>Versioning</td>
+          <td>GitVersion (same)</td>
+          <td>GitVersion (same)</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════
+       PHASE A — PREREQUISITES (do once, outside the pipeline)
+       ══════════════════════════════════════════════════════════ -->
+  <div class="phase">
+    <h2><span class="phase-badge">A</span> Prerequisites — Set up Azure resources (do once)</h2>
+    <p style="color:var(--text-muted); margin-bottom:1rem;">
+      These are one-time tasks in the Azure portal and in Azure DevOps. You cannot run the
+      pipeline until they exist.
+    </p>
+
+    <div class="step">
+      <div class="step-title"><span class="step-num">A1</span> Create two Azure App Services</div>
+      <p>In the <a href="https://portal.azure.com" target="_blank">Azure portal</a>:</p>
+      <ul>
+        <li>Go to <strong>App Services → Create</strong></li>
+        <li>Create a <strong>Dev</strong> instance — e.g. <code>my-service-dev</code></li>
+        <li>Create a <strong>Prod</strong> instance — e.g. <code>my-service-prod</code></li>
+        <li>Runtime stack: <strong>.NET 8 (LTS)</strong> · OS: <strong>Linux</strong></li>
+        <li>Note both names — you will paste them into a variable group in step B1</li>
+      </ul>
+      <div class="callout info">
+        <strong>Linux vs Windows:</strong> The pipeline uses <code>appType: 'webAppLinux'</code>.
+        If you chose Windows, change that to <code>appType: 'webApp'</code>.
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-title"><span class="step-num">A2</span> Create a Service Connection in Azure DevOps</div>
+      <p>
+        This is the credential that lets Azure Pipelines talk to your Azure subscription.
+      </p>
+      <ul>
+        <li>In Azure DevOps, go to <strong>Project Settings → Service connections → New service connection</strong></li>
+        <li>Choose <strong>Azure Resource Manager</strong></li>
+        <li>Authentication: <strong>Workload Identity Federation (recommended)</strong> or Service principal</li>
+        <li>Select the subscription that contains your App Services</li>
+        <li>Name it — e.g. <code>my-azure-subscription</code> — you will reference this name in the pipeline</li>
+        <li>Tick <strong>Grant access to all pipelines</strong></li>
+      </ul>
+      <div class="callout warn">
+        <strong>Write down the exact connection name.</strong> The pipeline variable
+        <code>azureServiceConnection</code> must match character-for-character.
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       PHASE B — AZURE DEVOPS SETUP
+       ══════════════════════════════════════════════════════════ -->
+  <div class="phase">
+    <h2><span class="phase-badge">B</span> Azure DevOps — Environments &amp; Variable Group</h2>
+
+    <div class="step">
+      <div class="step-title"><span class="step-num">B1</span> Create a Variable Group</div>
+      <p>
+        A variable group keeps secrets and environment-specific values out of your YAML.
+        Go to <strong>Pipelines → Library → + Variable group</strong>.
+      </p>
+      <p>Name it <code>my-service-vars</code> and add these three variables:</p>
+      <pre><code>azureServiceConnection   = my-azure-subscription    (the name from A2)
+appServiceNameDev        = my-service-dev            (name from A1)
+appServiceNameProd       = my-service-prod           (name from A1)</code></pre>
+      <div class="callout ok">
+        You can mark <code>azureServiceConnection</code> as a secret if you like, but since it's
+        just a name (not a password) it doesn't need to be.
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-title"><span class="step-num">B2</span> Create the Dev environment</div>
+      <ul>
+        <li>Go to <strong>Pipelines → Environments → New environment</strong></li>
+        <li>Name: <code>dev</code> · Resource: <strong>None</strong></li>
+        <li>Leave approvals off — dev deploys automatically</li>
+      </ul>
+    </div>
+
+    <div class="step">
+      <div class="step-title"><span class="step-num">B3</span> Create the Prod environment with an approval gate</div>
+      <ul>
+        <li>Create another environment named <code>prod</code></li>
+        <li>Click <strong>⋯ → Approvals and checks → + Add → Approvals</strong></li>
+        <li>Add yourself (or your team lead) as approver</li>
+        <li>Save</li>
+      </ul>
+      <div class="callout info">
+        <strong>Why environments matter:</strong> The pipeline's <code>environment: 'prod'</code>
+        key links the deployment job to this approval gate. You learned this in Lesson 6 —
+        the gate lives in Azure DevOps, not in the YAML.
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       PHASE C — YOUR REPOSITORY
+       ══════════════════════════════════════════════════════════ -->
+  <div class="phase">
+    <h2><span class="phase-badge">C</span> Repository Setup</h2>
+
+    <div class="step">
+      <div class="step-title"><span class="step-num">C1</span> Create a new repository</div>
+      <ul>
+        <li>In Azure DevOps, go to <strong>Repos → + New repository</strong> (or use GitHub)</li>
+        <li>Initialize with a <strong>.gitignore</strong> (choose <em>VisualStudio</em>)</li>
+        <li>Clone it locally: <code>git clone &lt;url&gt;</code></li>
+      </ul>
+    </div>
+
+    <div class="step">
+      <div class="step-title"><span class="step-num">C2</span> Add GitVersion.yml</div>
+      <p>At the repository root, create <code>GitVersion.yml</code>:</p>
+      <pre><code>mode: ContinuousDeployment
+branches: {}
+ignore:
+  sha: []</code></pre>
+      <div class="code-note">
+        <strong>Why <code>ContinuousDeployment</code>?</strong> Every commit gets its own
+        unique version number — never a duplicate. You learned this in Lesson 7.
+        Services.Authorization uses the identical config.
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-title"><span class="step-num">C3</span> Set up your branch strategy</div>
+      <p>Create the branches the pipeline expects:</p>
+      <pre><code>git checkout -b develop
+git push -u origin develop</code></pre>
+      <ul>
+        <li>Day-to-day work: commit to <code>develop</code> → auto-deploys to <strong>Dev</strong></li>
+        <li>Release prep: branch to <code>release/1.0</code> → deploys to Dev (waiting for Prod approval)</li>
+        <li>Production: merge to <code>main</code> + tag → deploys to <strong>Prod</strong> after approval</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       PHASE D — THE PIPELINE YAML
+       ══════════════════════════════════════════════════════════ -->
+  <div class="phase">
+    <h2><span class="phase-badge">D</span> The Pipeline YAML — Full File</h2>
+
+    <p style="color:var(--text-muted); margin-bottom:1rem;">
+      Create <code>azure-pipelines.yml</code> at your repository root and paste the following.
+      Every section maps to a concept you've already learned — annotations below explain the connections.
+    </p>
+
+    <pre><code># azure-pipelines.yml
+# ─────────────────────────────────────────────────────────────────
+# CI/CD pipeline for &lt;your service&gt;
+# Deploys to Azure App Service (no Octopus required)
+# ─────────────────────────────────────────────────────────────────
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+      - 'release/*'
+      - 'hotfix/*'
+  tags:
+    include:
+      - '*'
+
+pr:
+  branches:
+    include:
+      - main
+      - develop
+
+variables:
+  - group: 'my-service-vars'          # ← variable group from step B1
+  - name: isDevelop
+    value: $[eq(variables['Build.SourceBranch'], 'refs/heads/develop')]
+  - name: isMain
+    value: $[eq(variables['Build.SourceBranch'], 'refs/heads/main')]
+  - name: isRelease
+    value: $[startsWith(variables['Build.SourceBranch'], 'refs/heads/release/')]
+  - name: isHotfix
+    value: $[startsWith(variables['Build.SourceBranch'], 'refs/heads/hotfix/')]
+  - name: isTag
+    value: $[startsWith(variables['Build.SourceBranch'], 'refs/tags/')]
+  - name: isPR
+    value: $[eq(variables['Build.Reason'], 'PullRequest')]
+  - name: buildConfiguration
+    value: 'Release'
+  - name: dotnetVersion
+    value: '8.0.x'
+
+stages:
+
+  # ── ① BUILD ───────────────────────────────────────────────────
+  - stage: Build
+    displayName: '① Build &amp; Test'
+    jobs:
+      - job: BuildJob
+        displayName: 'Restore → Build → Test → Publish'
+        pool:
+          vmImage: 'ubuntu-latest'
+        workspace:
+          clean: all
+        steps:
+          - checkout: self
+            fetchDepth: 0             # GitVersion needs full history (Lesson 7)
+
+          - task: gitversion/setup@3.2.1
+            displayName: 'Install GitVersion'
+            inputs:
+              versionSpec: '5.x'
+
+          - task: gitversion/execute@3.2.1
+            displayName: 'Calculate Version'
+            name: GitVersion
+
+          - script: echo "##[section]Building version $(GitVersion.SemVer)"
+            displayName: 'Log version'
+
+          - task: UseDotNet@2
+            displayName: 'Install .NET $(dotnetVersion)'
+            inputs:
+              version: '$(dotnetVersion)'
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Restore'
+            inputs:
+              command: 'restore'
+              projects: '**/*.csproj'
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Build'
+            inputs:
+              command: 'build'
+              projects: '**/*.csproj'
+              arguments: >-
+                --no-restore
+                --configuration $(buildConfiguration)
+                /p:Version=$(GitVersion.SemVer)
+                /p:AssemblyVersion=$(GitVersion.AssemblySemVer)
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Unit Tests'
+            inputs:
+              command: 'test'
+              projects: '**/*.UnitTests.csproj'
+              arguments: >-
+                --no-build
+                --configuration $(buildConfiguration)
+                --collect:"XPlat Code Coverage"
+            publishTestResults: true
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Publish'
+            inputs:
+              command: 'publish'
+              publishWebProjects: true
+              arguments: >-
+                --no-build
+                --configuration $(buildConfiguration)
+                --output $(Build.ArtifactStagingDirectory)
+              zipAfterPublish: true   # ← produces the .zip AzureWebApp@1 expects
+
+          - task: PublishPipelineArtifact@1
+            displayName: 'Upload drop artifact'
+            inputs:
+              targetPath: '$(Build.ArtifactStagingDirectory)'
+              artifact: 'drop'
+
+  # ── ② DEPLOY → DEV ────────────────────────────────────────────
+  - stage: DeployDev
+    displayName: '② Deploy → Dev'
+    dependsOn: Build
+    condition: |
+      and(
+        succeeded(),
+        ne(variables.isPR, true),
+        or(
+          eq(variables.isDevelop, true),
+          eq(variables.isRelease, true),
+          eq(variables.isHotfix, true),
+          eq(variables.isTag, true)
+        )
+      )
+    jobs:
+      - deployment: DeployToDev
+        displayName: 'Azure App Service: Dev'
+        pool:
+          vmImage: 'ubuntu-latest'
+        environment: 'dev'            # ← links to Azure DevOps environment (Lesson 6)
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: none      # no source needed — artifact downloaded automatically
+
+                - task: AzureWebApp@1
+                  displayName: 'Deploy to $(appServiceNameDev)'
+                  inputs:
+                    azureSubscription: '$(azureServiceConnection)'   # from variable group
+                    appType: 'webAppLinux'
+                    appName: '$(appServiceNameDev)'
+                    package: '$(Pipeline.Workspace)/drop/**/*.zip'
+                    deploymentMethod: 'auto'
+                    appSettings: |
+                      -ASPNETCORE_ENVIRONMENT Staging
+                      -ASPNETCORE_URLS "http://+:80"
+
+  # ── ③ DEPLOY → PROD ───────────────────────────────────────────
+  - stage: DeployProd
+    displayName: '③ Deploy → Prod'
+    dependsOn: DeployDev
+    condition: |
+      and(
+        succeeded(),
+        or(
+          eq(variables.isMain, true),
+          eq(variables.isTag, true)
+        )
+      )
+    jobs:
+      - deployment: DeployToProd
+        displayName: 'Azure App Service: Prod'
+        pool:
+          vmImage: 'ubuntu-latest'
+        environment: 'prod'           # ← approval gate enforced here (Lesson 6)
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: none
+
+                - task: AzureWebApp@1
+                  displayName: 'Deploy to $(appServiceNameProd)'
+                  inputs:
+                    azureSubscription: '$(azureServiceConnection)'
+                    appType: 'webAppLinux'
+                    appName: '$(appServiceNameProd)'
+                    package: '$(Pipeline.Workspace)/drop/**/*.zip'
+                    deploymentMethod: 'auto'
+                    appSettings: |
+                      -ASPNETCORE_ENVIRONMENT Production
+                      -ASPNETCORE_URLS "http://+:80"
+</code></pre>
+
+    <h3 style="margin:1.5rem 0 0.75rem;">Key YAML decisions — annotated</h3>
+
+    <div class="code-note" style="margin:0.75rem 0;">
+      <strong><code>fetchDepth: 0</code> on checkout</strong> — GitVersion reads the full commit
+      history to calculate a valid semantic version. Without this, you get
+      <em>"Unable to determine the commit count"</em> errors (Lesson 7).
+    </div>
+
+    <div class="code-note" style="margin:0.75rem 0;">
+      <strong><code>zipAfterPublish: true</code> on DotNetCoreCLI publish</strong> — this is what
+      produces the <code>.zip</code> file that <code>AzureWebApp@1</code> expects via
+      <code>package: '$(Pipeline.Workspace)/drop/**/*.zip'</code>. Without it, you'd get a
+      directory, and the task wouldn't know what to upload.
+    </div>
+
+    <div class="code-note" style="margin:0.75rem 0;">
+      <strong><code>checkout: none</code> in deployment jobs</strong> — deployment jobs
+      automatically download all published artifacts. You don't need source code to deploy —
+      only the zip. Skipping checkout saves ~30 seconds per environment (Lesson 5).
+    </div>
+
+    <div class="code-note" style="margin:0.75rem 0;">
+      <strong>Condition on DeployDev</strong> — excludes PR builds (<code>ne(variables.isPR, true)</code>)
+      so that pull request validation never triggers a real deployment. You learned this pattern
+      in Lesson 2.
+    </div>
+
+    <div class="code-note" style="margin:0.75rem 0;">
+      <strong>Condition on DeployProd</strong> — only runs on <code>main</code> or a tag. A
+      release branch commit goes to Dev, then stops. Only a merge to main (or a tag) triggers Prod.
+    </div>
+
+    <div class="code-note" style="margin:0.75rem 0;">
+      <strong><code>appSettings</code> block</strong> — overrides App Service application settings
+      at deploy time. This is equivalent to the environment variables you saw in
+      <code>docker-compose.yml</code> in Services.Authorization. Each line is
+      <code>-KEY value</code> (note the leading dash).
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       PHASE E — REGISTER & RUN
+       ══════════════════════════════════════════════════════════ -->
+  <div class="phase">
+    <h2><span class="phase-badge">E</span> Register the Pipeline &amp; Run It</h2>
+
+    <div class="step">
+      <div class="step-title"><span class="step-num">E1</span> Commit and push</div>
+      <pre><code>git add azure-pipelines.yml GitVersion.yml
+git commit -m "ci: initial pipeline"
+git push</code></pre>
+    </div>
+
+    <div class="step">
+      <div class="step-title"><span class="step-num">E2</span> Register the pipeline in Azure DevOps</div>
+      <ul>
+        <li>Go to <strong>Pipelines → New pipeline</strong></li>
+        <li>Where is your code? → <strong>Azure Repos Git</strong> (or GitHub)</li>
+        <li>Select your repository</li>
+        <li>Configure: <strong>Existing Azure Pipelines YAML file</strong></li>
+        <li>Path: <code>/azure-pipelines.yml</code></li>
+        <li>Click <strong>Continue → Run</strong></li>
+      </ul>
+    </div>
+
+    <div class="step">
+      <div class="step-title"><span class="step-num">E3</span> Watch the first run</div>
+      <p>From the <code>develop</code> branch, you should see three stages:</p>
+      <ul>
+        <li><strong>① Build &amp; Test</strong> — runs, produces a <code>drop</code> artifact</li>
+        <li><strong>② Deploy → Dev</strong> — runs automatically (no approval needed)</li>
+        <li><strong>③ Deploy → Prod</strong> — <em>skipped</em> (not on main or a tag)</li>
+      </ul>
+      <div class="callout ok">
+        <strong>Success check:</strong> Open your Dev App Service URL in a browser.
+        Your app should be running. The version is visible via the GitVersion-stamped
+        assembly: check <code>/hc</code> or your health-check endpoint.
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-title"><span class="step-num">E4</span> Promote to Prod</div>
+      <pre><code>git checkout main
+git merge develop
+git tag v1.0.0
+git push origin main --tags</code></pre>
+      <ul>
+        <li>The Build stage runs again on the tag</li>
+        <li>DeployDev runs (tag is in the condition)</li>
+        <li>DeployProd starts — pauses at the <strong>approval gate</strong></li>
+        <li>You receive an email / Teams notification → click <strong>Approve</strong></li>
+        <li>Deployment proceeds to your Prod App Service</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       ADAPTING FOR NODE.JS / REACT
+       ══════════════════════════════════════════════════════════ -->
+  <div class="phase">
+    <h2><span class="phase-badge">F</span> Adapting for Node.js / React</h2>
+    <p style="color:var(--text-muted); margin-bottom:1rem;">
+      If your project is JavaScript/TypeScript instead of .NET, replace the Build stage steps
+      with the following. The Deploy stages are <em>identical</em> — Azure App Service doesn't
+      care about the language.
+    </p>
+
+    <pre><code>      steps:
+        - checkout: self
+          fetchDepth: 0
+
+        - task: gitversion/setup@3.2.1
+          inputs:
+            versionSpec: '5.x'
+
+        - task: gitversion/execute@3.2.1
+          name: GitVersion
+
+        - task: NodeTool@0
+          displayName: 'Install Node.js'
+          inputs:
+            versionSpec: '20.x'
+
+        - task: Npm@1
+          displayName: 'npm ci'
+          inputs:
+            command: 'ci'
+
+        - task: Npm@1
+          displayName: 'npm test'
+          inputs:
+            command: 'custom'
+            customCommand: 'test -- --watchAll=false --ci'
+
+        - task: Npm@1
+          displayName: 'npm build'
+          inputs:
+            command: 'custom'
+            customCommand: 'run build'
+
+        # Zip the build output so AzureWebApp@1 can deploy it
+        - task: ArchiveFiles@2
+          displayName: 'Zip build output'
+          inputs:
+            rootFolderOrFile: '$(System.DefaultWorkingDirectory)/build'
+            includeRootFolder: false
+            archiveType: 'zip'
+            archiveFile: '$(Build.ArtifactStagingDirectory)/drop.zip'
+            replaceExistingArchive: true
+
+        - task: PublishPipelineArtifact@1
+          displayName: 'Upload drop artifact'
+          inputs:
+            targetPath: '$(Build.ArtifactStagingDirectory)/drop.zip'
+            artifact: 'drop'</code></pre>
+
+    <div class="callout info">
+      <strong>Node.js App Service runtime:</strong> Set the App Service runtime to
+      <strong>Node 20 LTS</strong> in the Azure portal, and add a startup command
+      <code>node server.js</code> (or <code>pm2 start server.js</code> for production).
+      For a React SPA served statically, you might prefer Azure Static Web Apps instead.
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       COMPLETE CHECKLIST
+       ══════════════════════════════════════════════════════════ -->
+  <div class="phase">
+    <h2><span class="phase-badge">G</span> Your Complete Checklist</h2>
+    <p style="color:var(--text-muted); margin-bottom:0.75rem;">
+      Work through this in order. Check each item as you complete it.
+    </p>
+    <ul class="checklist">
+      <li>A1 — Created Dev App Service in Azure portal</li>
+      <li>A1 — Created Prod App Service in Azure portal</li>
+      <li>A2 — Created Azure Resource Manager service connection in Azure DevOps</li>
+      <li>B1 — Created variable group <code>my-service-vars</code> with 3 variables</li>
+      <li>B2 — Created <code>dev</code> environment (no approval)</li>
+      <li>B3 — Created <code>prod</code> environment with approval gate</li>
+      <li>C1 — Created new repository and cloned locally</li>
+      <li>C2 — Added <code>GitVersion.yml</code> at repo root</li>
+      <li>C3 — Created and pushed <code>develop</code> branch</li>
+      <li>D — Added <code>azure-pipelines.yml</code> at repo root (adapt to your stack)</li>
+      <li>E1 — Committed and pushed both files</li>
+      <li>E2 — Registered pipeline in Azure DevOps</li>
+      <li>E3 — First run succeeded — Dev App Service is live</li>
+      <li>E4 — Tagged a release, approved Prod gate, Prod App Service updated</li>
+    </ul>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       QUIZ
+       ══════════════════════════════════════════════════════════ -->
+  <section style="margin-top:2.5rem;">
+    <h2 style="margin-bottom:1rem;">Check your understanding</h2>
+    <div id="quiz-container"></div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════
+       TROUBLESHOOTING
+       ══════════════════════════════════════════════════════════ -->
+  <section style="margin-top:2rem;">
+    <h2 style="margin-bottom:0.75rem;">Common problems &amp; fixes</h2>
+    <table class="compare">
+      <thead><tr><th>Symptom</th><th>Likely cause</th><th>Fix</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><em>"No package found"</em> in AzureWebApp@1</td>
+          <td><code>zipAfterPublish</code> is false, or artifact name mismatch</td>
+          <td>Confirm <code>zipAfterPublish: true</code> and artifact name is <code>drop</code></td>
+        </tr>
+        <tr>
+          <td>GitVersion error: <em>"Unable to determine commit count"</em></td>
+          <td><code>fetchDepth</code> is 1 (shallow clone)</td>
+          <td>Set <code>fetchDepth: 0</code> on checkout</td>
+        </tr>
+        <tr>
+          <td>DeployProd never runs, even after merge to main</td>
+          <td>DeployDev condition skipped the Dev stage, so DeployProd's <code>dependsOn</code> sees a skipped parent</td>
+          <td>Check DeployDev condition — it must succeed (not skip) for a main branch push</td>
+        </tr>
+        <tr>
+          <td><em>"Service connection not found"</em></td>
+          <td>Variable group not linked to the pipeline, or connection name typo</td>
+          <td>Check Library → Variable group → Pipeline permissions; verify spelling</td>
+        </tr>
+        <tr>
+          <td>App deployed but returns HTTP 500</td>
+          <td>Missing App Service application settings (connection strings etc.)</td>
+          <td>Add settings in <code>appSettings</code> block, or configure in Azure portal under Configuration</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════
+       PRIMARY SOURCE
+       ══════════════════════════════════════════════════════════ -->
+  <section class="primary-source" style="margin-top:2.5rem; padding:1.25rem; background:var(--highlight); border-radius:8px;">
+    <h3 style="margin-bottom:0.5rem;">Primary source</h3>
+    <p>
+      <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/targets/webapp" target="_blank">
+        Deploy to Azure App Service — Azure Pipelines official docs (Microsoft Learn)
+      </a>
+    </p>
+    <p style="font-size:0.9rem; color:var(--text-muted); margin-top:0.5rem;">
+      Covers <code>AzureWebApp@1</code> parameters in full, slot deployments,
+      deployment method options, and Node.js-specific App Service configuration.
+    </p>
+  </section>
+
+  <p style="margin-top:2.5rem; color:var(--text-muted); font-size:0.9rem; border-top:1px solid var(--border); padding-top:1rem;">
+    Stuck on any step? Ask your teacher agent — paste the exact error message and the step
+    number (e.g. "step E3, I get: No package found").
+    <br>
+    <a href="0012-playwright-automation-in-pipeline.html">← Lesson 12</a>
+    &nbsp;·&nbsp;
+    <a href="../reference/gitversion-cheatsheet.html">GitVersion cheatsheet</a>
+  </p>
+
+</main>
+
+<script src="../assets/quiz.js"></script>
+<script>
+  new Quiz('quiz-container', [
+    {
+      q: 'What does `zipAfterPublish: true` do in the DotNetCoreCLI publish step?',
+      options: [
+        'Uploads the artifact to Azure Artifacts automatically',
+        'Zips the published output so AzureWebApp@1 can deploy it',
+        'Enables compression of test results for storage',
+        'Packs the project as a NuGet package for Octopus'
+      ],
+      answer: 1,
+      explanation: 'AzureWebApp@1 expects a .zip file. Without zipAfterPublish:true, dotnet publish produces a directory — the task cannot upload a directory directly.'
+    },
+    {
+      q: 'Why does the DeployDev stage exclude PR builds with `ne(variables.isPR, true)`?',
+      options: [
+        'PR runs cannot access variable groups due to security restrictions',
+        'To prevent every pull request from deploying to the real Dev environment',
+        'Because GitVersion does not work on PR branches without special config',
+        'Azure App Service rejects deployments from pull request pipelines'
+      ],
+      answer: 1,
+      explanation: 'A PR pipeline validates the code but should not deploy to a real environment — that would create noise and potential conflicts. The ne(isPR, true) condition gates the deploy stages to real branch pushes only.'
+    },
+    {
+      q: 'Where is the Prod approval gate configured in this setup?',
+      options: [
+        'In the YAML — under the DeployProd stage condition block',
+        'In the Azure portal — under the App Service deployment slots',
+        'In Azure DevOps — under Pipelines → Environments → prod → Approvals',
+        'In the variable group — as a boolean flag named requireApproval'
+      ],
+      answer: 2,
+      explanation: 'The approval gate lives in the Azure DevOps Environment, not in the YAML. The YAML just references environment: prod — Azure DevOps enforces any checks (approvals, branch policies) configured on that environment.'
+    },
+    {
+      q: 'If you push a commit to `release/1.2`, which stages run?',
+      options: [
+        'Build only — release branches never trigger deployments',
+        'Build and DeployDev — but NOT DeployProd (not main or tag)',
+        'Build, DeployDev, and DeployProd — all three stages run',
+        'DeployProd only — release branches skip Dev and go straight to Prod'
+      ],
+      answer: 1,
+      explanation: 'The DeployDev condition includes isRelease, so Dev gets the build. DeployProd only fires for main or a tag — a release branch push stops at Dev.'
+    }
+  ]);
+</script>
+</body>
+</html>

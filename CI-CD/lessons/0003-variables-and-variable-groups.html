@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 3 — Variables &amp; Variable Groups</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    /* Expression syntax comparison table */
+    .syntax-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 0.85rem;
+      margin: 1.25rem 0 1.75rem;
+    }
+    .syntax-card {
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      padding: 0.9rem 1rem;
+      background: var(--surface);
+    }
+    .syntax-card .sc-syntax {
+      font-family: var(--font-mono);
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--accent-dark);
+      margin-bottom: 0.3rem;
+    }
+    .syntax-card .sc-name {
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-bottom: 0.35rem;
+    }
+    .syntax-card .sc-when {
+      font-size: 0.84rem;
+      color: var(--text);
+      line-height: 1.45;
+    }
+    .syntax-card.blue  { border-color: var(--accent); }
+    .syntax-card.gold  { border-color: #c17f24; }
+    .syntax-card.green { border-color: var(--success); }
+
+    /* Scope ladder */
+    .scope-ladder {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      margin: 1.25rem 0 1.75rem;
+      font-size: 0.88rem;
+    }
+    .scope-row {
+      display: flex;
+      align-items: stretch;
+      border-bottom: 1px solid var(--border);
+    }
+    .scope-row:first-child { border-top: 1px solid var(--border); }
+    .scope-label {
+      width: 110px;
+      flex-shrink: 0;
+      padding: 0.5rem 0.75rem;
+      font-weight: 700;
+      color: var(--accent-dark);
+      background: var(--code-bg);
+      border-right: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+    }
+    .scope-desc { padding: 0.5rem 0.9rem; display: flex; align-items: center; }
+
+    /* Source reference tag */
+    .src-tag {
+      display: inline-block;
+      font-size: 0.72rem;
+      font-family: var(--font-mono);
+      background: #e8f0fe;
+      color: #1a237e;
+      border-radius: 3px;
+      padding: 0.1em 0.45em;
+      margin-left: 0.4rem;
+      vertical-align: middle;
+    }
+  </style>
+</head>
+<body>
+<main>
+
+  <!-- ── Header ─────────────────────────────────────────── -->
+  <header class="lesson-header">
+    <div class="breadcrumb">
+      Azure CI/CD ·
+      <a href="0001-yaml-pipeline-anatomy.html">Lesson 1</a> →
+      <a href="0002-triggers-and-conditions.html">Lesson 2</a> → Lesson 3
+    </div>
+    <h1>Variables &amp; Variable Groups</h1>
+    <p class="subtitle">How your team injects config, secrets, and branch-based logic — drawn from your PipelineTemplates repo.</p>
+  </header>
+
+  <!-- ── Why this matters ───────────────────────────────── -->
+  <h2>Why this lesson</h2>
+  <p>
+    Look at the top of any pipeline in your team's <code>V2/</code> folder:
+  </p>
+  <pre><span class="y-key">variables</span>:
+- <span class="y-key">group</span>: <span class="y-val">Pipeline_Main</span>
+- <span class="y-key">group</span>: <span class="y-val">pipeline-templates</span>
+- <span class="y-key">template</span>: <span class="y-val">variables/resources.yml</span></pre>
+  <p>
+    Three variable sources — a variable group for shared org secrets, another group for
+    template-specific config, and a template file for image names. You can't read or maintain
+    these pipelines without understanding what each source does and when each expression syntax applies.
+  </p>
+
+  <!-- ── Three expression syntaxes ─────────────────────── -->
+  <h2>The three expression syntaxes</h2>
+  <p>
+    Azure Pipelines has three syntaxes for referencing variables. They look similar but evaluate
+    at different times.
+    <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/process/expressions?view=azure-devops" target="_blank">Expressions docs →</a>
+  </p>
+
+  <div class="syntax-cards">
+    <div class="syntax-card blue">
+      <div class="sc-name">Macro — runtime</div>
+      <div class="sc-syntax">$(variableName)</div>
+      <div class="sc-when">
+        Expanded when the step runs on the agent. Works for most values: script args, task inputs, condition strings.
+        <em>Most common syntax.</em>
+      </div>
+    </div>
+    <div class="syntax-card gold">
+      <div class="sc-name">Template expression — compile-time</div>
+      <div class="sc-syntax">${{ expression }}</div>
+      <div class="sc-when">
+        Expanded when the pipeline is compiled, before it runs. Used for parameters, conditionals, and loops in templates.
+        <em>Only works with parameters and static values.</em>
+      </div>
+    </div>
+    <div class="syntax-card green">
+      <div class="sc-name">Runtime expression</div>
+      <div class="sc-syntax">$[expression]</div>
+      <div class="sc-when">
+        Expanded at runtime but <em>before</em> a step runs. Used for assigning variables from other variables or conditions on stages/jobs.
+      </div>
+    </div>
+  </div>
+
+  <div class="callout warn">
+    <div class="callout label">The most common mix-up</div>
+    <code>${{ parameters.x }}</code> works in template files because it's compile-time.
+    In a non-template pipeline, you can't use <code>${{ variables.x }}</code> — use <code>$(x)</code> instead.
+    If a variable isn't resolving, check which syntax you're using against when it's evaluated.
+  </div>
+
+  <!-- ── Variable scopes ────────────────────────────────── -->
+  <h2>Variable scopes — where you define them</h2>
+  <p>
+    Variables can be defined at four levels.
+    Inner scopes override outer ones.
+  </p>
+
+  <div class="scope-ladder">
+    <div class="scope-row">
+      <div class="scope-label">Pipeline</div>
+      <div class="scope-desc">Visible everywhere. Use for values all stages share (agent pool name, build config).</div>
+    </div>
+    <div class="scope-row">
+      <div class="scope-label">Stage</div>
+      <div class="scope-desc">Visible only within that stage. Your team puts branch-detection variables here.</div>
+    </div>
+    <div class="scope-row">
+      <div class="scope-label">Job</div>
+      <div class="scope-desc">Visible within that job only. Often used for job-specific toggles.</div>
+    </div>
+    <div class="scope-row">
+      <div class="scope-label">Step</div>
+      <div class="scope-desc">Set from a script using a logging command — becomes available to subsequent steps.</div>
+    </div>
+  </div>
+
+  <!-- ── Variable groups ────────────────────────────────── -->
+  <h2>Variable groups — the team pattern</h2>
+  <p>
+    A variable group is a collection of name/value pairs defined in
+    <em>Pipelines → Library → Variable groups</em> in the Azure DevOps UI.
+    They let multiple pipelines share the same config without duplication.
+    <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/library/variable-groups?view=azure-devops" target="_blank">Variable groups docs →</a>
+  </p>
+
+  <p>Your team uses two groups in every pipeline: <span class="src-tag">V2/build-dotnet-service-pipeline.yml</span></p>
+  <pre><span class="y-key">variables</span>:
+- <span class="y-key">group</span>: <span class="y-val">Pipeline_Main</span>     <span class="y-cmt"># CILinuxAgentPool, CIWindowsAgentPool, shared secrets</span>
+- <span class="y-key">group</span>: <span class="y-val">pipeline-templates</span> <span class="y-cmt"># dotnet-msbuild-linux, template-specific config</span>
+- <span class="y-key">template</span>: <span class="y-val">variables/resources.yml</span>  <span class="y-cmt"># dbSQLImage, rabbitmqImage (from the template repo)</span></pre>
+
+  <p>
+    The agent pool name <code>$(CILinuxAgentPool)</code> is never hardcoded — it comes from
+    <code>Pipeline_Main</code>. If the team switches pools, they change it once in the library,
+    not in every pipeline file.
+  </p>
+
+  <h3>Secret variables in groups</h3>
+  <p>
+    Mark a variable as <strong>secret</strong> in the UI (lock icon). Azure then:
+  </p>
+  <ul>
+    <li>Masks the value in all logs — it never appears in plain text</li>
+    <li>Prevents it from being passed between jobs automatically</li>
+    <li>Requires you to explicitly map it to an environment variable in scripts that need it</li>
+  </ul>
+  <pre><span class="y-key">steps</span>:
+  - <span class="y-key">bash</span>: <span class="y-val">echo "Deploying with token..."</span>
+    <span class="y-key">env</span>:
+      <span class="y-key">DEPLOY_TOKEN</span>: <span class="y-str">$(mySecretToken)</span> <span class="y-cmt"># explicitly mapped — secret won't auto-inject</span></pre>
+
+  <!-- ── Branch detection pattern ───────────────────────── -->
+  <h2>Branch-detection variables — the stage pattern</h2>
+  <p>
+    Your team's pipelines compute branch flags once per stage using runtime expressions
+    and then use them in conditions throughout:
+    <span class="src-tag">V2/build-dotnet-service-pipeline.yml L126–130</span>
+  </p>
+  <pre><span class="y-key">stages</span>:
+  - <span class="y-key">stage</span>: <span class="y-val">Publish</span>
+    <span class="y-key">variables</span>:
+      <span class="y-cmt"># $[...] = runtime expression — evaluated when stage starts</span>
+      <span class="y-key">isMaster</span>:  <span class="y-val">$[eq(variables['Build.SourceBranch'], 'refs/heads/master')]</span>
+      <span class="y-key">isDevelop</span>: <span class="y-val">$[eq(variables['Build.SourceBranch'], 'refs/heads/develop')]</span>
+      <span class="y-key">isRelease</span>: <span class="y-val">$[contains(variables['Build.SourceBranch'], 'refs/heads/release')]</span>
+      <span class="y-key">isHotfix</span>:  <span class="y-val">$[contains(variables['Build.SourceBranch'], 'refs/heads/hotfix')]</span>
+      <span class="y-key">isTag</span>:     <span class="y-val">$[contains(variables['Build.SourceBranch'], 'refs/tags')]</span>
+    <span class="y-key">condition</span>: <span class="y-val">and(succeeded('Build'),
+                  or(eq(variables.isMaster, 'true'),
+                     eq(variables.isDevelop, 'true'),
+                     eq(variables.isRelease, 'true'),
+                     eq(variables.isHotfix, 'true'),
+                     eq(variables.isTag, 'true')))</span></pre>
+
+  <div class="callout tip">
+    <div class="callout label">Why 'true' in quotes?</div>
+    Runtime expression variables are always strings, even boolean-looking ones.
+    <code>eq(variables.isMaster, 'true')</code> — with quotes — is correct.
+    Without quotes it won't match.
+  </div>
+
+  <!-- ── Output variables ───────────────────────────────── -->
+  <h2>Output variables — passing data between jobs</h2>
+  <p>
+    Jobs run on different agents, so they can't share in-memory variables.
+    The solution: write a value to stdout using a logging command,
+    then read it in the next job via <code>dependencies</code>.
+    Your team uses this in the GHAS pipeline to pass Jira ticket counts.
+    <span class="src-tag">scans/ghas/ghas-scan-reactjs-pipeline.yml L104–120</span>
+  </p>
+
+  <h3>Step 1 — write the output variable</h3>
+  <pre><span class="y-key">- task</span>: <span class="y-val">PowerShell@2</span>
+  <span class="y-key">name</span>: <span class="y-val">outputJiraList</span>          <span class="y-cmt"># step name — required to reference output</span>
+  <span class="y-key">inputs</span>:
+    <span class="y-key">targetType</span>: <span class="y-str">inline</span>
+    <span class="y-key">script</span>: |
+      <span class="y-cmt"># isOutput=true makes it visible to other jobs</span>
+      Write-Host "##vso[task.setvariable variable=jiraIssueCount;isOutput=true]42"</pre>
+
+  <h3>Step 2 — read it in a downstream job</h3>
+  <pre><span class="y-key">- job</span>: <span class="y-val">SendSlackNotification</span>
+  <span class="y-key">dependsOn</span>: <span class="y-val">CreateJiraTickets</span>
+  <span class="y-key">variables</span>:
+    <span class="y-cmt"># dependencies.JobName.outputs['stepName.variableName']</span>
+    <span class="y-key">ticketsCount</span>: <span class="y-val">$[ dependencies.CreateJiraTickets.outputs['outputJiraList.jiraIssueCount'] ]</span>
+  <span class="y-key">steps</span>:
+    - <span class="y-key">script</span>: <span class="y-val">echo "$(ticketsCount) tickets found"</span></pre>
+
+  <div class="callout">
+    <div class="callout label">Logging command</div>
+    <code>##vso[task.setvariable variable=X]value</code> — the <code>##vso</code> prefix is
+    what Azure Pipelines intercepts. Works in bash, PowerShell, and cmd scripts.
+    <code>isOutput=true</code> is required for cross-job visibility.
+    <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/scripts/logging-commands?view=azure-devops" target="_blank">Logging commands →</a>
+  </div>
+
+  <!-- ── Predefined variables ───────────────────────────── -->
+  <h2>Predefined variables your team uses</h2>
+  <p>
+    Azure sets these automatically on every run.
+    <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/build/variables?view=azure-devops" target="_blank">Full list →</a>
+  </p>
+  <pre><span class="y-cmt"># Used in your team's templates:</span>
+$(Build.SourceBranch)          <span class="y-cmt"># refs/heads/master, refs/heads/develop, refs/tags/v1.0.0</span>
+$(Build.BuildNumber)           <span class="y-cmt"># used as Octopus release number</span>
+$(Build.Repository.Name)       <span class="y-cmt"># used in Slack notification messages</span>
+$(Build.Reason)                <span class="y-cmt"># 'PullRequest', 'Manual', 'IndividualCI', etc.</span>
+$(System.PullRequest.PullRequestId)  <span class="y-cmt"># used in commitlint PR pipeline</span>
+$(System.AccessToken)          <span class="y-cmt"># pipeline's OAuth token — used in Azure DevOps REST calls</span>
+$(System.DefaultWorkingDirectory)    <span class="y-cmt"># root of checked-out code</span>
+
+<span class="y-cmt"># Set by GitVersion task after it runs:</span>
+$(GitVersion.SemVer)           <span class="y-cmt"># e.g. 1.4.2-alpha.5</span>
+$(GitVersion.AssemblySemVer)   <span class="y-cmt"># e.g. 1.4.2.0</span>
+$(GitVersion.InformationalVersion)  <span class="y-cmt"># full string with commit hash</span></pre>
+
+  <!-- ── Octopus channel pattern ────────────────────────── -->
+  <h2>Variables in scripts — the Octopus channel pattern</h2>
+  <p>
+    Your team sets an Octopus Deploy channel based on the source branch using a PowerShell
+    script that writes back to the pipeline via a logging command.
+    This is the output variable pattern in real production use:
+    <span class="src-tag">V2/build-dotnet-service-pipeline.yml L243–259</span>
+  </p>
+  <pre><span class="y-key">- powershell</span>: |
+    <span class="y-cmt"># Decide which Octopus channel based on branch</span>
+    $branch = "$(Build.SourceBranch)"
+    $channel = "Development"
+
+    if ($branch.StartsWith("refs/heads/release/") -or
+        $branch.StartsWith("refs/heads/hotfix/")) {
+        $channel = "Testing"
+    } elseif ($branch -eq "refs/heads/master" -or
+              $branch.StartsWith("refs/tags/")) {
+        $channel = "Release"
+    }
+
+    <span class="y-cmt"># Write back to pipeline — available as $(channel) in subsequent steps</span>
+    Write-Host "##vso[task.setvariable variable=channel]$channel"
+  <span class="y-key">displayName</span>: <span class="y-str">'Set Octopus channel'</span></pre>
+
+  <p>
+    After this step runs, any subsequent step in the same job can reference <code>$(channel)</code>.
+    Because <code>isOutput=true</code> is <em>not</em> set, it's local to this job only.
+  </p>
+
+  <!-- ── Quiz ──────────────────────────────────────────────── -->
+  <section class="quiz-section">
+    <h2>Check your understanding</h2>
+    <p style="color:var(--text-muted);font-size:0.9rem;margin-bottom:1.25rem">
+      Answer from memory — no scrolling up. The effort is the point.
+    </p>
+    <div id="quiz"></div>
+  </section>
+
+  <!-- ── Primary source ─────────────────────────────────── -->
+  <h2>Primary source</h2>
+  <p>
+    <strong>Read next:</strong>
+    <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/library/variable-groups?view=azure-devops" target="_blank">
+      Variable groups — Azure Pipelines | Microsoft Learn
+    </a><br>
+    <span style="color:var(--text-muted);font-size:0.9rem">
+      Focus on the "Use a variable group" and "Link secrets from Azure Key Vault" sections.
+      Key Vault linking is how mature teams handle credentials — you'll encounter it.
+    </span>
+  </p>
+
+  <!-- ── Ask questions ──────────────────────────────────── -->
+  <div class="callout" style="margin-top:2rem">
+    <div class="callout label">Your teacher is here</div>
+    Ask a follow-up in the Claude Code chat. Try:
+    <em>"Why does my variable work in a step but not in a condition?"</em> or
+    <em>"What's the difference between isOutput=true and not setting it?"</em>
+  </div>
+
+  <!-- ── Footer ─────────────────────────────────────────── -->
+  <footer class="lesson-footer">
+    <span>← <a href="0002-triggers-and-conditions.html">Lesson 2: Triggers &amp; Conditions</a></span>
+    <span>Next: <a href="0004-templates-and-extends.html">Lesson 4: Templates &amp; extends: →</a></span>
+  </footer>
+
+</main>
+
+<script src="../assets/quiz.js"></script>
+<script>
+new Quiz('quiz', [
+  {
+    q: 'In your team\'s pipelines, where does $(CILinuxAgentPool) come from?',
+    options: [
+      'Hardcoded in each pipeline YAML file',
+      'The Pipeline_Main variable group',
+      'An Azure DevOps system variable',
+      'The variables/resources.yml template'
+    ],
+    answer: 1,
+    explanation: 'Agent pool names come from the Pipeline_Main variable group (defined in Pipelines → Library). This lets the team change the pool in one place without editing every pipeline.'
+  },
+  {
+    q: 'Which syntax evaluates at compile-time, before the pipeline even runs?',
+    options: [
+      '$(variableName) — macro syntax',
+      '$[expression] — runtime expression',
+      '${{ expression }} — template expression',
+      '#{variableName} — logging command'
+    ],
+    answer: 2,
+    explanation: '${{ }} is evaluated at compile-time when the pipeline is assembled. It works for parameters and conditionals in templates. $(var) and $[expr] are both evaluated at runtime on the agent.'
+  },
+  {
+    q: 'Why does your team write `eq(variables.isMaster, \'true\')` with \'true\' in quotes?',
+    options: [
+      'It is a YAML string comparison requirement',
+      'Runtime expression variables are always strings',
+      'The boolean true would cause a type mismatch',
+      'Azure Pipelines quotes are for security only'
+    ],
+    answer: 1,
+    explanation: 'Variables set via $[expression] are stored as strings. Comparing against the boolean true (unquoted) would never match. Always compare runtime expression variables against the string \'true\' or \'false\'.'
+  },
+  {
+    q: 'To pass a variable from one job to a later job, which logging command flag is required?',
+    options: [
+      '##vso[task.setvariable variable=X]value',
+      '##vso[task.setvariable variable=X;isOutput=true]value',
+      '##vso[task.setvariable variable=X;isPublic=true]value',
+      '##vso[task.setvariable variable=X;scope=pipeline]value'
+    ],
+    answer: 1,
+    explanation: 'isOutput=true is required for cross-job variable sharing. Without it the variable is scoped to the current job only. The reading job then references it via dependencies.JobName.outputs[\'stepName.varName\'].'
+  },
+  {
+    q: 'A secret variable in a variable group requires extra handling in scripts. What is it?',
+    options: [
+      'Wrapping the value in double-quotes always',
+      'Mapping it explicitly via the env: key',
+      'Decrypting it before use with a task',
+      'Prefixing it with SECRET_ in the name'
+    ],
+    answer: 1,
+    explanation: 'Secrets do not auto-inject into script environment variables. You must map them explicitly using env: { MY_VAR: $(secretVar) } in the step definition. Azure also masks the value in all log output.'
+  }
+]);
+</script>
+
+</body>
+</html>

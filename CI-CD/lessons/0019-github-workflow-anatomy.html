@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 19 — GitHub Actions Workflow Anatomy</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    /* GitHub Actions accent override */
+    :root {
+      --accent: #8250df;
+      --accent-dark: #6639ba;
+    }
+    .lesson-header { border-bottom-color: #8250df; }
+
+    /* Inline badges */
+    .badge {
+      display: inline-block;
+      color: white;
+      font-size: 0.68rem;
+      font-weight: 700;
+      padding: 0.1em 0.45em;
+      border-radius: 3px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      vertical-align: middle;
+      margin-right: 0.25rem;
+    }
+    .badge-gh { background: #8250df; }
+    .badge-az { background: #0078d4; }
+
+    /* Mapping comparison table */
+    .compare-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.86rem;
+      margin: 1.25rem 0 1.75rem;
+    }
+    .compare-table th {
+      text-align: left;
+      padding: 0.45rem 0.8rem;
+      border-bottom: 2px solid var(--border);
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .compare-table td {
+      padding: 0.4rem 0.8rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+    }
+    .compare-table tr:last-child td { border-bottom: none; }
+    .compare-table tr:hover td { background: #f7f5ff; }
+    .compare-table td:first-child { color: #0078d4; }
+    .compare-table td:last-child  { color: #6639ba; }
+    .compare-table td em {
+      color: var(--text-muted);
+      font-style: italic;
+      font-family: var(--font-body);
+      font-size: 0.8rem;
+    }
+  </style>
+</head>
+<body>
+<main>
+
+  <!-- ── Header ─────────────────────────────────────────── -->
+  <header class="lesson-header">
+    <div class="breadcrumb">GitHub CI/CD · Lesson 1 of ? &nbsp;·&nbsp; (Course lesson 19)</div>
+    <h1>GitHub Actions Workflow Anatomy</h1>
+    <p class="subtitle">Three levels instead of four — and how every Azure Pipelines concept you know maps across.</p>
+  </header>
+
+  <!-- ── Why this matters ───────────────────────────────── -->
+  <h2>Why this lesson</h2>
+  <p>
+    You know the Azure Pipelines hierarchy cold: Pipeline → Stage → Job → Step.
+    GitHub Actions uses the same ideas with different names, a flatter structure,
+    and a few important quirks. Once the mapping clicks, any GitHub workflow file
+    becomes readable in seconds — and you'll write them with the same confidence
+    you now have with Azure YAML.
+  </p>
+
+  <!-- ── The 3-level hierarchy ─────────────────────────── -->
+  <h2>The three-level hierarchy</h2>
+  <p>
+    GitHub Actions uses <strong>three</strong> levels instead of Azure's four.
+    The key difference: <strong>there is no <code>stages:</code> keyword.</strong>
+  </p>
+
+  <div class="hierarchy">
+    <div class="h-level">
+      <div class="h-indent" style="width:0"></div>
+      <div class="h-box level-0">
+        <div class="h-name">Workflow</div>
+        <div class="h-desc">
+          One <code>.yml</code> file under <code>.github/workflows/</code> = one workflow.
+          Defines the events that trigger it and contains all jobs.
+          <em>Equivalent to: Pipeline</em>
+        </div>
+      </div>
+    </div>
+    <div class="h-level">
+      <div class="h-indent" style="width:24px; color:#ccc; font-size:1.2rem; text-align:center">↳</div>
+      <div class="h-box level-2">
+        <div class="h-name">Job</div>
+        <div class="h-desc">
+          A named group of steps that runs on <strong>one runner</strong>.
+          Jobs run <strong>in parallel</strong> by default. Use <code>needs:</code> to sequence them.
+          <em>Equivalent to: Job (same concept, same name)</em>
+        </div>
+      </div>
+    </div>
+    <div class="h-level">
+      <div class="h-indent" style="width:48px; color:#ccc; font-size:1.2rem; text-align:center">↳</div>
+      <div class="h-box level-3">
+        <div class="h-name">Step</div>
+        <div class="h-desc">
+          A single unit of work: either <code>uses:</code> an Action, or <code>run:</code> a shell command.
+          Steps are <strong>sequential</strong> within a job.
+          <em>Equivalent to: Step (same concept, same name)</em>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout tip">
+    <div class="callout label">The missing Stage</div>
+    Azure Pipelines has four levels; GitHub Actions has three. Where you used a
+    <code>stages:</code> block to group and sequence jobs, in GitHub Actions you wire
+    job ordering with <code>needs:</code>. The GitHub UI renders the dependency graph
+    automatically — it looks exactly like a stage pipeline, just without the YAML keyword.
+  </div>
+
+  <!-- ── File location ─────────────────────────────────── -->
+  <h2>Where workflow files live</h2>
+  <p>
+    Unlike Azure Pipelines (where you configure the YAML file path in the DevOps UI),
+    GitHub <strong>auto-discovers</strong> any <code>.yml</code> file under
+    <code>.github/workflows/</code>. Every file there becomes its own workflow.
+    No registration required — just push and it's active.
+  </p>
+  <pre><span class="y-cmt"># Typical multi-workflow layout</span>
+.github/
+  workflows/
+    <span class="y-key">ci.yml</span>         <span class="y-cmt"># build + test on every push / PR</span>
+    <span class="y-key">deploy.yml</span>     <span class="y-cmt"># deploy to Azure on main push</span>
+    <span class="y-key">release.yml</span>    <span class="y-cmt"># publish package on tag push</span>
+    <span class="y-key">nightly.yml</span>    <span class="y-cmt"># scheduled integration tests</span></pre>
+
+  <!-- ── The mapping table ─────────────────────────────── -->
+  <h2>Azure Pipelines → GitHub Actions: the full mapping</h2>
+  <p>Every concept you know has a direct equivalent. Print this and keep it handy:</p>
+
+  <table class="compare-table">
+    <thead>
+      <tr>
+        <th><span class="badge badge-az">AZ</span> Azure Pipelines</th>
+        <th><span class="badge badge-gh">GH</span> GitHub Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>azure-pipelines.yml</td><td>.github/workflows/*.yml</td></tr>
+      <tr><td>stages: / stage:</td><td><em>no keyword — use needs: to sequence jobs</em></td></tr>
+      <tr><td>jobs: / job:</td><td>jobs: / job-id:</td></tr>
+      <tr><td>steps: / step</td><td>steps: / step</td></tr>
+      <tr><td>- task: TaskName@1</td><td>- uses: owner/repo@v1</td></tr>
+      <tr><td>- script: / bash: / pwsh:</td><td>- run: (bash on Linux by default)</td></tr>
+      <tr><td>pool: vmImage: ubuntu-latest</td><td>runs-on: ubuntu-latest</td></tr>
+      <tr><td>trigger: branches: [main]</td><td>on: push: branches: [main]</td></tr>
+      <tr><td>pr: branches: [main]</td><td>on: pull_request: branches: [main]</td></tr>
+      <tr><td>schedules: - cron: '...'</td><td>on: schedule: - cron: '...'</td></tr>
+      <tr><td>variables: - name: X / value: Y</td><td>env: X: Y</td></tr>
+      <tr><td>variable group (Library)</td><td>repo / org variables + secrets (Settings UI)</td></tr>
+      <tr><td>$(MY_VAR)</td><td>${{ vars.MY_VAR }} / ${{ secrets.MY_SECRET }}</td></tr>
+      <tr><td>dependsOn: JobName</td><td>needs: job-name</td></tr>
+      <tr><td>condition: succeeded()</td><td>if: success()</td></tr>
+      <tr><td>condition: failed()</td><td>if: failure()</td></tr>
+      <tr><td>condition: always()</td><td>if: always()</td></tr>
+      <tr><td>PublishPipelineArtifact</td><td>uses: actions/upload-artifact@v4</td></tr>
+      <tr><td>DownloadPipelineArtifact</td><td>uses: actions/download-artifact@v4</td></tr>
+      <tr><td>template: path/file.yml</td><td>uses: ./.github/workflows/file.yml</td></tr>
+      <tr><td>environment: staging</td><td>environment: staging</td></tr>
+    </tbody>
+  </table>
+
+  <!-- ── Annotated Example ─────────────────────────────── -->
+  <h2>Annotated workflow: Node.js CI</h2>
+  <p>
+    A complete workflow that builds and tests a TypeScript project on every push and PR.
+    Read the numbers alongside the annotations:
+  </p>
+
+  <div class="annotated">
+<pre><span class="y-key">name</span><span class="y-val">: CI</span>                              <span class="y-num">①</span>
+
+<span class="y-key">on</span><span class="y-val">:</span>                                   <span class="y-num">②</span>
+  <span class="y-key">push</span><span class="y-val">:</span>
+    <span class="y-key">branches</span><span class="y-val">: [main, develop]</span>
+  <span class="y-key">pull_request</span><span class="y-val">:</span>
+    <span class="y-key">branches</span><span class="y-val">: [main]</span>
+
+<span class="y-key">jobs</span><span class="y-val">:</span>                                  <span class="y-num">③</span>
+  <span class="y-key">build</span><span class="y-val">:</span>                               <span class="y-num">④</span>
+    <span class="y-key">runs-on</span><span class="y-val">: ubuntu-latest</span>           <span class="y-num">⑤</span>
+    <span class="y-key">steps</span><span class="y-val">:</span>
+      - <span class="y-key">uses</span><span class="y-val">: actions/checkout@v4</span>    <span class="y-num">⑥</span>
+      - <span class="y-key">uses</span><span class="y-val">: actions/setup-node@v4</span>  <span class="y-num">⑦</span>
+        <span class="y-key">with</span><span class="y-val">:</span>
+          <span class="y-key">node-version</span><span class="y-val">: '20'</span>
+          <span class="y-key">cache</span><span class="y-val">: 'npm'</span>
+      - <span class="y-key">name</span><span class="y-val">: Install</span>
+        <span class="y-key">run</span><span class="y-val">: npm ci</span>                    <span class="y-num">⑧</span>
+      - <span class="y-key">name</span><span class="y-val">: Build</span>
+        <span class="y-key">run</span><span class="y-val">: npm run build</span>
+      - <span class="y-key">name</span><span class="y-val">: Test</span>
+        <span class="y-key">run</span><span class="y-val">: npm test</span>
+
+  <span class="y-key">deploy</span><span class="y-val">:</span>
+    <span class="y-key">needs</span><span class="y-val">: build</span>                      <span class="y-num">⑨</span>
+    <span class="y-key">if</span><span class="y-val">: github.ref == 'refs/heads/main'</span><span class="y-num">⑩</span>
+    <span class="y-key">runs-on</span><span class="y-val">: ubuntu-latest</span>
+    <span class="y-key">steps</span><span class="y-val">:</span>
+      - <span class="y-key">uses</span><span class="y-val">: actions/checkout@v4</span>
+      - <span class="y-key">name</span><span class="y-val">: Deploy to Azure</span>
+        <span class="y-key">run</span><span class="y-val">: echo "deploy step here"</span></pre>
+
+    <ul class="annotations">
+      <li><span class="ann-num">①</span> Display name shown in the GitHub Actions UI. Optional but useful — without it GitHub uses the filename.</li>
+      <li><span class="ann-num">②</span> The event block. Everything that can trigger this workflow goes under a single <code>on:</code> key. Replaces Azure's separate top-level <code>trigger:</code> and <code>pr:</code> keys.</li>
+      <li><span class="ann-num">③</span> All jobs live under <code>jobs:</code>. No <code>stages:</code> wrapper — jobs are the top-level unit.</li>
+      <li><span class="ann-num">④</span> The job <strong>ID</strong> (<code>build</code>) is a YAML key. It's used by <code>needs:</code> and appears in the UI. Unlike Azure job IDs, it's also the display name unless you add a <code>name:</code> field.</li>
+      <li><span class="ann-num">⑤</span> Runner selection. GitHub-hosted: <code>ubuntu-latest</code>, <code>windows-latest</code>, <code>macos-latest</code>. Replaces Azure's <code>pool: vmImage:</code>.</li>
+      <li><span class="ann-num">⑥</span> <strong>Checkout is NOT automatic.</strong> You must always add this step — unlike Azure where the agent checks out by default. Forgetting this is the #1 beginner mistake.</li>
+      <li><span class="ann-num">⑦</span> Actions use <code>uses: owner/repo@ref</code>. The <code>with:</code> block passes inputs — like Azure's <code>inputs:</code> on a task. <code>cache: 'npm'</code> enables npm caching without an extra step.</li>
+      <li><span class="ann-num">⑧</span> <code>run:</code> executes shell commands. Bash is the default on Linux runners. Replaces Azure's <code>script:</code> or <code>bash:</code> step type.</li>
+      <li><span class="ann-num">⑨</span> <code>needs: build</code> makes this job wait for the <code>build</code> job to succeed. Replaces Azure's <code>dependsOn:</code>.</li>
+      <li><span class="ann-num">⑩</span> <code>if:</code> conditions jobs (or steps). <code>github.ref</code> is the branch/tag ref. This replaces Azure's <code>condition:</code> with runtime expressions.</li>
+    </ul>
+  </div>
+
+  <!-- ── Sequencing ─────────────────────────────────────── -->
+  <h2>Sequencing jobs — the <code>needs:</code> pattern</h2>
+  <p>
+    Without stages, <code>needs:</code> is the only sequencing mechanism. A job with
+    <code>needs: [build, test]</code> waits for both to succeed before starting:
+  </p>
+
+  <pre><span class="y-key">jobs</span><span class="y-val">:</span>
+  <span class="y-key">build</span><span class="y-val">:</span>                          <span class="y-cmt"># runs immediately</span>
+    <span class="y-key">runs-on</span><span class="y-val">: ubuntu-latest</span>
+    <span class="y-key">steps</span><span class="y-val">:</span> <span class="y-cmt"># ...</span>
+
+  <span class="y-key">test</span><span class="y-val">:</span>
+    <span class="y-key">needs</span><span class="y-val">: build</span>                  <span class="y-cmt"># waits for build</span>
+    <span class="y-key">runs-on</span><span class="y-val">: ubuntu-latest</span>
+    <span class="y-key">steps</span><span class="y-val">:</span> <span class="y-cmt"># ...</span>
+
+  <span class="y-key">deploy</span><span class="y-val">:</span>
+    <span class="y-key">needs</span><span class="y-val">: [build, test]</span>          <span class="y-cmt"># waits for BOTH</span>
+    <span class="y-key">runs-on</span><span class="y-val">: ubuntu-latest</span>
+    <span class="y-key">steps</span><span class="y-val">:</span> <span class="y-cmt"># ...</span></pre>
+
+  <p>
+    GitHub renders this as a visual graph in the workflow run view.
+    The result looks identical to a three-stage Azure pipeline — Build → Test → Deploy.
+  </p>
+
+  <!-- ── Events ────────────────────────────────────────── -->
+  <h2>Common events — beyond push and PR</h2>
+
+  <pre><span class="y-key">on</span><span class="y-val">:</span>
+  <span class="y-cmt"># Scheduled run (cron — same syntax as Azure schedules)</span>
+  <span class="y-key">schedule</span><span class="y-val">:</span>
+    - <span class="y-key">cron</span><span class="y-val">: '0 2 * * 1-5'</span>        <span class="y-cmt"># weekdays at 02:00 UTC</span>
+
+  <span class="y-cmt"># Manual trigger — like clicking "Run pipeline" in Azure DevOps</span>
+  <span class="y-key">workflow_dispatch</span><span class="y-val">:</span>
+    <span class="y-key">inputs</span><span class="y-val">:</span>
+      <span class="y-key">environment</span><span class="y-val">:</span>
+        <span class="y-key">description</span><span class="y-val">: 'Deploy target'</span>
+        <span class="y-key">required</span><span class="y-val">: </span><span class="y-bool">true</span>
+        <span class="y-key">default</span><span class="y-val">: 'staging'</span>
+        <span class="y-key">type</span><span class="y-val">: choice</span>
+        <span class="y-key">options</span><span class="y-val">: [staging, production]</span>
+
+  <span class="y-cmt"># Called by another workflow — like an Azure template</span>
+  <span class="y-key">workflow_call</span><span class="y-val">:</span>
+    <span class="y-key">inputs</span><span class="y-val">:</span>
+      <span class="y-key">node-version</span><span class="y-val">:</span>
+        <span class="y-key">type</span><span class="y-val">: string</span>
+        <span class="y-key">required</span><span class="y-val">: </span><span class="y-bool">false</span>
+        <span class="y-key">default</span><span class="y-val">: '20'</span></pre>
+
+  <div class="callout">
+    <div class="callout label">workflow_dispatch vs workflow_call</div>
+    <code>workflow_dispatch</code> = triggered manually by a human (UI button or <code>gh workflow run</code>).
+    <code>workflow_call</code> = triggered programmatically by another workflow.
+    One workflow can declare both, making it both manually runnable <em>and</em> callable as a reusable workflow.
+  </div>
+
+  <!-- ── Context variables ──────────────────────────────── -->
+  <h2>Context variables — what replaces <code>$(Build.SourceBranch)</code></h2>
+  <p>
+    Azure Pipelines has predefined variables like <code>$(Build.SourceBranch)</code>.
+    GitHub Actions has <strong>contexts</strong> — objects accessible via
+    <code>${{ context.property }}</code>:
+  </p>
+
+  <pre><span class="y-cmt"># Common context values</span>
+<span class="y-val">${{ github.ref }}</span>              <span class="y-cmt"># refs/heads/main  (AZ: Build.SourceBranch)</span>
+<span class="y-val">${{ github.ref_name }}</span>         <span class="y-cmt"># main             (AZ: Build.SourceBranchName)</span>
+<span class="y-val">${{ github.sha }}</span>              <span class="y-cmt"># abc1234…         (AZ: Build.SourceVersion)</span>
+<span class="y-val">${{ github.run_number }}</span>       <span class="y-cmt"># 42               (AZ: Build.BuildNumber)</span>
+<span class="y-val">${{ github.actor }}</span>           <span class="y-cmt"># username         (AZ: Build.RequestedFor)</span>
+<span class="y-val">${{ github.repository }}</span>      <span class="y-cmt"># owner/repo       (no direct AZ equivalent)</span>
+<span class="y-val">${{ secrets.MY_SECRET }}</span>      <span class="y-cmt"># repo secret      (AZ: $(secret-variable))</span>
+<span class="y-val">${{ vars.MY_VAR }}</span>            <span class="y-cmt"># repo variable    (AZ: variable group value)</span></pre>
+
+  <!-- ── Quiz ──────────────────────────────────────────── -->
+  <section class="quiz-section">
+    <h2>Quick check</h2>
+    <div id="quiz-container"></div>
+  </section>
+
+  <!-- ── Primary source ────────────────────────────────── -->
+  <h2>Primary source</h2>
+  <p>
+    <a href="https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions" target="_blank">
+      GitHub Docs — Workflow syntax for GitHub Actions
+    </a>
+    is the authoritative reference for every keyword used in this lesson.
+    Read the <em>Understanding GitHub Actions</em> overview alongside it for the mental model.
+  </p>
+
+  <!-- ── Ask your teacher ──────────────────────────────── -->
+  <div class="callout tip">
+    <div class="callout label">Questions?</div>
+    Ask your teacher follow-up questions in the chat — about anything unclear in this lesson,
+    how a specific Azure Pipelines pattern maps across, or what to tackle next.
+  </div>
+
+  <!-- ── Footer ────────────────────────────────────────── -->
+  <footer class="lesson-footer">
+    <span>GitHub CI/CD · Lesson 1 &nbsp;·&nbsp; <a href="0001-yaml-pipeline-anatomy.html">← Azure Lesson 1</a></span>
+    <span>Next: <a href="0020-github-triggers-and-conditions.html">Triggers &amp; Conditions →</a></span>
+    <span>Questions? Ask your teacher.</span>
+  </footer>
+
+</main>
+
+<script src="../assets/quiz.js"></script>
+<script>
+new Quiz('quiz-container', [
+  {
+    q: 'In Azure Pipelines you write `trigger: branches: [main]`. What is the GitHub Actions equivalent?',
+    options: [
+      'on: push: branches: [main]',
+      'trigger: push: branches: [main]',
+      'events: push: branches: [main]',
+      'on: ci: branches: [main]',
+    ],
+    answer: 0,
+    explanation: 'on: is the event block in GitHub Actions. All triggers — push, pull_request, schedule — go under a single on: key.'
+  },
+  {
+    q: 'A GitHub Actions step runs a shell command. Which keyword does it use?',
+    options: [
+      'run: npm test',
+      'script: npm test',
+      'bash: npm test',
+      'exec: npm test',
+    ],
+    answer: 0,
+    explanation: 'run: executes shell commands. Bash is the default on Linux runners — the equivalent of Azure\'s script: or bash: step type.'
+  },
+  {
+    q: 'You want job `deploy` to run only after BOTH `build` and `test` succeed. Which is correct?',
+    options: [
+      'needs: [build, test]',
+      'dependsOn: [build, test]',
+      'after: [build, test]',
+      'requires: [build, test]',
+    ],
+    answer: 0,
+    explanation: 'needs: lists the job IDs this job depends on. dependsOn: is the Azure Pipelines keyword — GitHub uses needs:.'
+  },
+  {
+    q: 'You push a new file `.github/workflows/nightly.yml`. What extra step registers it with GitHub?',
+    options: [
+      'Nothing — GitHub discovers it automatically',
+      'Register it in Settings → Actions → Workflows',
+      'Add its path to the repo\'s action.yml manifest',
+      'Run `gh workflow enable nightly.yml` in the CLI',
+    ],
+    answer: 0,
+    explanation: 'Any .yml file in .github/workflows/ is auto-discovered and activated — no registration needed. This differs from Azure where you configure the pipeline YAML path in the UI.'
+  },
+  {
+    q: 'What is the GitHub Actions equivalent of the Azure Pipelines predefined variable `$(Build.SourceBranchName)`?',
+    options: [
+      '${{ github.ref_name }}',
+      '${{ github.ref }}',
+      '${{ github.branch }}',
+      '${{ env.BRANCH_NAME }}',
+    ],
+    answer: 0,
+    explanation: 'github.ref_name gives the short branch name (e.g. "main"). github.ref gives the full ref string (refs/heads/main) — equivalent to Build.SourceBranch.'
+  },
+]);
+</script>
+</body>
+</html>

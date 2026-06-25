@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lesson 02 — The Authorization Request Flow</title>
+  <link rel="stylesheet" href="../assets/style.css" />
+  <style>
+    .flow-step {
+      display: grid;
+      grid-template-columns: 2.2rem 1fr;
+      gap: 0 1rem;
+      margin-bottom: 1.6rem;
+      align-items: start;
+    }
+    .step-num {
+      width: 2.2rem; height: 2.2rem;
+      border-radius: 50%;
+      background: var(--ink);
+      color: #fff;
+      font-family: sans-serif;
+      font-weight: 700;
+      font-size: 0.9rem;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      margin-top: 0.1rem;
+    }
+    .step-body h3 { margin-top: 0; font-size: 1rem; }
+    .step-body p  { margin-bottom: 0.5rem; }
+    .connector {
+      width: 2px; height: 1.2rem;
+      background: var(--border);
+      margin-left: calc(1.1rem - 1px);
+    }
+    .tag {
+      display: inline-block;
+      font-family: sans-serif;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      padding: 0.15em 0.5em;
+      border-radius: 3px;
+      margin-right: 0.3rem;
+    }
+    .tag-hit  { background: var(--success-bg); color: var(--success); }
+    .tag-miss { background: var(--warn-bg); color: var(--warn); }
+    .tag-slow { background: #fee2e2; color: #991b1b; }
+
+    .context-table { width:100%; border-collapse:collapse; font-family:sans-serif; font-size:0.8rem; margin:1rem 0; }
+    .context-table th { text-align:left; padding:0.4rem 0.6rem; border-bottom:2px solid #ddd; }
+    .context-table td { padding:0.4rem 0.6rem; border-bottom:1px solid #eee; vertical-align:top; }
+    .context-table tr:nth-child(even) td { background:#fafaf8; }
+  </style>
+</head>
+<body>
+<div class="lesson-container">
+
+  <!-- ── Header ─────────────────────────────────────────── -->
+  <header class="lesson-header">
+    <div class="lesson-meta">Lesson 02 · Authorization Service · Request Flow</div>
+    <h1 class="lesson-title">The Authorization Request Flow</h1>
+    <p class="lesson-subtitle">What actually happens — step by step — when another service asks "is this caller allowed?"</p>
+  </header>
+
+  <p>
+    In <a href="0001-what-is-the-authorization-service.html">Lesson 01</a> you learned the four building blocks
+    (Permission, Role, Policy, External Role) and the two primary endpoints.
+    Now we trace a real <code>GET /authorize?key=some.access.key</code> request through the entire codebase,
+    from JWT to JSON response.
+  </p>
+
+  <!-- ── Full Flow Diagram ──────────────────────────────── -->
+  <h2>The Complete Flow at a Glance</h2>
+
+  <div class="diagram">GET /authorize?key=policy.submit
+    │
+    ▼
+┌─────────────────────────────────────────┐
+│  AuthorizeController.GetAsync()         │
+│  Reads identity context from JWT,       │
+│  builds AuthorizeParameters             │
+└───────────────────┬─────────────────────┘
+                    │
+                    ▼
+┌─────────────────────────────────────────┐
+│  AuthorizeServiceFactory.Get()          │
+│  Picks one of four IAuthorizeService    │
+│  implementations by identity context   │
+└───────────────────┬─────────────────────┘
+                    │
+                    ▼
+┌─────────────────────────────────────────┐
+│  AuthorizeCacheService.HasPermissionAsync│
+│  Builds cache key for this context,     │
+│  asks Redis for the stored key list     │
+└──────────┬─────────────────┬────────────┘
+     CACHE HIT          CACHE MISS
+           │                 │
+           ▼                 ▼
+    ┌──────────┐   ┌────────────────────────┐
+    │Contains  │   │ EvaluateServiceFactory  │
+    │"policy.  │   │ Picks evaluate context  │
+    │submit"?  │   │ (same 4 contexts)       │
+    └──────────┘   └──────────┬─────────────┘
+           │                  │
+           │       ┌──────────▼─────────────┐
+           │       │ ExternalRolesService    │
+           │       │ Queries provider(s) for │
+           │       │ this user's ext. roles  │
+           │       └──────────┬─────────────┘
+           │                  │
+           │       ┌──────────▼─────────────┐
+           │       │ AccessRepository        │
+           │       │ exec [dbo].[GetUserAcce │
+           │       │ ssKeys] @TenantId,@Roles│
+           │       │ → List&lt;string&gt;          │
+           │       └──────────┬─────────────┘
+           │                  │
+           │       ┌──────────▼─────────────┐
+           │       │ Cache.SetAsync()        │
+           │       │ Writes key list to Redis│
+           │       └──────────┬─────────────┘
+           │                  │
+           └──────────┬───────┘
+                      │
+                      ▼
+            keyList.Contains("policy.submit")
+              true  → Allow
+              false → Deny</div>
+
+  <!-- ── Step by Step ──────────────────────────────────── -->
+  <h2>Step by Step</h2>
+
+  <div class="flow-step">
+    <div class="step-num">1</div>
+    <div class="step-body">
+      <h3>Controller reads the identity context</h3>
+      <p>
+        <code>AuthorizeController.GetAsync()</code> receives the validated JWT.
+        The DIT framework middleware has already parsed it into an <code>IIdentityContext</code>
+        injected into the controller. The controller copies the relevant fields into an
+        <code>AuthorizeParameters</code> object: <code>OwnerId</code>, <code>ExternalOwnerId</code>,
+        <code>TenantId</code>, <code>Claims</code>, and the requested <code>Key</code>.
+      </p>
+      <p>
+        The <code>Key</code> is the single access key being tested — e.g. <code>"policy.submit"</code>.
+      </p>
+    </div>
+  </div>
+  <div class="connector"></div>
+
+  <div class="flow-step">
+    <div class="step-num">2</div>
+    <div class="step-body">
+      <h3>Factory selects the right authorize service</h3>
+      <p>
+        <code>AuthorizeServiceFactory.Get()</code> inspects the identity context and picks one of four
+        <code>IAuthorizeService</code> implementations, checked in this exact order:
+      </p>
+      <table class="context-table">
+        <thead><tr><th>Context</th><th>Detection condition</th><th>Cache key format</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>OnBehalfOf</strong></td>
+            <td><code>_identityContext.IsOnBehalfOf == true</code></td>
+            <td><code>authz.eval.{ExternalOwnerId}_{OnBehalfOfExternalId}</code></td>
+          </tr>
+          <tr>
+            <td><strong>Guest</strong></td>
+            <td>Claims contain <code>service_isGuestAccount=true</code></td>
+            <td><code>authz.eval.guest</code> (fixed)</td>
+          </tr>
+          <tr>
+            <td><strong>ServiceAccount</strong></td>
+            <td><code>IdentityType == IdentityType.Service</code></td>
+            <td><code>authz.eval.{role_name}</code></td>
+          </tr>
+          <tr>
+            <td><strong>User</strong></td>
+            <td>Default (none of the above)</td>
+            <td><code>authz.eval.{OwnerId}</code></td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        Each implementation is registered with .NET 8's keyed services and retrieved via
+        <code>GetRequiredKeyedService&lt;IAuthorizeService&gt;(nameof(ServiceFactoryType.User))</code>.
+      </p>
+    </div>
+  </div>
+  <div class="connector"></div>
+
+  <div class="flow-step">
+    <div class="step-num">3</div>
+    <div class="step-body">
+      <h3>Cache check — the fast path</h3>
+      <p>
+        <code>AuthorizeCacheService.HasPermissionAsync()</code> asks the cache manager for a
+        <code>List&lt;string&gt;</code> stored at the context-specific cache key.
+        The cache manager first checks Redis; if Redis is down (circuit breaker open), it falls
+        back to the in-memory cache.
+      </p>
+      <p>
+        <span class="tag tag-hit">Cache Hit</span>
+        If a list exists, the method simply checks <code>keysSet.Contains(authorizeParameters.Key)</code>
+        and returns <code>true</code> (Allow) or <code>false</code> (Deny) immediately.
+        <strong>No database access. No external calls.</strong>
+      </p>
+      <p>
+        <span class="tag tag-miss">Cache Miss</span>
+        If the list is absent (<code>null</code>), the evaluation pipeline is triggered.
+      </p>
+    </div>
+  </div>
+  <div class="connector"></div>
+
+  <div class="flow-step">
+    <div class="step-num">4</div>
+    <div class="step-body">
+      <h3>Evaluation: resolve external roles</h3>
+      <p>
+        <span class="tag tag-slow">Slow path</span>
+        <code>EvaluateServiceFactory.Get()</code> mirrors the authorize factory — same four contexts.
+        The evaluate service's job is to compute the complete list of access keys for this identity
+        and write it to the cache.
+      </p>
+      <p>
+        <strong>For a regular user:</strong> <code>ExternalRolesService.GetRolesForUserAsync()</code>
+        queries every configured External Role Provider in priority order and returns the user's
+        external role names (e.g. <code>["underwriter", "BasicAccess"]</code>).
+      </p>
+      <p>
+        <strong>For a service account:</strong> the role is read directly from the
+        <code>service_role</code> claim — no external provider call needed.
+      </p>
+      <p>
+        <strong>For a guest:</strong> two hardcoded role names are used: <code>"Guest"</code>
+        and <code>"Guest{TenantId}"</code>.
+      </p>
+    </div>
+  </div>
+  <div class="connector"></div>
+
+  <div class="flow-step">
+    <div class="step-num">5</div>
+    <div class="step-body">
+      <h3>Stored procedure: flatten roles to access keys</h3>
+      <p>
+        <code>AccessRepository.GetFlattenAccessKeysAsync()</code> passes the role names to SQL Server
+        via Dapper:
+      </p>
+      <pre><code>exec [dbo].[GetUserAccessKeys] @TenantId, @Roles
+-- @Roles is a comma-separated string: "underwriter,BasicAccess"
+-- Returns: rows with an Identifier column (the access key strings)</code></pre>
+      <p>
+        This stored procedure walks the Policy → Role → Permission hierarchy in SQL and returns
+        the flat list of all permission keys the given roles grant within the tenant.
+        Dapper maps the rows to a <code>List&lt;string&gt;</code> of identifiers.
+      </p>
+    </div>
+  </div>
+  <div class="connector"></div>
+
+  <div class="flow-step">
+    <div class="step-num">6</div>
+    <div class="step-body">
+      <h3>Cache write — the result is stored</h3>
+      <p>
+        <code>EvaluateCacheService</code> writes the computed key list to Redis with a TTL
+        (configurable via <code>persistence.redis.ExpiryTimeSpanInSecs</code>).
+        It also caches two ID mappings:
+      </p>
+      <ul>
+        <li><code>authz.external.{ExternalOwnerId}</code> → internal <code>OwnerId</code></li>
+        <li><code>authz.external.{OnBehalfOfExternalId}</code> → OnBehalfOf internal ID (if applicable)</li>
+      </ul>
+      <p>
+        The write uses a <strong>distributed lock</strong> (<code>key + "_lock"</code>) in Redis
+        to prevent two concurrent requests for the same user from each triggering a full evaluation.
+      </p>
+    </div>
+  </div>
+  <div class="connector"></div>
+
+  <div class="flow-step">
+    <div class="step-num">7</div>
+    <div class="step-body">
+      <h3>Final decision</h3>
+      <p>
+        Back in <code>AuthorizeCacheService</code>, the freshly cached list is retrieved and the
+        same <code>Contains(key)</code> check runs.
+        The boolean result becomes <code>AuthorizeResult.Allow</code> or <code>AuthorizeResult.Deny</code>,
+        wrapped in an <code>AuthorizeResponseViewModel</code> and returned as HTTP 200.
+      </p>
+      <pre><code>{ "result": "Allow" }   // or "Deny"</code></pre>
+    </div>
+  </div>
+
+  <!-- ── The Circuit Breaker ────────────────────────────── -->
+  <h2>The Resilience Layer: Circuit Breaker</h2>
+
+  <p>
+    The <code>AuthorizationCacheManager</code> wraps every Redis call in a Polly circuit breaker.
+    If Redis calls fail repeatedly, the breaker <em>opens</em> and all further requests immediately
+    fall back to an in-memory cache — avoiding a flood of failing Redis calls.
+  </p>
+
+  <div class="callout warn">
+    <div class="callout-title">Consistency implication</div>
+    <p>
+      When Redis is healthy, all instances of the service share one cache. When the circuit breaks,
+      each instance has its own in-memory cache. Cache invalidation (e.g. after a permission change)
+      won't propagate to in-memory instances. This means a permission change may not take effect
+      immediately during a Redis outage.
+    </p>
+  </div>
+
+  <!-- ── The OnBehalfOf Special Case ───────────────────── -->
+  <h2>The Special Case: OnBehalfOf</h2>
+
+  <p>
+    The OnBehalfOf context is the most complex. An example: an AI assistant acting for a human user.
+    The evaluation service runs <em>two</em> external role lookups and an <em>intersection</em>:
+  </p>
+
+  <ol>
+    <li>Resolve external roles for the <strong>impersonating user</strong> (e.g. the assistant).</li>
+    <li>Check that the impersonating user has the special permission <code>"authorization.use.onBehalfOf"</code>. If not — <strong>Deny immediately</strong>.</li>
+    <li>Resolve external roles for the <strong>target user</strong> (the human being acted for).</li>
+    <li>Flatten the target user's roles to access keys (stored proc call).</li>
+    <li>If the impersonating identity is an assistant, <strong>intersect</strong> the target user's keys with the assistant's permission groups (a second stored proc: <code>GetUserAccessKeysFromPermissionGroups</code>).</li>
+    <li>Cache the intersected result under a composite cache key.</li>
+  </ol>
+
+  <div class="callout key">
+    <div class="callout-title">Why the intersection?</div>
+    <p>
+      An assistant should never be able to act with <em>more</em> permission than its own scope allows,
+      even if the user it's acting for has broader rights. The intersection enforces the principle of
+      least privilege for assistants.
+    </p>
+  </div>
+
+  <!-- ── Quiz ───────────────────────────────────────────── -->
+  <h2>Check Your Understanding</h2>
+  <div class="quiz">
+    <div class="quiz-title">Retrieval practice — try to answer from memory before clicking</div>
+
+    <div class="quiz-q">
+      <p>1. A service account calls <code>/authorize</code>. Its JWT has no <code>service_role</code> claim. What happens?</p>
+      <button class="quiz-option" data-correct="false">
+        Falls through to the User context and evaluates normally
+      </button>
+      <button class="quiz-option" data-correct="true"
+        data-explanation="✓ Correct. The ServiceAccount AuthorizeService checks for the service_role claim first. If absent, it returns false immediately — Deny — without touching the cache or database.">
+        Returns false immediately — Deny — with no cache or database access
+      </button>
+      <button class="quiz-option" data-correct="false">
+        Throws an exception and returns HTTP 500 to the caller
+      </button>
+      <button class="quiz-option" data-correct="false">
+        Calls the ExternalRolesService to resolve roles from the provider
+      </button>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-q">
+      <p>2. A user's access keys were just cached. Their manager then removes a permission. When will the change take effect for this user?</p>
+      <button class="quiz-option" data-correct="false">
+        Instantly — the management API writes directly to the user's cache entry
+      </button>
+      <button class="quiz-option" data-correct="false">
+        Never — cached entries are permanent until the service restarts
+      </button>
+      <button class="quiz-option" data-correct="true"
+        data-explanation="✓ Correct. Cached entries expire after the configured TTL (redis.ExpiryTimeSpanInSecs). Until then, the stale key list is served. The /cache/permissions/{userId} endpoint can force early invalidation.">
+        After the Redis TTL expires, or when the cache entry is explicitly invalidated
+      </button>
+      <button class="quiz-option" data-correct="false">
+        On the next request — the cache is validated on every authorize call
+      </button>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-q">
+      <p>3. What does the stored procedure <code>[dbo].[GetUserAccessKeys]</code> receive as its <code>@Roles</code> parameter?</p>
+      <button class="quiz-option" data-correct="false">
+        A JSON array of role objects with id and name fields
+      </button>
+      <button class="quiz-option" data-correct="true"
+        data-explanation="✓ Correct. The repository joins the ExternalRoleInformation names with commas and passes a single string — e.g. 'underwriter,BasicAccess'. The stored proc parses this on the SQL side.">
+        A comma-separated string of role names built from ExternalRoleInformation
+      </button>
+      <button class="quiz-option" data-correct="false">
+        A SQL table-valued parameter with one row per role identifier
+      </button>
+      <button class="quiz-option" data-correct="false">
+        A GUID list of RoleId primary keys from the tblRole database table
+      </button>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-q">
+      <p>4. An assistant is acting OnBehalfOf a user. The user has 50 access keys. The assistant's permission groups cover 20 of those keys. How many keys does the authorize check use?</p>
+      <button class="quiz-option" data-correct="false">
+        50 — the full set of the target user's resolved access keys
+      </button>
+      <button class="quiz-option" data-correct="false">
+        70 — the union of the assistant's and the target user's access keys
+      </button>
+      <button class="quiz-option" data-correct="true"
+        data-explanation="✓ Correct. For an assistant acting OnBehalfOf, the service intersects the target user's keys with the assistant's permission groups. The result is the smaller set — 20 — enforcing least privilege.">
+        20 — the intersection of the user's keys and the assistant's permission groups
+      </button>
+      <button class="quiz-option" data-correct="false">
+        0 — assistants always get Deny until explicitly granted OnBehalfOf access
+      </button>
+      <div class="quiz-feedback"></div>
+    </div>
+
+  </div>
+
+  <!-- ── Where to Look in the Code ─────────────────────── -->
+  <h2>Where to Find This in the Codebase</h2>
+
+  <table class="context-table">
+    <thead><tr><th>What</th><th>File</th></tr></thead>
+    <tbody>
+      <tr><td>Entry point</td><td><code>src/Equisoft.AuthorizationService/V1/Controllers/AuthorizeController.cs</code></td></tr>
+      <tr><td>Context selection</td><td><code>src/.../Services/V1/Factory/AuthorizeServiceFactory.cs</code></td></tr>
+      <tr><td>Cache check + miss trigger</td><td><code>src/.../Services/V1/Services/Authorize/AuthorizeCacheService.cs</code></td></tr>
+      <tr><td>Evaluate + cache write</td><td><code>src/.../Services/V1/Services/Evaluate/EvaluateCacheService.cs</code></td></tr>
+      <tr><td>Stored proc call</td><td><code>src/.../Data/V1/Repositories/AccessRepository.cs</code></td></tr>
+      <tr><td>Redis + circuit breaker</td><td><code>src/.../Domain/Caching/AuthorizationCacheManager.cs</code></td></tr>
+      <tr><td>OnBehalfOf logic</td><td><code>src/.../Services/V1/Services/Evaluate/OnBehalfOf/EvaluateService.cs</code></td></tr>
+    </tbody>
+  </table>
+
+  <p>
+    See the <a href="../reference/auth-request-flow.html">request flow reference card</a>
+    for a compact one-page summary you can refer back to while debugging.
+  </p>
+
+  <!-- ── What's Next ─────────────────────────────────────── -->
+  <h2>What's Next</h2>
+  <p>
+    Lesson 03 will cover <strong>External Role Providers</strong> in depth — the five provider types,
+    how priority and failure modes work, and how to reason about what external roles a user actually gets.
+    This is the layer most likely to cause "access denied" surprises in production.
+  </p>
+
+  <!-- ── Primary Source ─────────────────────────────────── -->
+  <h2>Primary Source</h2>
+  <p>
+    Read <code>AuthorizeCacheService.cs</code> and then <code>EvaluateCacheService.cs</code> back to back.
+    Together, they are the heart of the fast-path/slow-path split.
+    Notice how <code>HasPermissionAsync</code> delegates to <code>EvaluateAsync</code> on a miss —
+    that coupling is the key architectural decision of this service.
+  </p>
+
+  <!-- ── Footer ─────────────────────────────────────────── -->
+  <footer class="lesson-footer">
+    <div>Lesson 02 of the Authorization Service series · 2026-06-22 · <a href="0001-what-is-the-authorization-service.html">← Lesson 01</a></div>
+    <div class="ask-teacher">
+      <strong>Questions?</strong> Ask your Claude Code agent anything unclear.
+      Good prompts: "What happens if two requests for the same user hit simultaneously on a cache miss?",
+      "Show me how the distributed lock prevents stampede", or
+      "Walk me through the OnBehalfOf cache key format in the actual code."
+    </div>
+  </footer>
+
+</div>
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

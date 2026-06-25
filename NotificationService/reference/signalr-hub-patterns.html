@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SignalR Hub Patterns — Quick Reference</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    table { width: 100%; border-collapse: collapse; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 0.875rem; margin: 1rem 0; }
+    th { background: var(--accent); color: #fff; text-align: left; padding: 0.5rem 0.75rem; }
+    td { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+    tr:nth-child(even) td { background: var(--light); }
+    .ref-section { margin-bottom: 2.5rem; }
+    .tag { display: inline-block; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; background: var(--accent-bg); color: var(--accent); border-radius: 3px; padding: 0.1em 0.4em; margin-left: 0.4em; vertical-align: middle; }
+    @media print { body { max-width: none; padding: 1rem; } }
+  </style>
+</head>
+<body>
+
+<nav class="breadcrumb"><a href="../lessons/0002-signalr-hubs.html">← Lesson 2</a></nav>
+
+<header class="lesson-header">
+  <p class="lesson-number">Reference</p>
+  <h1>SignalR Hub Patterns</h1>
+  <p class="subtitle">Quick-reference for hub anatomy, lifecycle, and client targeting in the Notification Service</p>
+</header>
+
+<main>
+
+<div class="ref-section">
+  <h2>Hub Class Anatomy</h2>
+  <pre><code>// Every hub inherits from Hub (or Hub&lt;T&gt; for typed clients)
+[Authorize]
+public class NotificationHub : Hub
+{
+    // Dependencies injected normally — a new instance per connection call
+    public NotificationHub(IKeepAliveManagementService svc) { … }
+
+    // ── Lifecycle (called by SignalR automatically) ──────────
+    public override async Task OnConnectedAsync()    { … }
+    public override async Task OnDisconnectedAsync(Exception? ex) { … }
+
+    // ── Hub methods (client → server, invoked by browser) ───
+    public async Task SetApplicationId(Guid appId)  { … }
+    public async Task UnSetApplicationId(Guid appId){ … }
+}</code></pre>
+</div>
+
+<div class="ref-section">
+  <h2>Connection Context Properties</h2>
+  <table>
+    <thead><tr><th>Property</th><th>Type</th><th>What it contains</th></tr></thead>
+    <tbody>
+      <tr><td><code>Context.ConnectionId</code></td><td>string</td><td>Unique ID assigned by SignalR to this WebSocket socket. Changes on every reconnect.</td></tr>
+      <tr><td><code>Context.UserIdentifier</code></td><td>string?</td><td>The user ID extracted from the JWT (maps to the <code>NameIdentifier</code> claim). Used by <code>.User(userId)</code> routing.</td></tr>
+      <tr><td><code>Context.User</code></td><td>ClaimsPrincipal</td><td>The full authenticated principal — all JWT claims available here.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ref-section">
+  <h2>Lifecycle Methods</h2>
+  <table>
+    <thead><tr><th>Method</th><th>When it fires</th><th>What this service does</th></tr></thead>
+    <tbody>
+      <tr><td><code>OnConnectedAsync()</code></td><td>WebSocket handshake complete</td><td>Adds connection to <em>"Authenticated SignalR Users"</em> group</td></tr>
+      <tr><td><code>OnDisconnectedAsync(ex)</code></td><td>WebSocket closes (clean or error)</td><td>Removes connection from the group. <code>ex</code> is null on clean disconnect.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ref-section">
+  <h2>Hub Methods — Client Calls Server</h2>
+  <table>
+    <thead><tr><th>Method</th><th>Called when</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>SetApplicationId(appId)</code></td><td>Browser tab registers on load</td><td>Stores <code>{appId → connectionId}</code> in cache via <code>KeepAliveManagementService.LinkAsync</code></td></tr>
+      <tr><td><code>UnSetApplicationId(appId)</code></td><td>Browser tab unloads</td><td>Removes the mapping via <code>KeepAliveManagementService.UnlinkAsync</code></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ref-section">
+  <h2>Client Targeting — Server Calls Client</h2>
+  <table>
+    <thead><tr><th>Method</th><th>Targets</th><th>Used for</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>Clients.User(userId)</code> <span class="tag">notifications</span></td>
+        <td>All connections whose <code>Context.UserIdentifier</code> matches. Managed by SignalR's Redis backplane.</td>
+        <td><code>NotificationsController</code> — sends <code>notificationReceived</code></td>
+      </tr>
+      <tr>
+        <td><code>Clients.Clients(ids)</code> <span class="tag">keep-alive</span></td>
+        <td>A specific list of <code>ConnectionId</code> strings. List comes from the application's own Redis cache.</td>
+        <td><code>KeepAliveController</code> — sends <code>keepAliveReceived</code></td>
+      </tr>
+      <tr>
+        <td><code>Clients.Group(name)</code></td>
+        <td>All connections added to the named group via <code>Groups.AddToGroupAsync</code>.</td>
+        <td>Available (e.g. broadcast to <em>"Authenticated SignalR Users"</em>) — not actively used for delivery in this service</td>
+      </tr>
+      <tr>
+        <td><code>Clients.All</code></td>
+        <td>Every connected client, authenticated or not.</td>
+        <td>Not used in this service (it requires <code>[Authorize]</code>)</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ref-section">
+  <h2>IHubContext — Sending from Outside the Hub</h2>
+  <pre><code>// Inject into a controller or service:
+public NotificationsController(IHubContext&lt;NotificationHub&gt; hubContext)
+{
+    _hubContext = hubContext;
+}
+
+// Then push messages from anywhere:
+await _hubContext.Clients.User(userId).SendAsync("notificationReceived", payload);
+await _hubContext.Clients.Clients(ids).SendAsync("keepAliveReceived");</code></pre>
+  <p style="font-family: -apple-system, sans-serif; font-size: 0.875rem; color: var(--muted);">
+    <code>IHubContext&lt;T&gt;</code> exists because a <code>Hub</code> instance is created per connection call — it cannot be held as a long-lived dependency. Controllers and services use <code>IHubContext</code> to reach clients without being inside a hub class.
+  </p>
+</div>
+
+<div class="ref-section">
+  <h2>The Two Redis Stores (Don't Confuse Them)</h2>
+  <table>
+    <thead><tr><th>Store</th><th>What it holds</th><th>Managed by</th></tr></thead>
+    <tbody>
+      <tr><td>SignalR Redis backplane</td><td>User → connection mappings; cross-instance message routing</td><td>SignalR automatically (via <code>AddRedis()</code>)</td></tr>
+      <tr><td>Application Redis cache</td><td><code>applicationId → [CachedConnectionIdentifier]</code> list</td><td><code>KeepAliveManagementService</code> — only for keep-alive routing</td></tr>
+    </tbody>
+  </table>
+</div>
+
+</main>
+
+<footer class="lesson-footer" style="border-top: 1px solid var(--border); padding-top: 1.5rem; margin-top: 2rem; font-family: -apple-system, sans-serif; font-size: 0.875rem;">
+  <a href="../lessons/0002-signalr-hubs.html">← Back to Lesson 2</a>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 2 — OAuth Flows in the Equisoft Ecosystem</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="../MISSION.md">Identity &amp; Authorization</a> ›
+    <a href="0001-ecosystem-overview.html">Lesson 1</a> › Lesson 2 of 6
+  </div>
+  <h1>OAuth Flows in the Ecosystem</h1>
+  <div class="meta">
+    <span>~30 minutes</span>
+    <span>Conceptual + code walkthrough</span>
+    <span>Prerequisites: <a href="0001-ecosystem-overview.html">Lesson 1</a></span>
+  </div>
+</div>
+
+<p>
+  Equisoft uses <strong>three OAuth grant types</strong>. Each serves a distinct scenario. Choosing the
+  wrong one is a common new-developer mistake — this lesson gives you the decision rule and shows you
+  exactly where each flow is implemented in the codebase.
+</p>
+
+<h2>The Three Flows at a Glance</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Grant Type</th>
+      <th>Who initiates?</th>
+      <th>User interaction?</th>
+      <th>When to use</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Authorization Code + PKCE</strong></td>
+      <td>Frontend app / browser</td>
+      <td>Yes — login page</td>
+      <td>Any user-facing application (SPA, MVC web app, mobile app)</td>
+    </tr>
+    <tr>
+      <td><strong>Client Credentials</strong></td>
+      <td>Backend service</td>
+      <td>No</td>
+      <td>Service-to-service calls (no user involved)</td>
+    </tr>
+    <tr>
+      <td><strong>JWT Bearer Assertion</strong><br><small>(<code>urn:ietf:params:oauth:grant-type:jwt-bearer</code>)</small></td>
+      <td>Trusted service</td>
+      <td>No (user was authenticated elsewhere)</td>
+      <td>Federated / SSO scenarios where an external system has already authenticated the user</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout">
+  <strong>Decision rule</strong>
+  Is a human logging in right now? → Authorization Code + PKCE.<br>
+  Is a backend service calling another service with no user involved? → Client Credentials.<br>
+  Has an external system already authenticated the user and you need to exchange their identity for an Equisoft token? → JWT Bearer Assertion.
+</div>
+
+<hr>
+
+<h2>Flow 1: Authorization Code + PKCE (User Login)</h2>
+
+<p>
+  This is the main flow for user-facing applications. The Identity Gateway acts as the Authorization
+  Server. PKCE (Proof Key for Code Exchange) prevents code interception attacks — it is mandatory
+  for all public clients (SPAs, mobile apps) and strongly recommended for confidential clients.
+</p>
+
+<h3>Step-by-step</h3>
+
+<pre><code>1. App generates a random `code_verifier` and computes `code_challenge = SHA256(code_verifier)`
+
+2. Browser navigates to:
+   GET https://identity.equisoft.com/connect/authorize
+     ?response_type=code
+     &client_id=my-app
+     &redirect_uri=https://app.equisoft.com/callback
+     &scope=openid profile assistmgntapi
+     &state=abc123
+     &code_challenge=&lt;hash&gt;
+     &code_challenge_method=S256
+
+3. User logs in. IdG redirects back:
+   GET https://app.equisoft.com/callback?code=AUTH_CODE&state=abc123
+
+4. App exchanges the code (server-side):
+   POST https://identity.equisoft.com/connect/token
+     grant_type=authorization_code
+     &code=AUTH_CODE
+     &redirect_uri=https://app.equisoft.com/callback
+     &client_id=my-app
+     &code_verifier=&lt;original_verifier&gt;
+
+5. IdG returns:
+   {
+     "access_token": "eyJhbGci...",   ← JWT with tenantId, identityRole, scopes
+     "id_token":     "eyJhbGci...",   ← OIDC: who the user is
+     "refresh_token": "...",          ← stored in Redis, linked to external session
+     "token_type": "Bearer",
+     "expires_in": 3600
+   }</code></pre>
+
+<div class="callout tip">
+  <strong>Where to find this in the codebase</strong>
+  The client is registered in the Identity Gateway's SQL database (<code>Clients</code> table,
+  managed via the Duende IS Configuration Store). The <code>ClientId</code>, <code>AllowedGrantTypes</code>,
+  <code>RedirectUris</code>, and <code>AllowedScopes</code> are all stored there.
+  See: <code>IdentityGateway/Data/Contexts/CustomConfigurationDbContext.cs</code>
+</div>
+
+<h3>What makes Equisoft's token different</h3>
+<p>
+  After step 4, before returning the token, <code>EquisoftTokenResponseGenerator</code> fires and
+  calls two external services:
+</p>
+<pre><code>// Simplified from EquisoftTokenResponseGenerator.cs
+private async Task AddTenantIdToPayloadAsync(JwtPayload payload, string tenantKey)
+{
+    var tenantId = await _tenantClient.GetTenantIdByKeyAsync(tenantKey);
+    payload.AddClaim(new Claim("tenantId", tenantId));
+}
+
+private async Task AddIdentityRoleToPayloadAsync(JwtPayload payload, string externalUserId)
+{
+    var role = await _userClient.GetUserRoleAsync(externalUserId);
+    payload.AddClaim(new Claim("identityRole", role));
+}</code></pre>
+<p>
+  This means your token arrives pre-enriched. You do not need to call the Tenant or User services
+  yourself to find out the current user's tenant or role — it is already in the token.
+</p>
+
+<hr>
+
+<h2>Flow 2: Client Credentials (Service-to-Service)</h2>
+
+<p>
+  When a backend service needs to call another service and <em>no user is involved</em>, it uses
+  Client Credentials. The service authenticates with its own identity — a <code>client_id</code>
+  and <code>client_secret</code> — and receives a token that represents <em>the service</em>,
+  not any user.
+</p>
+
+<h3>Step-by-step</h3>
+
+<pre><code>POST https://identity.equisoft.com/connect/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=client_credentials
+&client_id=assistmgntapi
+&client_secret=&lt;secret-from-appsettings&gt;
+&scope=userapi
+
+Response:
+{
+  "access_token": "eyJhbGci...",   ← no sub claim — this is a service token
+  "token_type": "Bearer",
+  "expires_in": 3600
+}</code></pre>
+
+<h3>Where this is configured in AssistantManagement</h3>
+
+<pre><code>// appsettings.json — AssistantManagementService
+"ServiceAccounts": {
+  "TokenEndpoint": "https://api.dev.equisoft.com/identity/connect/token",
+  "PrincipalPrefix": "assistmgntapi",
+  "TenantSecrets": {
+    "ACME": "the-client-secret-for-this-tenant"
+  }
+}</code></pre>
+
+<p>
+  The DIT framework's <code>ConfigureTokenClient</code> (called in <code>Startup.cs</code>)
+  wires up the token endpoint and caches service tokens so they are reused until near-expiry.
+</p>
+
+<div class="callout warn">
+  <strong>Important: Service tokens vs. user tokens</strong>
+  A service token has no <code>sub</code> claim (no user subject). A downstream API receiving a
+  service token will see <code>IdentityType.Service</code> from <code>IIdentityContext</code>,
+  not <code>IdentityType.User</code>. Make sure your authorization logic handles both.
+  See: <code>AuthorizeServiceAccountFilter</code> in both services — it rejects user tokens on
+  management endpoints.
+</div>
+
+<h3>How the Authorization Service uses service tokens</h3>
+<p>
+  The Authorization Service's management endpoints (roles, policies, permissions) are protected
+  by the <code>IsService</code> policy, which requires the claim <code>service_isService: true</code>.
+  Only a service account token contains this claim:
+</p>
+<pre><code>// Startup.cs — Services.Authorization
+services.AddAuthorization(options =>
+{
+    options.AddPolicy("IsService", policy =>
+        policy.RequireClaim("service_isService", "true"));
+});</code></pre>
+
+<hr>
+
+<h2>Flow 3: JWT Bearer Assertion (Federated SSO)</h2>
+
+<p>
+  This is the most unusual grant type and is unique to Equisoft's federation requirements.
+  It is defined in <a href="https://www.rfc-editor.org/rfc/rfc7523" target="_blank">RFC 7523</a>.
+</p>
+
+<h3>When is it used?</h3>
+<p>
+  When an <em>external, trusted system</em> has already authenticated the user and needs to exchange
+  that user's identity for an Equisoft access token — without showing the user a login page again.
+  The external system asserts the user's identity by presenting a <em>signed JWT</em> as its credential.
+</p>
+
+<h3>Step-by-step</h3>
+
+<pre><code>1. External system creates and signs a JWT (assertion):
+   {
+     "iss": "trusted-external-system",     ← the external system's identity
+     "sub": "user@example.com",            ← the user being asserted
+     "aud": "https://identity.equisoft.com",
+     "exp": 1700000000,
+     "iat": 1699999000
+   }
+   Signed with the external system's private key (registered with IdG as a client certificate)
+
+2. External system calls:
+   POST https://identity.equisoft.com/connect/token
+     grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer
+     &client_id=the-federated-client
+     &assertion=&lt;signed-jwt&gt;
+
+3. IdG's custom validator fires:
+   JwtBearerAuthorizeAssertionExtensionGrantValidator
+   → Validates JWT signature against the registered client certificate
+   → Provisions the user locally if first login (UserStore.ProvisionUserAsync)
+   → Returns a standard Equisoft access token for that user</code></pre>
+
+<h3>Where this lives in the codebase</h3>
+<pre><code>// IdentityGateway/IdentityServer/Validation/
+// JwtBearerAuthorizeAssertionExtensionGrantValidator.cs
+
+public class JwtBearerAuthorizeAssertionExtensionGrantValidator
+    : IExtensionGrantValidator
+{
+    public string GrantType =>
+        "urn:ietf:params:oauth:grant-type:jwt-bearer";
+
+    public async Task ValidateAsync(ExtensionGrantValidationContext context)
+    {
+        var assertion = context.Request.Raw["assertion"];
+        // 1. Parse and validate JWT signature against client certificate
+        // 2. Extract subject (user identity)
+        // 3. Provision user if needed
+        // 4. Set context.Result to success with the user's claims
+    }
+}</code></pre>
+
+<div class="callout key">
+  <strong>Key insight: this is how SAML-to-OIDC bridging works</strong>
+  When a SAML IdP authenticates a user, the Identity Gateway's SAML handler converts the SAML
+  assertion into a local session. The JWT Bearer grant is used when a <em>trusted service</em> — not
+  a browser — needs to bridge an external identity into an Equisoft token programmatically.
+</div>
+
+<hr>
+
+<h2>Refresh Tokens and Session Linking</h2>
+
+<p>
+  The Identity Gateway's refresh token handling is more sophisticated than standard Duende IS.
+  When a token is issued (Flow 1), the refresh token is stored in <strong>Redis</strong> alongside
+  the external IdP's session information:
+</p>
+<pre><code>// Stored in Redis under the refresh token key:
+UserExternalSessionInformation {
+    PrincipalId:           "ext-user-abc123",
+    SessionExpirationUtc:  2024-12-01T10:00:00Z,  // external IdP session expiry
+    LocalRefreshToken:     "refresh_abc..."
+}</code></pre>
+<p>
+  On every token refresh, <code>EquisoftTokenRequestValidator</code> checks whether the external
+  IdP session has expired. If it has, the refresh is rejected — the user must log in again. This
+  ensures that if a user's Azure AD session expires, their Equisoft tokens also expire, even if
+  the Equisoft refresh token has not.
+</p>
+
+<hr>
+
+<!-- QUIZ -->
+<div class="quiz" data-quiz="quiz2">
+  <h3>Knowledge Check</h3>
+
+  <div class="quiz-question" data-correct="b">
+    <p>1. A React SPA needs to authenticate a user and get an access token. Which grant type should it use?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz2-q0" value="a"> Client Credentials</label></li>
+      <li><label><input type="radio" name="quiz2-q0" value="b"> Authorization Code + PKCE</label></li>
+      <li><label><input type="radio" name="quiz2-q0" value="c"> JWT Bearer Assertion</label></li>
+      <li><label><input type="radio" name="quiz2-q0" value="d"> Implicit Flow</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="c">
+    <p>2. A nightly data pipeline (no user interaction) needs to call the User Service. Which grant type?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz2-q1" value="a"> Authorization Code + PKCE</label></li>
+      <li><label><input type="radio" name="quiz2-q1" value="b"> Refresh Token</label></li>
+      <li><label><input type="radio" name="quiz2-q1" value="c"> Client Credentials</label></li>
+      <li><label><input type="radio" name="quiz2-q1" value="d"> JWT Bearer Assertion</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="d">
+    <p>3. What does the Identity Gateway's <code>EquisoftTokenRequestValidator</code> check during a token refresh?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz2-q2" value="a"> That the client's CORS origin is allowed</label></li>
+      <li><label><input type="radio" name="quiz2-q2" value="b"> That the user's email is valid</label></li>
+      <li><label><input type="radio" name="quiz2-q2" value="c"> That the refresh token has not been rotated</label></li>
+      <li><label><input type="radio" name="quiz2-q2" value="d"> That the external IdP session has not expired</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="a">
+    <p>4. What claim distinguishes a service-account token from a user token in the Authorization Service?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz2-q3" value="a"> <code>service_isService: true</code></label></li>
+      <li><label><input type="radio" name="quiz2-q3" value="b"> Absence of the <code>sub</code> claim</label></li>
+      <li><label><input type="radio" name="quiz2-q3" value="c"> The <code>identityRole</code> claim equals "Service"</label></li>
+      <li><label><input type="radio" name="quiz2-q3" value="d"> The <code>aud</code> claim contains "serviceapi"</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <button class="quiz-btn" data-quiz-submit="quiz2">Check Answers</button>
+  <div class="quiz-score"></div>
+</div>
+
+<script>
+window.quizExplanations = {
+  'quiz2-q0': 'Authorization Code + PKCE is the correct and modern flow for user-facing apps. Implicit flow is deprecated. Client credentials has no user.',
+  'quiz2-q1': 'Client Credentials is for machine-to-machine calls. The pipeline has its own client_id/secret and gets a service token.',
+  'quiz2-q2': 'EquisoftTokenRequestValidator fetches the external session from Redis and rejects the refresh if the external IdP session has expired.',
+  'quiz2-q3': 'The IsService policy in Services.Authorization checks for service_isService claim. The DIT framework populates IdentityType.Service from this.'
+};
+</script>
+
+<hr>
+
+<h2>Primary Source</h2>
+<p>
+  Read RFC 6749 sections 4.1 (Authorization Code) and 4.4 (Client Credentials) to see the exact
+  protocol these flows implement:
+  <a href="https://www.rfc-editor.org/rfc/rfc6749" target="_blank">
+    RFC 6749 — The OAuth 2.0 Authorization Framework
+  </a>
+</p>
+<p>
+  For the JWT Bearer assertion grant:
+  <a href="https://www.rfc-editor.org/rfc/rfc7523" target="_blank">
+    RFC 7523 — JWT Profile for OAuth 2.0 Authorization Grants
+  </a>
+</p>
+
+<div class="ask-claude">
+  <strong>Questions? Ask your teacher.</strong>
+  Try: <em>"Walk me through exactly what happens in the codebase when a user's Azure AD session expires and they try to refresh their Equisoft token."</em>
+</div>
+
+<div class="lesson-nav">
+  <a href="0001-ecosystem-overview.html">← Lesson 1: Ecosystem Overview</a>
+  <a class="next" href="0003-token-anatomy.html">Next → Lesson 3: Token Anatomy &amp; Custom Claims</a>
+</div>
+
+<div class="lesson-footer">
+  Equisoft Identity Learning · Lesson 2 · Sources: RFC 6749, RFC 7523,
+  <code>EquisoftTokenResponseGenerator.cs</code>, <code>JwtBearerAuthorizeAssertionExtensionGrantValidator.cs</code>
+</div>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

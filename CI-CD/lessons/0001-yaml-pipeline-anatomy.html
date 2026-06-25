@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 1 — Azure Pipelines YAML Anatomy</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<main>
+
+  <!-- ── Header ─────────────────────────────────────────── -->
+  <header class="lesson-header">
+    <div class="breadcrumb">Azure CI/CD · Lesson 1 of ?</div>
+    <h1>Azure Pipelines YAML Anatomy</h1>
+    <p class="subtitle">The four-level hierarchy every pipeline is built from — and how to read it at a glance.</p>
+  </header>
+
+  <!-- ── Why this matters ───────────────────────────────── -->
+  <h2>Why this lesson</h2>
+  <p>
+    Every Azure Pipeline — no matter how complex — is just a nested structure of four things.
+    Once that hierarchy is automatic for you, any YAML file someone drops in your lap becomes
+    readable in seconds. This is the mental model everything else hangs off.
+  </p>
+
+  <!-- ── The four levels ───────────────────────────────── -->
+  <h2>The four-level hierarchy</h2>
+
+  <div class="hierarchy">
+    <div class="h-level">
+      <div class="h-indent" style="width:0"></div>
+      <div class="h-box level-0">
+        <div class="h-name">Pipeline</div>
+        <div class="h-desc">One YAML file = one pipeline. Controls triggers and top-level variables.</div>
+      </div>
+    </div>
+    <div class="h-level">
+      <div class="h-indent" style="width:24px; color:#ccc; font-size:1.2rem; text-align:center">↳</div>
+      <div class="h-box level-1">
+        <div class="h-name">Stage</div>
+        <div class="h-desc">A named phase (e.g. Build, Test, Deploy). Stages run <strong>sequentially</strong> by default. You can add approvals between them.</div>
+      </div>
+    </div>
+    <div class="h-level">
+      <div class="h-indent" style="width:48px; color:#ccc; font-size:1.2rem; text-align:center">↳</div>
+      <div class="h-box level-2">
+        <div class="h-name">Job</div>
+        <div class="h-desc">A group of steps that runs on <strong>one agent</strong>. Jobs within a stage run <strong>in parallel</strong> by default. Each job gets a fresh agent.</div>
+      </div>
+    </div>
+    <div class="h-level">
+      <div class="h-indent" style="width:72px; color:#ccc; font-size:1.2rem; text-align:center">↳</div>
+      <div class="h-box level-3">
+        <div class="h-name">Step</div>
+        <div class="h-desc">A single task or script. Steps run <strong>sequentially</strong> within a job. This is where actual work happens.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout tip">
+    <div class="callout label">Key pattern</div>
+    Stages → sequential &nbsp;·&nbsp; Jobs → parallel &nbsp;·&nbsp; Steps → sequential.
+    Parallel = fast. Sequential = safe ordering. Knowing which level you're at tells you the default behaviour.
+  </div>
+
+  <!-- ── Triggers ───────────────────────────────────────── -->
+  <h2>Triggers — what starts the pipeline</h2>
+  <p>
+    Triggers live at the top of the pipeline file. The most common ones:
+  </p>
+  <ul>
+    <li><code>trigger</code> — CI trigger: runs on push to specified branches</li>
+    <li><code>pr</code> — PR trigger: runs when a pull request targets specified branches</li>
+    <li><code>schedules</code> — cron-style scheduled runs</li>
+  </ul>
+  <p>
+    Setting <code>trigger: none</code> disables the CI trigger — useful for pipelines you only want
+    to run manually or on PR.
+  </p>
+
+  <!-- ── Annotated YAML ─────────────────────────────────── -->
+  <h2>A real pipeline, annotated</h2>
+  <p>
+    Here is a minimal Node.js build-and-test pipeline. Every line maps to the hierarchy above.
+  </p>
+
+  <div class="annotated">
+    <pre><span class="y-cmt"># ① Trigger</span>
+<span class="y-key">trigger</span>:
+  <span class="y-key">branches</span>:
+    <span class="y-key">include</span>:
+      - <span class="y-val">main</span>
+      - <span class="y-val">develop</span>
+
+<span class="y-cmt"># ② Pipeline-level variables</span>
+<span class="y-key">variables</span>:
+  <span class="y-key">nodeVersion</span>: <span class="y-str">'20.x'</span>
+
+<span class="y-cmt"># ③ Stage: Build</span>
+<span class="y-key">stages</span>:
+  - <span class="y-key">stage</span>: <span class="y-val">Build</span>
+    <span class="y-key">displayName</span>: <span class="y-str">'Build &amp; Test'</span>
+
+    <span class="y-cmt"># ④ Job</span>
+    <span class="y-key">jobs</span>:
+      - <span class="y-key">job</span>: <span class="y-val">BuildJob</span>
+
+        <span class="y-cmt"># ⑤ Agent pool</span>
+        <span class="y-key">pool</span>:
+          <span class="y-key">vmImage</span>: <span class="y-str">'ubuntu-latest'</span>
+
+        <span class="y-cmt"># ⑥ Steps</span>
+        <span class="y-key">steps</span>:
+          - <span class="y-key">task</span>: <span class="y-val">UseNode@1</span>
+            <span class="y-key">inputs</span>:
+              <span class="y-key">version</span>: <span class="y-str">'$(nodeVersion)'</span>
+
+          - <span class="y-key">script</span>: <span class="y-val">npm ci</span>
+            <span class="y-key">displayName</span>: <span class="y-str">'Install dependencies'</span>
+
+          - <span class="y-key">script</span>: <span class="y-val">npm test</span>
+            <span class="y-key">displayName</span>: <span class="y-str">'Run tests'</span></pre>
+
+    <ul class="annotations">
+      <li>
+        <span class="ann-num">①</span>
+        <span><strong>trigger</strong> — this pipeline runs automatically on pushes to <code>main</code> or <code>develop</code>.</span>
+      </li>
+      <li>
+        <span class="ann-num">②</span>
+        <span><strong>variables</strong> at pipeline scope — reusable across all stages. Referenced with <code>$(variableName)</code>.</span>
+      </li>
+      <li>
+        <span class="ann-num">③</span>
+        <span><strong>stages</strong> list — just one here ("Build"). The <code>displayName</code> is what you see in the Azure DevOps UI.</span>
+      </li>
+      <li>
+        <span class="ann-num">④</span>
+        <span><strong>job</strong> — one unit of work on one agent. Can have many jobs per stage; they'd run in parallel.</span>
+      </li>
+      <li>
+        <span class="ann-num">⑤</span>
+        <span><strong>pool.vmImage</strong> — which Microsoft-hosted agent to use. <code>ubuntu-latest</code> is the standard Linux agent for Node.</span>
+      </li>
+      <li>
+        <span class="ann-num">⑥</span>
+        <span><strong>steps</strong> — the actual work. First a <em>task</em> (UseNode@1 selects the Node version), then two <em>scripts</em>.</span>
+      </li>
+    </ul>
+  </div>
+
+  <!-- ── Tasks vs scripts ───────────────────────────────── -->
+  <h2>Tasks vs scripts</h2>
+  <p>
+    Steps come in two flavours:
+  </p>
+  <ul>
+    <li>
+      <strong>script:</strong> — a raw shell command (bash on Linux/Mac, cmd on Windows).
+      Use this for anything you'd type in a terminal: <code>npm ci</code>, <code>npm run build</code>.
+    </li>
+    <li>
+      <strong>task:</strong> — a named, versioned, prebuilt action (like a GitHub Action).
+      Tasks handle things scripts can't easily do: publishing artifacts, deploying to Azure, setting up a Node version.
+      Find them in the <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/tasks/reference/?view=azure-pipelines" target="_blank">task reference</a>.
+    </li>
+  </ul>
+
+  <div class="callout warn">
+    <div class="callout label">Common mistake</div>
+    Task names include a version number: <code>UseNode@1</code>, <code>AzureWebApp@1</code>.
+    Using a task without <code>@version</code> is an error. Always pin the version.
+  </div>
+
+  <!-- ── The implicit stage ─────────────────────────────── -->
+  <h2>The shorthand: skipping stages</h2>
+  <p>
+    If your pipeline only has one stage, you can skip the <code>stages:</code> key entirely
+    and just write <code>jobs:</code> at the top level. Azure injects an implicit single stage.
+    You'll see both forms in the wild — they're equivalent for simple pipelines.
+  </p>
+  <pre><span class="y-cmt"># Shorthand (no explicit stages:)</span>
+<span class="y-key">trigger</span>: [<span class="y-val">main</span>]
+
+<span class="y-key">pool</span>:
+  <span class="y-key">vmImage</span>: <span class="y-str">'ubuntu-latest'</span>
+
+<span class="y-key">steps</span>:
+  - <span class="y-key">script</span>: <span class="y-val">npm ci &amp;&amp; npm test</span></pre>
+
+  <p>
+    This works fine. But as soon as you need a Deploy stage separate from Build, you need explicit stages.
+    Start simple; add structure when the pipeline actually needs it.
+  </p>
+
+  <!-- ── Quiz ─────────────────────────────────────────────── -->
+  <section class="quiz-section">
+    <h2>Check your understanding</h2>
+    <p style="color:var(--text-muted);font-size:0.9rem;margin-bottom:1.25rem">
+      Answer from memory — don't scroll up. That retrieval effort is what makes it stick.
+    </p>
+    <div id="quiz"></div>
+  </section>
+
+  <!-- ── Primary source ─────────────────────────────────── -->
+  <h2>Primary source</h2>
+  <p>
+    <strong>Read next:</strong>
+    <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/get-started/key-pipelines-concepts?view=azure-devops" target="_blank">
+      Key Azure Pipelines concepts — Microsoft Learn
+    </a><br>
+    <span style="color:var(--text-muted);font-size:0.9rem">
+      Short official glossary page. Takes ~10 min. Confirms the hierarchy and introduces vocabulary
+      you'll see in every subsequent lesson.
+    </span>
+  </p>
+
+  <!-- ── Ask questions ──────────────────────────────────── -->
+  <div class="callout" style="margin-top:2rem">
+    <div class="callout label">Your teacher is here</div>
+    Confused about something? Ask a follow-up question in the Claude Code chat.
+    Try: <em>"Why do jobs run in parallel by default?"</em> or <em>"What's the difference between a task and a step?"</em>
+  </div>
+
+  <!-- ── Footer ─────────────────────────────────────────── -->
+  <footer class="lesson-footer">
+    <span>Lesson 1 · Azure CI/CD</span>
+    <span>
+      Next: <a href="0002-triggers-and-conditions.html">Triggers &amp; Conditions →</a>
+    </span>
+  </footer>
+
+</main>
+
+<script src="../assets/quiz.js"></script>
+<script>
+new Quiz('quiz', [
+  {
+    q: 'What is the smallest unit of work in an Azure Pipeline?',
+    options: ['A Stage', 'A Job', 'A Step', 'A Task'],
+    answer: 2,
+    explanation: 'A step is the smallest building block — it is either a script or a task. Steps live inside jobs.'
+  },
+  {
+    q: 'At which level does an agent (runner) get assigned?',
+    options: ['Pipeline level', 'Stage level', 'Job level', 'Step level'],
+    answer: 2,
+    explanation: 'Each job runs on exactly one agent, specified via the pool property on the job. Different jobs can use different agents.'
+  },
+  {
+    q: 'By default, how do stages run relative to each other?',
+    options: ['In parallel', 'Sequentially', 'Randomly ordered', 'On separate agents'],
+    answer: 1,
+    explanation: 'Stages run sequentially by default — each waits for the previous to complete. You can override this with dependsOn.'
+  },
+  {
+    q: 'By default, how do multiple jobs within one stage run?',
+    options: ['Sequentially', 'In parallel', 'Only one at a time', 'On the same agent'],
+    answer: 1,
+    explanation: 'Jobs within a stage run in parallel by default. Use dependsOn to force ordering. This is the opposite of stages.'
+  },
+  {
+    q: 'Which YAML key disables the automatic CI trigger on push?',
+    options: ['trigger: false', 'trigger: none', 'ci: disabled', 'trigger: skip'],
+    answer: 1,
+    explanation: 'trigger: none is the correct syntax to turn off the CI trigger. trigger: false is not valid YAML for this purpose.'
+  }
+]);
+</script>
+
+</body>
+</html>

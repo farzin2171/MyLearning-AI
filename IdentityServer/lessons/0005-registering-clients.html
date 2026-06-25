@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 5 — Registering Clients &amp; APIs in the Identity Gateway</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    .checklist { list-style: none; padding: 0; }
+    .checklist li {
+      display: flex; gap: 0.7rem; align-items: flex-start;
+      margin-bottom: 0.6rem; font-size: 0.93rem;
+    }
+    .checklist li input[type="checkbox"] { margin-top: 0.22rem; flex-shrink: 0; }
+    .field-table td:first-child { white-space: nowrap; font-family: var(--font-mono); font-size: 0.82rem; }
+    .field-table td:last-child { font-size: 0.87rem; }
+    .badge {
+      display: inline-block;
+      font-family: var(--font-ui);
+      font-size: 0.72rem;
+      padding: 0.1rem 0.45rem;
+      border-radius: 20px;
+      font-weight: 600;
+      margin-left: 0.3rem;
+      vertical-align: middle;
+    }
+    .badge.req  { background: #fdecea; color: var(--error); }
+    .badge.opt  { background: var(--code-bg); color: var(--muted); }
+    .badge.warn { background: var(--warn-bg); color: var(--warn); }
+  </style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="../MISSION.md">Identity &amp; Authorization</a> ›
+    <a href="0004-authorization-service.html">Lesson 4</a> › Lesson 5 of 6
+  </div>
+  <h1>Registering Clients &amp; APIs in the Identity Gateway</h1>
+  <div class="meta">
+    <span>~30 minutes</span>
+    <span>Practical walkthrough</span>
+    <span>Prerequisites: <a href="0002-oauth-flows.html">Lesson 2</a></span>
+  </div>
+</div>
+
+<p>
+  Every application that requests tokens and every API that accepts them must be registered in the
+  Identity Gateway's configuration database. This lesson covers what needs to be registered,
+  what each field means, and how to avoid the most common mistakes.
+</p>
+
+<div class="callout">
+  <strong>Two registrations, not one</strong>
+  You register a <strong>Client</strong> for anything that <em>requests</em> tokens (a frontend app,
+  a backend service, a CLI tool). You register an <strong>API Resource + Scope</strong> for anything
+  that <em>accepts</em> tokens (an API). A new service typically needs both.
+</div>
+
+<hr>
+
+<h2>Part 1: Registering a Client</h2>
+
+<p>
+  A Client is stored in Duende IS's <code>Clients</code> table (managed by
+  <code>CustomConfigurationDbContext</code>). The most important fields:
+</p>
+
+<table class="field-table">
+  <thead><tr><th>Field</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>ClientId <span class="badge req">required</span></td>
+      <td>Unique identifier for this client. Appears as <code>client_id</code> in OAuth requests and in the JWT. Convention: use the service short-name in lowercase (e.g. <code>my-spa</code>, <code>assistmgntapi</code>).</td>
+    </tr>
+    <tr>
+      <td>ClientName <span class="badge opt">optional</span></td>
+      <td>Human-readable name shown on consent screens. Keep it accurate — end users may see it.</td>
+    </tr>
+    <tr>
+      <td>AllowedGrantTypes <span class="badge req">required</span></td>
+      <td>Which OAuth flows this client may use. Use <code>authorization_code</code> for SPAs/web apps. Use <code>client_credentials</code> for backend services. Never mix both on one client unless you have a specific reason.</td>
+    </tr>
+    <tr>
+      <td>ClientSecrets <span class="badge warn">required for conf. clients</span></td>
+      <td>Hashed secret for confidential clients (backend services using <code>client_credentials</code>). Public clients (SPAs) must have <strong>no</strong> secret — they use PKCE instead. Store secrets in Azure Key Vault, never in code.</td>
+    </tr>
+    <tr>
+      <td>RedirectUris <span class="badge req">required for code flow</span></td>
+      <td>Exact (or wildcard) URIs the IdG may redirect to after login. The <code>WildcardRedirectUriValidator</code> supports patterns like <code>https://*.equisoft.com/*</code>.</td>
+    </tr>
+    <tr>
+      <td>PostLogoutRedirectUris <span class="badge opt">optional</span></td>
+      <td>Where to redirect after logout. Same wildcard support.</td>
+    </tr>
+    <tr>
+      <td>AllowedScopes <span class="badge req">required</span></td>
+      <td>Which API resources and identity scopes this client may request. Must include <code>openid</code> for any OIDC flow. Add API scope names here (e.g. <code>assistmgntapi</code>). If a client requests a scope not in this list, the token request fails.</td>
+    </tr>
+    <tr>
+      <td>AllowedCorsOrigins <span class="badge opt">optional</span></td>
+      <td>Origins allowed to call the Identity Gateway from a browser (for SPAs). Supports wildcard patterns via <code>WildcardCorsPolicyService</code>.</td>
+    </tr>
+    <tr>
+      <td>AllowOfflineAccess <span class="badge opt">optional</span></td>
+      <td>Set to <code>true</code> to enable refresh tokens. The client must also request the <code>offline_access</code> scope.</td>
+    </tr>
+    <tr>
+      <td>RequirePkce <span class="badge warn">security</span></td>
+      <td>Should be <code>true</code> for all public clients (SPAs, mobile). Should also be <code>true</code> for confidential clients as defence-in-depth. Never set to <code>false</code> for new registrations.</td>
+    </tr>
+    <tr>
+      <td>AccessTokenLifetime <span class="badge opt">optional</span></td>
+      <td>Seconds until the access token expires. Default Duende IS: 3600 (1 hour). Keep short for high-security clients; set higher only for long-running processes.</td>
+    </tr>
+    <tr>
+      <td>AbsoluteRefreshTokenLifetime</td>
+      <td>Maximum lifetime of a refresh token regardless of use. After this, the user must log in again. Linked to the Redis session in the Equisoft IdG.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Example: Registering a New SPA (Authorization Code + PKCE)</h3>
+
+<pre><code>// In your seeding script or EF migration:
+new Client
+{
+    ClientId   = "my-new-spa",
+    ClientName = "My New Application",
+
+    AllowedGrantTypes = GrantTypes.Code,     // Authorization Code only
+    RequirePkce       = true,                // Always true for public clients
+    // No ClientSecrets — public client
+
+    RedirectUris           = { "https://*.my-app.equisoft.com/callback" },
+    PostLogoutRedirectUris = { "https://*.my-app.equisoft.com/logout" },
+    AllowedCorsOrigins     = { "https://*.my-app.equisoft.com" },
+
+    AllowedScopes = {
+        IdentityServerConstants.StandardScopes.OpenId,   // "openid"
+        IdentityServerConstants.StandardScopes.Profile,  // "profile"
+        "assistmgntapi",                                 // your API audience
+    },
+
+    AllowOfflineAccess           = true,    // enables refresh tokens
+    AccessTokenLifetime          = 3600,    // 1 hour
+    AbsoluteRefreshTokenLifetime = 2592000, // 30 days
+}</code></pre>
+
+<h3>Example: Registering a Backend Service (Client Credentials)</h3>
+
+<pre><code>new Client
+{
+    ClientId   = "my-backend-service",
+    ClientName = "My Backend Service (machine identity)",
+
+    AllowedGrantTypes = GrantTypes.ClientCredentials,
+    RequireClientSecret = true,
+    ClientSecrets = { new Secret("hashed-secret-from-key-vault".Sha256()) },
+
+    // No redirect URIs — no user interaction
+    // No CORS origins — server-side only
+
+    AllowedScopes = { "userapi", "assistmgntapi" },
+
+    // Claims that will appear in the service token:
+    Claims = {
+        new ClientClaim("service_isService", "true"),   // marks as service account
+        new ClientClaim("service_role", "MyService"),   // role for Authorization Service
+    }
+}</code></pre>
+
+<div class="callout warn">
+  <strong>Don't forget <code>service_isService</code></strong>
+  Service-account tokens must have this claim to pass the <code>IsService</code> policy on
+  management endpoints. Without it, calls to <code>DELETE /api/v1/Cache/permissions</code>
+  and similar endpoints will return 403.
+</div>
+
+<hr>
+
+<h2>Part 2: Registering an API Resource</h2>
+
+<p>
+  An API Resource tells the Identity Gateway about a downstream API — what its audience name is,
+  what scopes it exposes, and which claims it needs in tokens.
+</p>
+
+<table class="field-table">
+  <thead><tr><th>Field</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Name <span class="badge req">required</span></td>
+      <td>The audience name. This must match the <code>audience</code> in the API's appsettings.json. Appears in the token's <code>aud</code> claim. Convention: use the service short-name (e.g. <code>assistmgntapi</code>).</td>
+    </tr>
+    <tr>
+      <td>DisplayName <span class="badge opt">optional</span></td>
+      <td>Human-readable name for admin UIs.</td>
+    </tr>
+    <tr>
+      <td>Scopes <span class="badge req">required</span></td>
+      <td>The scopes this API exposes. Clients must list these in <code>AllowedScopes</code> to request them. A scope can represent the whole API (<code>assistmgntapi</code>) or a fine-grained operation (<code>assistantManagement.create</code>).</td>
+    </tr>
+    <tr>
+      <td>UserClaims <span class="badge opt">optional</span></td>
+      <td>Additional user claims to include in the access token when this API is the audience. By default only standard claims are included; list extra ones here (e.g. <code>tenantId</code>, <code>identityRole</code>).</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Example: Registering a New API</h3>
+
+<pre><code>new ApiResource
+{
+    Name        = "my-new-service-api",   // must match audience in appsettings
+    DisplayName = "My New Service",
+
+    Scopes = { "my-new-service-api" },    // at minimum, one scope = the whole API
+
+    UserClaims = {
+        "tenantId",      // Equisoft custom claims to include in access tokens
+        "identityRole",
+        "tenant",
+        "externalobjectidentifier"
+    }
+}
+
+// Also register the scope itself:
+new ApiScope
+{
+    Name        = "my-new-service-api",
+    DisplayName = "Access to My New Service"
+}</code></pre>
+
+<div class="callout tip">
+  <strong>UserClaims on the ApiResource</strong>
+  If you omit <code>tenantId</code> from <code>UserClaims</code>, it will not appear in tokens
+  issued for your API's audience — even though <code>EquisoftTokenResponseGenerator</code> computes
+  it. Always include the Equisoft custom claims your service needs.
+</div>
+
+<hr>
+
+<h2>Part 3: The Registration Checklist</h2>
+
+<p>
+  Use this checklist when onboarding a new service end-to-end. Check each item off as you go.
+</p>
+
+<ul class="checklist" id="reg-checklist">
+  <li><input type="checkbox"> <span>API Resource registered with correct <code>Name</code> (audience) and <code>UserClaims</code></span></li>
+  <li><input type="checkbox"> <span>API Scope registered with the same name as the API Resource</span></li>
+  <li><input type="checkbox"> <span>Client registered for the frontend/service that will call this API</span></li>
+  <li><input type="checkbox"> <span><code>AllowedScopes</code> on the client includes the new API scope</span></li>
+  <li><input type="checkbox"> <span>For SPAs: <code>RequirePkce = true</code>, no client secret, CORS origins set</span></li>
+  <li><input type="checkbox"> <span>For services: client secret stored in Key Vault, <code>service_isService</code> claim added</span></li>
+  <li><input type="checkbox"> <span>API's <code>appsettings.json</code> has <code>auth.jwt.authority</code> (IdG URL) and correct <code>audience</code></span></li>
+  <li><input type="checkbox"> <span>Token validated end-to-end in dev: call the API with a real token and confirm 200</span></li>
+  <li><input type="checkbox"> <span>Authorization Service: new role/policy/permission rows added if the service needs fine-grained authz</span></li>
+  <li><input type="checkbox"> <span>Cache invalidation: confirm that <code>DELETE /api/v1/Cache/permissions</code> works if permissions are managed at runtime</span></li>
+</ul>
+
+<hr>
+
+<h2>Common Mistakes</h2>
+
+<table>
+  <thead><tr><th>Symptom</th><th>Likely cause</th><th>Fix</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>invalid_scope</code> error at token endpoint</td>
+      <td>The scope requested by the client is not in <code>AllowedScopes</code></td>
+      <td>Add the scope to the client's <code>AllowedScopes</code> in the IdG DB</td>
+    </tr>
+    <tr>
+      <td>API returns 401 even with a valid token</td>
+      <td>Token <code>aud</code> does not match the API's configured <code>audience</code></td>
+      <td>Ensure <code>ApiResource.Name</code> in IdG matches <code>auth.jwt.audience</code> in the API's appsettings</td>
+    </tr>
+    <tr>
+      <td><code>tenantId</code> claim missing from token</td>
+      <td><code>tenantId</code> not listed in <code>ApiResource.UserClaims</code></td>
+      <td>Add <code>"tenantId"</code> to the ApiResource's UserClaims list</td>
+    </tr>
+    <tr>
+      <td>CORS preflight fails on the token endpoint</td>
+      <td>The SPA's origin not in <code>AllowedCorsOrigins</code></td>
+      <td>Add the origin (with wildcard if needed) to the client's CORS origins</td>
+    </tr>
+    <tr>
+      <td>Service account gets 403 on management endpoints</td>
+      <td><code>service_isService</code> claim missing from client definition</td>
+      <td>Add <code>new ClientClaim("service_isService", "true")</code> to the client's <code>Claims</code></td>
+    </tr>
+    <tr>
+      <td>Redirect URI mismatch after login</td>
+      <td>Exact URI doesn't match — includes trailing slash or query string</td>
+      <td>Check the redirect URI configured in IdG against the exact value the client sends</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr>
+
+<div class="quiz" data-quiz="quiz5">
+  <h3>Knowledge Check</h3>
+
+  <div class="quiz-question" data-correct="b">
+    <p>1. You're registering a React SPA. Should it have a <code>ClientSecret</code>?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz5-q0" value="a"> Yes — all clients need a secret for security</label></li>
+      <li><label><input type="radio" name="quiz5-q0" value="b"> No — public clients use PKCE instead of a secret</label></li>
+      <li><label><input type="radio" name="quiz5-q0" value="c"> Optional — only needed for refresh token requests</label></li>
+      <li><label><input type="radio" name="quiz5-q0" value="d"> Yes — but store it in environment variables only</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="c">
+    <p>2. Your new API's appsettings sets <code>audience: "my-api-v2"</code>. What must match in the Identity Gateway?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz5-q1" value="a"> The Client's <code>ClientId</code> must be "my-api-v2"</label></li>
+      <li><label><input type="radio" name="quiz5-q1" value="b"> The Client's <code>AllowedScopes</code> must contain "my-api-v2"</label></li>
+      <li><label><input type="radio" name="quiz5-q1" value="c"> The <code>ApiResource.Name</code> must be "my-api-v2"</label></li>
+      <li><label><input type="radio" name="quiz5-q1" value="d"> The <code>IdentityResource.Name</code> must be "my-api-v2"</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="d">
+    <p>3. A developer complains the <code>tenantId</code> claim is missing from tokens issued for their new API. What is the most likely fix?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz5-q2" value="a"> Add <code>tenantId</code> scope to the client's <code>AllowedScopes</code></label></li>
+      <li><label><input type="radio" name="quiz5-q2" value="b"> Register a new Identity Resource called <code>tenantId</code></label></li>
+      <li><label><input type="radio" name="quiz5-q2" value="c"> Enable <code>AlwaysIncludeUserClaimsInIdToken</code> on the client</label></li>
+      <li><label><input type="radio" name="quiz5-q2" value="d"> Add <code>"tenantId"</code> to the API Resource's <code>UserClaims</code> list</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="a">
+    <p>4. Which grant type combination is correct for a service that both serves a frontend <em>and</em> calls other services as itself?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz5-q3" value="a"> Two separate clients — one code flow for users, one client_credentials for machine calls</label></li>
+      <li><label><input type="radio" name="quiz5-q3" value="b"> One client with both code and client_credentials grant types enabled</label></li>
+      <li><label><input type="radio" name="quiz5-q3" value="c"> One client_credentials client — reuse the service token to act on behalf of users</label></li>
+      <li><label><input type="radio" name="quiz5-q3" value="d"> One code-flow client — backend services should use the user's token directly</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <button class="quiz-btn" data-quiz-submit="quiz5">Check Answers</button>
+  <div class="quiz-score"></div>
+</div>
+
+<script>
+window.quizExplanations = {
+  'quiz5-q0': 'SPAs (public clients) cannot keep secrets — JavaScript is visible to the browser. They use PKCE to secure the code exchange without a shared secret.',
+  'quiz5-q1': 'The ApiResource.Name is what ends up in the token\'s aud claim. The JWT middleware on the API validates that its configured audience matches the token aud.',
+  'quiz5-q2': 'The EquisoftTokenResponseGenerator computes tenantId, but it only appears in the token if the ApiResource.UserClaims list includes "tenantId".',
+  'quiz5-q3': 'Mixing grant types on one client causes security confusion and complicates audit trails. Use separate clients: one for user-facing flows, one for service-to-service.'
+};
+</script>
+
+<hr>
+
+<h2>Primary Source</h2>
+<p>
+  <a href="https://docs.duendesoftware.com/identityserver/v7/fundamentals/resources/" target="_blank">
+    Duende IS v7 — Defining Resources (API Resources, Scopes, Identity Resources)
+  </a>
+  <br>
+  <a href="https://docs.duendesoftware.com/identityserver/v7/fundamentals/clients/" target="_blank">
+    Duende IS v7 — Client Configuration Reference
+  </a>
+</p>
+
+<div class="ask-claude">
+  <strong>Questions? Ask your teacher.</strong>
+  Try: <em>"When should I define separate API scopes for each operation (like <code>assistantManagement.create</code>) vs. a single audience scope?"</em>
+</div>
+
+<div class="lesson-nav">
+  <a href="0004-authorization-service.html">← Lesson 4: Authorization Service</a>
+  <a class="next" href="0006-new-api-service.html">Next → Lesson 6: Building a New API Service</a>
+</div>
+
+<div class="lesson-footer">
+  Equisoft Identity Learning · Lesson 5 · Sources: Duende IS Client &amp; Resource docs,
+  CustomConfigurationDbContext.cs, WildcardRedirectUriValidator.cs
+</div>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

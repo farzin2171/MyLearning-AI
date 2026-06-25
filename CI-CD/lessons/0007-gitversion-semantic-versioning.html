@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lesson 7 — GitVersion and Semantic Versioning</title>
+  <link rel="stylesheet" href="../assets/style.css" />
+  <style>
+    /* SemVer anatomy display */
+    .semver-anatomy {
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+      gap: 0;
+      margin: 1.5rem auto;
+      max-width: 500px;
+      font-family: var(--font-mono);
+      font-size: 1.05rem;
+    }
+    .sv-part {
+      flex: 1;
+      text-align: center;
+      padding: 0.5rem 0.4rem;
+      background: var(--code-bg);
+      border: 1.5px solid var(--border);
+    }
+    .sv-part:first-child { border-radius: 6px 0 0 6px; }
+    .sv-part.prerelease {
+      background: #fff4ce;
+      border-color: var(--warn);
+      flex: 1.4;
+    }
+    .sv-dot {
+      display: flex;
+      align-items: center;
+      padding: 0 0.1rem;
+      font-weight: bold;
+      color: var(--text-muted);
+      border-top: 1.5px solid var(--border);
+      border-bottom: 1.5px solid var(--border);
+      background: var(--surface);
+    }
+    .sv-dot.dash {
+      border-color: var(--warn);
+      background: #fff4ce;
+    }
+    .sv-label {
+      font-family: var(--font-body);
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      display: block;
+      margin-top: 0.2rem;
+    }
+
+    /* Branch → version mapping table */
+    .branch-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+      margin: 1rem 0;
+    }
+    .branch-table th {
+      background: var(--code-bg);
+      text-align: left;
+      padding: 0.4rem 0.75rem;
+      border-bottom: 2px solid var(--border);
+    }
+    .branch-table td {
+      padding: 0.45rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    .branch-table tr:last-child td { border-bottom: none; }
+    .branch-table code {
+      background: var(--code-bg);
+      padding: 0.1em 0.3em;
+      border-radius: 3px;
+      font-size: 0.85em;
+    }
+    .tag-badge {
+      display: inline-block;
+      background: var(--success);
+      color: #fff;
+      font-size: 0.72rem;
+      padding: 0.1em 0.45em;
+      border-radius: 10px;
+      font-family: var(--font-mono);
+      vertical-align: middle;
+      margin-left: 0.3em;
+    }
+    .pre-badge {
+      display: inline-block;
+      background: var(--warn);
+      color: #fff;
+      font-size: 0.72rem;
+      padding: 0.1em 0.45em;
+      border-radius: 10px;
+      font-family: var(--font-mono);
+      vertical-align: middle;
+      margin-left: 0.3em;
+    }
+
+    /* Variable reference table */
+    .var-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.87rem;
+      margin: 1rem 0;
+    }
+    .var-table th {
+      background: var(--code-bg);
+      text-align: left;
+      padding: 0.4rem 0.75rem;
+      border-bottom: 2px solid var(--border);
+    }
+    .var-table td {
+      padding: 0.45rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    .var-table tr:last-child td { border-bottom: none; }
+    .var-table code {
+      background: var(--code-bg);
+      padding: 0.1em 0.3em;
+      border-radius: 3px;
+      font-size: 0.82em;
+      white-space: nowrap;
+    }
+    .var-table .example { color: var(--text-muted); font-family: var(--font-mono); font-size: 0.82em; }
+
+    .callout {
+      border-left: 4px solid var(--accent);
+      background: #eef6ff;
+      padding: 0.9rem 1rem;
+      margin: 1.5rem 0;
+      border-radius: 0 4px 4px 0;
+    }
+    .callout.warn {
+      border-left-color: var(--warn);
+      background: #fdf6ec;
+    }
+    .callout.tip {
+      border-left-color: var(--success);
+      background: #f0faf0;
+    }
+    .callout p { margin: 0; }
+    .callout p + p { margin-top: 0.5rem; }
+
+    /* Mock pipeline log output */
+    .pipeline-log {
+      background: #1e1e1e;
+      color: #d4d4d4;
+      border-radius: 6px;
+      padding: 1rem 1.1rem;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      line-height: 1.6;
+      margin: 1rem 0;
+      overflow-x: auto;
+    }
+    .pipeline-log .key { color: #9cdcfe; }
+    .pipeline-log .val { color: #ce9178; }
+    .pipeline-log .dim { color: #6a9955; }
+  </style>
+</head>
+<body>
+  <article>
+    <header>
+      <p class="lesson-number">Lesson 7 of <em>Azure CI/CD with Azure Pipelines</em></p>
+      <h1>GitVersion and Semantic Versioning</h1>
+      <p class="subtitle">Where <code>$(GitVersion.SemVer)</code> comes from and why it changes by branch</p>
+    </header>
+
+    <!-- ── WHY ─────────────────────────────────────────── -->
+    <section>
+      <h2>The problem GitVersion solves</h2>
+      <p>You've seen <code>$(GitVersion.SemVer)</code> and <code>$(GitVersion.AssemblySemVer)</code> scattered through your team's templates. These aren't pipeline magic — they're variables set by the <strong>GitVersion</strong> tool, which reads your git history and calculates what version number this build <em>should</em> be.</p>
+      <p>Without it, you'd either hard-code versions (and forget to bump them) or invent your own branch-naming → versioning logic. GitVersion applies Semantic Versioning rules consistently based on your branches and git tags.</p>
+    </section>
+
+    <!-- ── SEMVER ─────────────────────────────────────── -->
+    <section>
+      <h2>Semantic Versioning in 30 seconds</h2>
+      <p>A SemVer version has up to four parts:</p>
+
+      <div class="semver-anatomy">
+        <div class="sv-part">1<span class="sv-label">MAJOR</span></div>
+        <div class="sv-dot">.</div>
+        <div class="sv-part">3<span class="sv-label">MINOR</span></div>
+        <div class="sv-dot">.</div>
+        <div class="sv-part">0<span class="sv-label">PATCH</span></div>
+        <div class="sv-dot dash">-</div>
+        <div class="sv-part prerelease">beta.5<span class="sv-label">pre-release label</span></div>
+      </div>
+
+      <p>Rules: bump <strong>MAJOR</strong> for breaking changes, <strong>MINOR</strong> for new features, <strong>PATCH</strong> for fixes. Pre-release labels (<code>-beta.5</code>, <code>-rc.2</code>) mark builds that are <em>not yet stable</em>. A build with a pre-release label sorts <em>lower</em> than the clean version — <code>1.3.0-rc.2</code> &lt; <code>1.3.0</code>.</p>
+    </section>
+
+    <!-- ── THE TWO TASKS ──────────────────────────────── -->
+    <section>
+      <h2>The two tasks</h2>
+      <p>GitVersion runs in two steps. <strong>Setup</strong> installs the tool onto the agent. <strong>Execute</strong> reads your git history and sets pipeline variables.</p>
+
+      <pre><code>steps:
+  - task: gitversion/setup@3.2.1
+    displayName: Setup GitVersion
+    inputs:
+      versionSpec: '6.x'            # which GitVersion version to install
+
+  - task: gitversion/execute@3.2.1
+    displayName: Execute GitVersion
+    inputs:
+      useConfigFile: true
+      configFilePath: GitVersion.yml # config at repo root (optional but recommended)</code></pre>
+
+      <p>Everything after these two steps can use <code>$(GitVersion.*)</code> variables — they're injected into the pipeline variable scope by the execute task.</p>
+
+      <div class="callout warn">
+        <p><strong>Critical: <code>fetchDepth: 0</code> required.</strong> GitVersion needs the full git history to trace back to the most recent tag and count commits since then. A shallow clone (<code>fetchDepth: 1</code>) breaks GitVersion — it can't see the tags.</p>
+        <p>Your team uses <code>fetchDepth: 1</code> for fast PR validation jobs, but build jobs that run GitVersion must set <code>fetchDepth: 0</code>.</p>
+      </div>
+
+      <pre><code>jobs:
+  - job: Build
+    workspace:
+      clean: all
+    steps:
+      - checkout: self
+        fetchDepth: 0        # ← full history for GitVersion
+
+      - task: gitversion/setup@3.2.1
+        inputs:
+          versionSpec: '6.x'
+
+      - task: gitversion/execute@3.2.1
+        inputs:
+          useConfigFile: true
+          configFilePath: GitVersion.yml
+
+      # All subsequent steps can use $(GitVersion.SemVer) etc.</code></pre>
+    </section>
+
+    <!-- ── BRANCH → VERSION ───────────────────────────── -->
+    <section>
+      <h2>Branch → version mapping</h2>
+      <p>GitVersion calculates the version based on the current branch name and the nearest tag in git history. Here's how your team's branch strategy maps to version output:</p>
+
+      <table class="branch-table">
+        <thead>
+          <tr>
+            <th>Branch</th>
+            <th>Example <code>$(GitVersion.SemVer)</code></th>
+            <th>Meaning</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>feature/my-feat</code></td>
+            <td><code>1.3.0-my-feat.3</code> <span class="pre-badge">pre</span></td>
+            <td>3 commits into the feature branch</td>
+          </tr>
+          <tr>
+            <td><code>develop</code></td>
+            <td><code>1.3.0-beta.12</code> <span class="pre-badge">pre</span></td>
+            <td>12 commits since the last tag on develop</td>
+          </tr>
+          <tr>
+            <td><code>release/1.3.0</code></td>
+            <td><code>1.3.0-rc.4</code> <span class="pre-badge">pre</span></td>
+            <td>4th release candidate build</td>
+          </tr>
+          <tr>
+            <td><code>hotfix/fix-login</code></td>
+            <td><code>1.2.5-beta.1</code> <span class="pre-badge">pre</span></td>
+            <td>Patch bump, pre-release until merged</td>
+          </tr>
+          <tr>
+            <td><code>master</code> (after merge)</td>
+            <td><code>1.3.0</code> <span class="tag-badge">stable</span></td>
+            <td>Clean stable version after release merge</td>
+          </tr>
+          <tr>
+            <td>Tag <code>v1.3.0</code> on master</td>
+            <td><code>1.3.0</code> <span class="tag-badge">stable</span></td>
+            <td>Exact tag match — the base for future builds</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="callout tip">
+        <p><strong>The commit count resets at a tag.</strong> When you push <code>v1.3.0</code> to master, the next commit on develop becomes <code>1.4.0-beta.1</code> — GitVersion has seen the <code>1.3.0</code> tag and increments to the next planned version automatically.</p>
+      </div>
+    </section>
+
+    <!-- ── VARIABLES ──────────────────────────────────── -->
+    <section>
+      <h2>Key variables</h2>
+      <p>GitVersion sets many variables. These are the ones you'll encounter in your team's templates:</p>
+
+      <table class="var-table">
+        <thead>
+          <tr>
+            <th>Variable</th>
+            <th>Example on <code>develop</code></th>
+            <th>Example on <code>master</code></th>
+            <th>Use for</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>$(GitVersion.SemVer)</code></td>
+            <td class="example">1.3.0-beta.12</td>
+            <td class="example">1.3.0</td>
+            <td>Octopus release version, npm package version</td>
+          </tr>
+          <tr>
+            <td><code>$(GitVersion.MajorMinorPatch)</code></td>
+            <td class="example">1.3.0</td>
+            <td class="example">1.3.0</td>
+            <td>When you need the stable number without the pre-release label</td>
+          </tr>
+          <tr>
+            <td><code>$(GitVersion.AssemblySemVer)</code></td>
+            <td class="example">1.3.0.0</td>
+            <td class="example">1.3.0.0</td>
+            <td>.NET assembly versioning (four-part format)</td>
+          </tr>
+          <tr>
+            <td><code>$(GitVersion.NuGetVersionV2)</code></td>
+            <td class="example">1.3.0-beta0012</td>
+            <td class="example">1.3.0</td>
+            <td>NuGet packages (no dots in pre-release label)</td>
+          </tr>
+          <tr>
+            <td><code>$(GitVersion.InformationalVersion)</code></td>
+            <td class="example">1.3.0-beta.12+Branch.develop.Sha.abc1234</td>
+            <td class="example">1.3.0+Branch.master.Sha.def5678</td>
+            <td>Full audit version including git SHA</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p>When you see the team's template passing <code>ReleaseNumber: $(GitVersion.SemVer)</code> to Octopus, you now know exactly what that string looks like — and why it changes depending on which branch triggered the pipeline.</p>
+
+      <div class="pipeline-log">
+        <span class="dim">## [GitVersion/Execute]</span><br>
+        <span class="key">GitVersion.SemVer</span>: <span class="val">1.3.0-beta.12</span><br>
+        <span class="key">GitVersion.MajorMinorPatch</span>: <span class="val">1.3.0</span><br>
+        <span class="key">GitVersion.AssemblySemVer</span>: <span class="val">1.3.0.0</span><br>
+        <span class="key">GitVersion.NuGetVersionV2</span>: <span class="val">1.3.0-beta0012</span><br>
+        <span class="dim">## 17 variables set.</span>
+      </div>
+    </section>
+
+    <!-- ── GITVERSION.YML ─────────────────────────────── -->
+    <section>
+      <h2>GitVersion.yml — the configuration file</h2>
+      <p>A <code>GitVersion.yml</code> at your repo root customises the versioning strategy. You don't need to memorise the full schema, but it's worth knowing the file exists and what it controls.</p>
+
+      <pre><code># GitVersion.yml — minimal example used with GitFlow strategy
+mode: ContinuousDeployment
+branches:
+  develop:
+    regex: develop
+    tag: beta
+    increment: Minor
+  release:
+    regex: release\/.*
+    tag: rc
+    increment: None
+  hotfix:
+    regex: hotfix\/.*
+    tag: beta
+    increment: Patch</code></pre>
+
+      <p>The <code>mode</code> controls how GitVersion determines version increments. <code>ContinuousDeployment</code> is the most common for team workflows — every commit on develop produces a new pre-release version. You'll find your team's actual config in the root of any repo that uses GitVersion.</p>
+    </section>
+
+    <!-- ── FULL EXAMPLE ───────────────────────────────── -->
+    <section>
+      <h2>How it fits in a team build job</h2>
+      <pre><code>jobs:
+  - job: Build
+    pool:
+      name: $(CILinuxAgentPool)
+    workspace:
+      clean: all
+    steps:
+      - checkout: self
+        fetchDepth: 0                        # full history for GitVersion
+
+      - task: gitversion/setup@3.2.1
+        displayName: Setup GitVersion
+        inputs:
+          versionSpec: '6.x'
+
+      - task: gitversion/execute@3.2.1
+        displayName: Execute GitVersion
+        inputs:
+          useConfigFile: true
+          configFilePath: GitVersion.yml
+
+      - task: NodeTool@0
+        inputs:
+          versionSpec: 24.x
+
+      - task: Npm@1
+        displayName: npm ci
+        inputs:
+          command: ci
+          customRegistry: useNpmrc
+          customEndpoint: 'Equisoft.npm'
+
+      - task: Npm@1
+        displayName: npm run build
+        inputs:
+          command: custom
+          customCommand: run build
+
+      - task: CopyFiles@2
+        inputs:
+          SourceFolder: dist
+          TargetFolder: $(Build.ArtifactStagingDirectory)
+
+      - task: PublishPipelineArtifact@1
+        inputs:
+          targetPath: $(Build.ArtifactStagingDirectory)
+          artifactName: drop-$(GitVersion.SemVer)   # ← version baked into artifact name
+          publishLocation: pipeline</code></pre>
+
+      <p>And downstream in the Octopus deploy stage:</p>
+
+      <pre><code>- task: OctopusCreateRelease@3
+  inputs:
+    OctopusServerEndpoint: $(OctopusEndpoint)
+    Project: my-app
+    ReleaseNumber: $(GitVersion.SemVer)          # ← e.g. "1.3.0-beta.12" on develop
+    Channel: Development</code></pre>
+    </section>
+
+    <!-- ── QUIZ ───────────────────────────────────────── -->
+    <section>
+      <h2>Check your understanding</h2>
+      <div id="quiz"></div>
+    </section>
+
+    <!-- ── PRIMARY SOURCE ─────────────────────────────── -->
+    <section>
+      <h2>Primary source</h2>
+      <p>
+        <a href="https://gitversion.net/docs/" target="_blank" rel="noopener">
+          GitVersion documentation — gitversion.net
+        </a><br>
+        The official reference for configuration modes, branch strategies, all output variables, and the Azure Pipelines extension.
+      </p>
+    </section>
+
+    <!-- ── REFERENCE DOC ─────────────────────────────── -->
+    <section>
+      <h2>Reference</h2>
+      <p><a href="../reference/gitversion-cheatsheet.html">GitVersion quick-reference card</a> — branch → version mapping and all key variables, printable.</p>
+    </section>
+
+    <!-- ── RELATED LESSONS ────────────────────────────── -->
+    <section>
+      <h2>Related lessons</h2>
+      <ul>
+        <li><a href="0002-triggers-and-conditions.html">Lesson 2 — Triggers and Conditions</a> — <code>isMaster</code>/<code>isTag</code> conditions that control which stages run</li>
+        <li><a href="0005-pipeline-artifacts.html">Lesson 5 — Pipeline Artifacts</a> — how artifact names can embed <code>$(GitVersion.SemVer)</code></li>
+        <li><a href="0006-environments-and-approvals.html">Lesson 6 — Environments and Approvals</a> — deploy stages that receive the version from GitVersion</li>
+      </ul>
+    </section>
+
+    <div class="ask-question">
+      <strong>Something unclear?</strong> Ask your teacher — type a follow-up and Claude will answer it in context.
+    </div>
+  </article>
+
+  <script src="../assets/quiz.js"></script>
+  <script>
+    new Quiz('quiz', [
+      {
+        q: 'Why must a build job that runs GitVersion use fetchDepth: 0?',
+        options: [
+          'GitVersion needs full history to find the latest git tag',
+          'GitVersion validates every commit message for SemVer',
+          'GitVersion downloads packages that require full history',
+          'GitVersion checks all remote branches for version conflicts'
+        ],
+        answer: 0,
+        explanation: 'GitVersion traces back through git history to find the most recent version tag, then counts commits since that tag to increment the version. A shallow clone (fetchDepth: 1) hides the tags, so GitVersion can\'t determine a meaningful version.'
+      },
+      {
+        q: 'On a develop branch, what does $(GitVersion.MajorMinorPatch) return?',
+        options: [
+          'The next stable version without any pre-release label',
+          'The SemVer version including the beta pre-release label',
+          'The previous stable tag that develop branched from',
+          'The NuGet version including the commit count suffix'
+        ],
+        answer: 0,
+        explanation: 'MajorMinorPatch always strips the pre-release label. If SemVer would give "1.3.0-beta.12", MajorMinorPatch gives just "1.3.0". Useful when you need the planned stable version number, not the current pre-release identifier.'
+      },
+      {
+        q: 'Which task installs the GitVersion tool onto the pipeline agent?',
+        options: [
+          'gitversion/setup installs the GitVersion tool',
+          'gitversion/execute installs the GitVersion tool',
+          'gitversion/install installs the GitVersion tool',
+          'gitversion/restore installs the GitVersion tool'
+        ],
+        answer: 0,
+        explanation: 'gitversion/setup downloads and installs the GitVersion CLI onto the agent. gitversion/execute then runs it and publishes the variables. You always need setup before execute.'
+      },
+      {
+        q: 'What pre-release label does GitVersion typically assign to a release/* branch build?',
+        options: [
+          'rc — marking the build as a release candidate',
+          'beta — marking the build as a develop preview',
+          'alpha — marking the build as an early preview',
+          'hotfix — marking the build as a hotfix release'
+        ],
+        answer: 0,
+        explanation: 'By convention, release/* branches get the "rc" (release candidate) label. develop gets "beta", feature/* gets the sanitised branch name. The exact labels are configurable in GitVersion.yml.'
+      }
+    ]);
+  </script>
+</body>
+</html>

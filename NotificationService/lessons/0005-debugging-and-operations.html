@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 5: Debugging and Operations — Notification Service</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<nav class="breadcrumb">
+  <a href="0004-the-keep-alive-flow.html">← Lesson 4</a>
+  &nbsp;&nbsp;|&nbsp;&nbsp; Notification Service &rsaquo; Lesson 5 of 6
+</nav>
+
+<header class="lesson-header">
+  <p class="lesson-number">Lesson 5</p>
+  <h1>Debugging and Operations</h1>
+  <p class="subtitle">The log messages, diagnostic questions, and testing gaps that matter when something breaks</p>
+  <div class="objectives">
+    <p><strong>After this lesson you can:</strong></p>
+    <ul>
+      <li>Find the four log messages that diagnose most failures in this service</li>
+      <li>Follow a diagnostic tree for "notifications not arriving" and "keep-alive stopped"</li>
+      <li>Explain what the integration tests do and don't verify — and why this matters</li>
+    </ul>
+  </div>
+</header>
+
+<main>
+
+<!-- ─────────────────────────────────────────────── -->
+<section>
+  <h2>The Testing Gap</h2>
+  <p>Before looking at failures, understand what the tests cover. The integration test suite makes HTTP requests and checks status codes:</p>
+
+  <pre><code>// NotificationsControllerTests — what's tested:
+POST /api/v1/notifications  (unauthorized)         → 401
+POST /api/v1/notifications  (missing userId)        → 400
+POST /api/v1/notifications  (missing code)          → 400
+POST /api/v1/notifications  (valid, authorized)     → 200
+
+// KeepAliveControllerTests — what's tested:
+POST /api/v1/keepalive      (unauthorized)          → 401
+POST /api/v1/keepalive      (missing userId)        → 400
+POST /api/v1/keepalive      (valid, authorized)     → 204</code></pre>
+
+  <p class="aside"><strong>What the tests do NOT verify:</strong> that a notification actually reached a browser. A 200 response means the controller ran to completion — it says nothing about whether a user's browser received anything. The same applies to keep-alive: 204 means the controller ran, not that any signal was delivered.</p>
+  <p>End-to-end delivery requires a live SignalR WebSocket, a running Redis, and a connected browser. None of those exist in the integration test environment. This means <strong>delivery failures are invisible to CI</strong>. You will only find them from user reports or real-time monitoring.</p>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section>
+  <h2>The Logs You Need</h2>
+  <p>The service emits four structured log messages that cover most failure scenarios. Know these by heart.</p>
+
+  <ol class="flow-steps">
+    <li>
+      <div class="step-content">
+        <strong><code>"Succeed to set relationship between ApplicationId {x} and ConnectionId {y} for User {z}"</code></strong>
+        <p>Emitted by <code>KeepAliveManagementService.LinkAsync</code>. This is your confirmation that the browser called <code>SetApplicationId</code> and the record was written to the cache. If this message never appears for a given user, the browser never registered — the problem is in the front-end, not this service.</p>
+      </div>
+    </li>
+    <li>
+      <div class="step-content">
+        <strong><code>"Could not acquire lock"</code></strong>
+        <p>Emitted by <code>NotificationServiceCacheManager.SetAsync</code>. This means the distributed lock could not be acquired within 30 seconds — Redis is slow, unavailable, or a previous lock holder crashed without releasing. Critically: <strong>this exception counts toward the circuit breaker threshold</strong>. One lock failure + one Redis failure = circuit opens.</p>
+      </div>
+    </li>
+    <li>
+      <div class="step-content">
+        <strong><code>"Circuit broken"</code></strong>
+        <p>Emitted by <code>OnCircuitBreak</code> in the cache manager. Redis is now bypassed. The service falls back to its in-memory cache. Keep-alive delivery degrades to per-instance — connections registered on one pod won't be found by another. <strong>This is the most operationally significant log message in the service.</strong></p>
+      </div>
+    </li>
+    <li>
+      <div class="step-content">
+        <strong><code>"Circuit reset"</code></strong>
+        <p>Emitted by <code>OnCircuitReset</code>. Redis is healthy again and the circuit has closed. Normal cross-instance operation resumes. You should see this 60 seconds after "Circuit broken" if Redis recovered.</p>
+      </div>
+    </li>
+  </ol>
+
+  <p class="aside"><strong>Log search note:</strong> userId values are logged through <code>.Sanitize()</code>, which escapes control characters, backslashes, and quotes. If a userId contains special characters, its logged form will differ from the raw value. Search by <code>applicationId</code> (a clean Guid) when possible.</p>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section>
+  <h2>Scenario 1 — "Notifications Aren't Arriving"</h2>
+  <p>Notifications use <code>Clients.User(userId)</code> — they don't touch the application Redis cache. This constrains the possible causes.</p>
+
+  <div class="callout">
+    <div class="callout-steps">
+      <div class="callout-step">
+        <span class="callout-icon">①</span>
+        <div><strong>Is the browser connected at all?</strong><br>
+        Search logs for <code>"Succeed to set relationship"</code> for this user. If absent: the browser never completed <code>SetApplicationId</code> — the front-end never finished its connection setup. The Notification Service is not the problem.</div>
+      </div>
+      <div class="callout-step">
+        <span class="callout-icon">②</span>
+        <div><strong>Is the JWT valid?</strong><br>
+        The hub has <code>[Authorize]</code>. If the token is invalid or expired, the WebSocket handshake fails silently from the service's perspective. Check if the browser is receiving 401 responses when trying to connect. Serilog request logging will show this.</div>
+      </div>
+      <div class="callout-step">
+        <span class="callout-icon">③</span>
+        <div><strong>Does the userId in the POST match the JWT subject?</strong><br>
+        <code>Clients.User(userId)</code> routes by <code>Context.UserIdentifier</code> — the JWT <code>NameIdentifier</code> claim. If the caller sends a different userId string (e.g. an email instead of an ID, or wrong casing), the message is sent to a user that has no connections. It disappears silently.</div>
+      </div>
+      <div class="callout-step">
+        <span class="callout-icon">④</span>
+        <div><strong>Is the SignalR Redis backplane healthy?</strong><br>
+        The backplane is a separate Redis connection from the application cache. If it fails, <code>Clients.User()</code> routing only works for connections on the same service instance. Notifications to users on other instances are lost. This is separate from the circuit breaker — there is no automatic fallback for the backplane.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section>
+  <h2>Scenario 2 — "Keep-Alive Stopped Working"</h2>
+  <p>Keep-alive is more fragile than notifications — it has more moving parts. Work through these in order.</p>
+
+  <div class="callout">
+    <div class="callout-steps">
+      <div class="callout-step">
+        <span class="callout-icon">①</span>
+        <div><strong>Was the connection ever registered?</strong><br>
+        Search logs for <code>"Succeed to set relationship"</code> with the userId + applicationId. If absent: <code>SetApplicationId</code> was never called or failed silently. No registration = no keep-alive, ever.</div>
+      </div>
+      <div class="callout-step">
+        <span class="callout-icon">②</span>
+        <div><strong>Has the TTL expired?</strong><br>
+        The default is 3600 seconds (1 hour). If the user was idle for more than an hour, the Redis record expired and was evicted. The browser must call <code>SetApplicationId</code> again on reconnect. Depending on the front-end implementation, this may not happen automatically.</div>
+      </div>
+      <div class="callout-step">
+        <span class="callout-icon">③</span>
+        <div><strong>Is the circuit breaker open?</strong><br>
+        Search for <code>"Circuit broken"</code>. If present, the connection may only exist in one instance's memory cache. A keep-alive request routed to a different instance won't find it. Check if "Circuit reset" appeared afterward — if not, Redis may still be unhealthy.</div>
+      </div>
+      <div class="callout-step">
+        <span class="callout-icon">④</span>
+        <div><strong>Is the applicationId in the request correct?</strong><br>
+        The keep-alive caller must send the exact same Guid the browser used in <code>SetApplicationId</code>. A mismatch returns 204 (success) but looks up an empty list — the signal is silently dropped. There is no error to look for; you have to verify the Guids match.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section>
+  <h2>Two Things the Health Check Cannot Tell You</h2>
+  <p>The service exposes a <code>/health</code> endpoint that returns 200 when the service is running. This is useful for liveness checks — but it cannot tell you:</p>
+  <ul>
+    <li><strong>Whether Redis is reachable.</strong> The health check returning 200 is not evidence that Redis is healthy. The circuit could be open and the service running entirely on in-memory cache while <code>/health</code> returns green.</li>
+    <li><strong>Whether notifications are being delivered.</strong> A 200 from <code>/health</code> means the process is alive — nothing more. A healthy process with a broken Redis backplane silently drops cross-instance notifications.</li>
+  </ul>
+  <p>For true end-to-end health monitoring, you need a synthetic test: a client that connects via WebSocket, a probe that sends a notification or keep-alive, and a check that the client received the event. This doesn't exist yet in the test suite.</p>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section class="quiz-section">
+  <h2>Check Your Understanding</h2>
+  <p>Questions draw from all lessons — retrieval practice from earlier material as well as new content.</p>
+
+  <div class="quiz-question" data-answer="2">
+    <p class="question-text">1. A valid <code>POST /api/v1/notifications</code> returns 200. What does this confirm?</p>
+    <div class="quiz-options">
+      <div class="quiz-option">The browser received notificationReceived</div>
+      <div class="quiz-option">The SignalR Redis backplane is healthy</div>
+      <div class="quiz-option">The controller ran to completion without error</div>
+      <div class="quiz-option">The userId exists in the active connection store</div>
+    </div>
+    <div class="feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-answer="0">
+    <p class="question-text">2. You search logs and find no <code>"Succeed to set relationship"</code> for a user. Where is the problem?</p>
+    <div class="quiz-options">
+      <div class="quiz-option">The browser — SetApplicationId was never called</div>
+      <div class="quiz-option">Redis — the write was rejected by the lock</div>
+      <div class="quiz-option">The circuit breaker — Redis is currently open</div>
+      <div class="quiz-option">The controller — the request was rejected with 400</div>
+    </div>
+    <div class="feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-answer="1">
+    <p class="question-text">3. The circuit breaker opens. Notifications and keep-alive are both in flight. Which is more likely to fail?</p>
+    <div class="quiz-options">
+      <div class="quiz-option">Notifications — .User() routing depends on the app cache</div>
+      <div class="quiz-option">Keep-alive — it depends on the app cache for connection IDs</div>
+      <div class="quiz-option">Both equally — both flows require the app cache</div>
+      <div class="quiz-option">Neither — the in-memory fallback handles both flows</div>
+    </div>
+    <div class="feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-answer="3">
+    <p class="question-text">4. A keep-alive call returns 204 but the browser receives nothing. Which cause is hardest to detect from logs alone?</p>
+    <div class="quiz-options">
+      <div class="quiz-option">The circuit breaker is open — logs show "Circuit broken"</div>
+      <div class="quiz-option">The connection TTL expired — logs show no recent "Succeed to set"</div>
+      <div class="quiz-option">The connection is on another instance — logs show "Using in memory cache"</div>
+      <div class="quiz-option">The applicationId is wrong — returns 204 with no error logged</div>
+    </div>
+    <div class="feedback"></div>
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section class="primary-source">
+  <h2>Go Deeper</h2>
+  <p><strong>Recommended reading:</strong> <a href="https://learn.microsoft.com/en-us/aspnet/core/signalr/diagnostics" target="_blank">Logging and diagnostics in ASP.NET Core SignalR — Microsoft Docs</a>. Covers how to enable verbose SignalR logging, what the transport negotiation logs look like, and how to diagnose WebSocket connection failures — exactly the gaps the application logs don't fill. Essential reading for end-to-end debugging.</p>
+  <p>Keep the <a href="../reference/debugging-guide.html">Debugging Guide reference sheet</a> open when investigating issues — it contains all four key log messages and both diagnostic trees in compact form.</p>
+</section>
+
+</main>
+
+<footer class="lesson-footer">
+  <p class="ask-teacher">Questions about this lesson? <strong>Ask your teacher</strong> — reply in the chat. I can walk through a specific failure scenario, explain how to enable SignalR diagnostic logging, or help you think through a monitoring strategy for this service.</p>
+  <p><a href="0006-testing-the-service.html">Next lesson: Testing the Service &rarr;</a></p>
+</footer>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 4: The Keep-Alive Flow — Notification Service</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<nav class="breadcrumb">
+  <a href="0003-the-redis-caching-layer.html">← Lesson 3</a>
+  &nbsp;&nbsp;|&nbsp;&nbsp; Notification Service &rsaquo; Lesson 4 of 6
+</nav>
+
+<header class="lesson-header">
+  <p class="lesson-number">Lesson 4</p>
+  <h1>The Keep-Alive Flow</h1>
+  <p class="subtitle">Putting Lessons 1–3 together — the flow that uses everything you've learned</p>
+  <div class="objectives">
+    <p><strong>After this lesson you can:</strong></p>
+    <ul>
+      <li>Explain what keep-alive is for and why it routes differently than notifications</li>
+      <li>Trace a keep-alive call through every layer: controller → cache → hub context → browser</li>
+      <li>Describe what happens to a stale connection when a browser reconnects</li>
+    </ul>
+  </div>
+</header>
+
+<main>
+
+<!-- ─────────────────────────────────────────────── -->
+<section>
+  <h2>What Is Keep-Alive For?</h2>
+  <p>Many enterprise browser applications have idle session timeouts — if the user is inactive for too long, they are logged out. Keep-alive solves a specific problem: a server-side process may know a user is still active (processing a long job, viewing a report) even when the browser looks idle. Keep-alive lets the server send a heartbeat to the browser that says <em>"you're still live — reset your timer."</em></p>
+  <p>Unlike notifications, keep-alive signals are targeted at a <strong>specific application instance</strong> — one browser tab or application. The caller knows <em>which</em> application to keep alive (via its <code>applicationId</code>), not just which user.</p>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section>
+  <h2>The Full Flow — End to End</h2>
+  <p>Here is the complete trace, connecting every layer you have learned.</p>
+
+  <ol class="flow-steps">
+    <li>
+      <div class="step-content">
+        <strong>Browser registers on startup <span style="font-weight: 400; color: var(--muted); font-size: 0.9em;">(Lesson 2)</span></strong>
+        <p>The browser opens a WebSocket to <code>/hubs/notifications</code>. SignalR assigns a <code>ConnectionId</code>. The browser calls <code>SetApplicationId(appId)</code>, which triggers <code>KeepAliveManagementService.LinkAsync</code>.</p>
+      </div>
+    </li>
+    <li>
+      <div class="step-content">
+        <strong>Connection stored in Redis <span style="font-weight: 400; color: var(--muted); font-size: 0.9em;">(Lesson 3)</span></strong>
+        <p><code>LinkAsync</code> calls <code>_notificationCacheManager.SetAsync</code>, which acquires a distributed lock and writes to Redis:</p>
+        <pre><code>Key:   appId.ToString()    // e.g. "efa9b2c1-..."
+Value: [{ connectionId: "abc123", userId: "user-42", applicationId: "efa9..." }]
+TTL:   3600 seconds</code></pre>
+      </div>
+    </li>
+    <li>
+      <div class="step-content">
+        <strong>Caller POSTs to <code>/api/v1/keepalive</code></strong>
+        <p>Some other microservice — or a scheduled job — sends:</p>
+        <pre><code>POST /api/v1/keepalive
+{
+    "userId":        "user-42",
+    "applicationId": "efa9b2c1-..."
+}</code></pre>
+        <p>Both fields are required. The caller knows which user and which application to keep alive.</p>
+      </div>
+    </li>
+    <li>
+      <div class="step-content">
+        <strong>Controller fetches connection IDs from Redis <span style="font-weight: 400; color: var(--muted); font-size: 0.9em;">(Lesson 3)</span></strong>
+        <p><code>KeepAliveController</code> calls <code>GetConnectionIdListAsync(applicationId, userId)</code>. This reads the list under key <code>appId.ToString()</code> and filters it by <code>userId</code>, returning only the matching connection IDs.</p>
+        <pre><code>// From KeepAliveManagementService.GetConnectionIdListAsync:
+return connectionIds?
+    .Where(_ => _.UserId.Equals(userId))
+    .Select(_ => _.ConnectionId)
+    .ToList() ?? Enumerable.Empty&lt;string&gt;();</code></pre>
+      </div>
+    </li>
+    <li>
+      <div class="step-content">
+        <strong>Hub context pushes to those specific connections <span style="font-weight: 400; color: var(--muted); font-size: 0.9em;">(Lesson 2)</span></strong>
+        <p><code>IHubContext</code> sends the event to the exact list of connection IDs:</p>
+        <pre><code>await _hubContext.Clients
+    .Clients(connectionIds.ToList())
+    .SendAsync("keepAliveReceived");
+// ↑ No payload — just the event name</code></pre>
+      </div>
+    </li>
+    <li>
+      <div class="step-content">
+        <strong>Browser fires its <code>keepAliveReceived</code> handler</strong>
+        <p>The SignalR client fires the registered <code>keepAliveReceived</code> handler. No data arrives — just the event. The front-end resets its session timer (or takes whatever action it defines). The controller returns <code>204 No Content</code>.</p>
+      </div>
+    </li>
+  </ol>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section>
+  <h2>The Single-Connection Guarantee</h2>
+  <p>What happens when a user refreshes their browser tab? The browser reconnects with the <em>same</em> <code>applicationId</code> (the Guid is persistent per application instance, not generated fresh on every load). <code>LinkAsync</code> is called again, and it does this:</p>
+
+  <pre><code>// From KeepAliveManagementService.LinkAsync:
+var updatedConnections = connections
+    .Where(_ => !_.UserId.Equals(userId))  // remove old entry for this user
+    .Append(connectionDetails);            // add the new connection
+
+await _notificationCacheManager.SetAsync(key, updatedConnections, ttl);</code></pre>
+
+  <p>The old connection record is evicted and replaced with the new one. The cache never accumulates stale entries for refreshed browsers. This is by design — there is exactly one active connection per <code>userId + applicationId</code> pair at any time.</p>
+  <p class="aside"><strong>Different tabs get different <code>applicationId</code> values.</strong> Each browser tab or application instance generates its own Guid on first load. Tab A has <code>appId-A</code>, Tab B has <code>appId-B</code>. They are tracked independently — a keep-alive for <code>appId-A</code> does not reach Tab B.</p>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section>
+  <h2>How Keep-Alive Differs from Notifications</h2>
+  <p>The two flows share the same connection registration path but diverge completely after that.</p>
+
+  <table style="font-family: -apple-system, sans-serif; font-size: 0.875rem; width: 100%; border-collapse: collapse; margin: 1rem 0;">
+    <thead>
+      <tr>
+        <th style="background: var(--accent); color: #fff; padding: 0.5rem 0.75rem; text-align: left;">Property</th>
+        <th style="background: #1d4ed8; color: #fff; padding: 0.5rem 0.75rem; text-align: left;">Notification</th>
+        <th style="background: #7c3aed; color: #fff; padding: 0.5rem 0.75rem; text-align: left;">Keep-Alive</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border);">Target parameter</td>
+        <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border);"><code>userId</code></td>
+        <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border);"><code>userId + applicationId</code></td>
+      </tr>
+      <tr>
+        <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); background: var(--light);">Redis lookup?</td>
+        <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); background: var(--light);">No</td>
+        <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); background: var(--light);">Yes</td>
+      </tr>
+      <tr>
+        <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border);">Routing method</td>
+        <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border);"><code>Clients.User(userId)</code></td>
+        <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border);"><code>Clients.Clients(ids)</code></td>
+      </tr>
+      <tr>
+        <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); background: var(--light);">Reaches</td>
+        <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); background: var(--light);">All tabs for this user</td>
+        <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); background: var(--light);">Only this application's tab</td>
+      </tr>
+      <tr>
+        <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border);">Client event</td>
+        <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border);"><code>notificationReceived</code></td>
+        <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border);"><code>keepAliveReceived</code></td>
+      </tr>
+      <tr>
+        <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); background: var(--light);">Payload</td>
+        <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); background: var(--light);"><code>{ code, subject, body }</code></td>
+        <td style="padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); background: var(--light);">None</td>
+      </tr>
+      <tr>
+        <td style="padding: 0.5rem 0.75rem;">HTTP response</td>
+        <td style="padding: 0.5rem 0.75rem;">200 OK</td>
+        <td style="padding: 0.5rem 0.75rem;">204 No Content</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>See the <a href="../reference/service-flows-comparison.html">Service Flows Comparison reference sheet</a> for a compact printable version of this table.</p>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section class="quiz-section">
+  <h2>Check Your Understanding</h2>
+  <p>Click an option to check your answer immediately.</p>
+
+  <div class="quiz-question" data-answer="2">
+    <p class="question-text">1. What payload does the <code>keepAliveReceived</code> event carry to the browser?</p>
+    <div class="quiz-options">
+      <div class="quiz-option">A timestamp of when the signal was sent</div>
+      <div class="quiz-option">The applicationId that the caller specified</div>
+      <div class="quiz-option">No payload — the event name only</div>
+      <div class="quiz-option">The userId that requested the keep-alive</div>
+    </div>
+    <div class="feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-answer="1">
+    <p class="question-text">2. Unlike notifications, where does <code>KeepAliveController</code> look up connection IDs?</p>
+    <div class="quiz-options">
+      <div class="quiz-option">The SignalR backplane via Clients.User routing</div>
+      <div class="quiz-option">The application Redis cache via <code>GetConnectionIdListAsync</code></div>
+      <div class="quiz-option">The hub's in-memory connection tracking state</div>
+      <div class="quiz-option">The JWT token's embedded application claim</div>
+    </div>
+    <div class="feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-answer="1">
+    <p class="question-text">3. What happens to a stale connection when a browser reconnects with the same <code>applicationId</code>?</p>
+    <div class="quiz-options">
+      <div class="quiz-option">It sits alongside the new entry until TTL expires</div>
+      <div class="quiz-option">It is replaced — only the new connection is kept</div>
+      <div class="quiz-option">The new connection is rejected to prevent duplicates</div>
+      <div class="quiz-option">Both entries are merged into a single combined record</div>
+    </div>
+    <div class="feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-answer="3">
+    <p class="question-text">4. If the user has two tabs open with <em>different</em> applicationIds, and a keep-alive is sent for one of them, what does the other tab receive?</p>
+    <div class="quiz-options">
+      <div class="quiz-option">Both tabs receive the keepAliveReceived event</div>
+      <div class="quiz-option">The other tab receives it only if Redis is available</div>
+      <div class="quiz-option">The other tab receives a notificationReceived event</div>
+      <div class="quiz-option">Nothing — keep-alive is scoped to one applicationId</div>
+    </div>
+    <div class="feedback"></div>
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section class="primary-source">
+  <h2>Go Deeper</h2>
+  <p><strong>Recommended reading:</strong> <a href="https://learn.microsoft.com/en-us/aspnet/core/signalr/groups" target="_blank">Manage users and groups in SignalR — Microsoft Docs</a>. The "Users in SignalR" section explains exactly how <code>Clients.User()</code> maps to <code>Context.UserIdentifier</code> — which is the mechanism the notification flow uses and which keep-alive deliberately <em>avoids</em>. Understanding the contrast between <code>.User()</code> and <code>.Clients()</code> is the key architectural insight of this lesson.</p>
+  <p>Also open the <a href="../reference/service-flows-comparison.html">Service Flows Comparison</a> and <a href="../reference/caching-layer.html">Caching Layer</a> reference sheets for a recap of all the pieces.</p>
+</section>
+
+</main>
+
+<footer class="lesson-footer">
+  <p class="ask-teacher">Questions about this lesson? <strong>Ask your teacher</strong> — reply in the chat. I can walk through why the two flows were designed the way they were, explain what happens to keep-alive if the Redis circuit opens, or explore anything else that's unclear.</p>
+  <p><a href="0005-debugging-and-operations.html">Next lesson: Debugging and Operations &rarr;</a></p>
+</footer>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

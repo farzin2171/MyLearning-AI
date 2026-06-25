@@ -1,0 +1,305 @@
+/* ================================================================
+   Equisoft Identity Learning — Shared Stylesheet
+   Clean, Tufte-inspired. Optimised for reading and printing.
+   ================================================================ */
+
+:root {
+  --text:        #1a1a1a;
+  --muted:       #666;
+  --accent:      #0055cc;
+  --accent-dark: #003d99;
+  --bg:          #fafaf8;
+  --surface:     #ffffff;
+  --border:      #e0e0db;
+  --code-bg:     #f3f3f0;
+  --success:     #1a7a3a;
+  --success-bg:  #e6f5ec;
+  --error:       #c0392b;
+  --error-bg:    #fdecea;
+  --warn:        #8a6000;
+  --warn-bg:     #fffaec;
+  --radius:      6px;
+  --font-body:   'Georgia', 'Times New Roman', serif;
+  --font-ui:     -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  --font-mono:   'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { font-size: 18px; background: var(--bg); color: var(--text); }
+
+body {
+  font-family: var(--font-body);
+  line-height: 1.7;
+  max-width: 740px;
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem 5rem;
+}
+
+/* ── Typography ─────────────────────────────────────────────── */
+h1 { font-size: 2rem;   line-height: 1.2; margin-bottom: 0.25rem; }
+h2 { font-size: 1.4rem; line-height: 1.3; margin: 2.2rem 0 0.6rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+h3 { font-size: 1.1rem; margin: 1.6rem 0 0.4rem; font-family: var(--font-ui); }
+h4 { font-size: 0.95rem; margin: 1.2rem 0 0.3rem; font-family: var(--font-ui); text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+
+p  { margin-bottom: 1rem; }
+ul, ol { margin: 0.5rem 0 1rem 1.4rem; }
+li { margin-bottom: 0.3rem; }
+a  { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+strong { font-weight: 700; }
+em { font-style: italic; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
+
+/* ── Lesson Header ──────────────────────────────────────────── */
+.lesson-header {
+  border-bottom: 2px solid var(--border);
+  margin-bottom: 2rem;
+  padding-bottom: 1rem;
+}
+.lesson-header .breadcrumb {
+  font-family: var(--font-ui);
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-bottom: 0.5rem;
+}
+.lesson-header .breadcrumb a { color: var(--muted); }
+.lesson-header .meta {
+  font-family: var(--font-ui);
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin-top: 0.5rem;
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+.lesson-header .meta span::before { content: '— '; }
+
+/* ── Code ───────────────────────────────────────────────────── */
+code {
+  font-family: var(--font-mono);
+  font-size: 0.83em;
+  background: var(--code-bg);
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+}
+
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.1rem 1.3rem;
+  overflow-x: auto;
+  margin: 1rem 0 1.4rem;
+  line-height: 1.5;
+}
+pre code { background: none; padding: 0; font-size: 0.84rem; }
+
+/* ── Callouts ───────────────────────────────────────────────── */
+.callout {
+  border-left: 4px solid var(--accent);
+  background: #f0f5ff;
+  padding: 0.9rem 1.1rem;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  margin: 1.2rem 0;
+  font-size: 0.95rem;
+}
+.callout.warn  { border-color: var(--warn);    background: var(--warn-bg); }
+.callout.tip   { border-color: var(--success);  background: var(--success-bg); }
+.callout.key   { border-color: #7700cc; background: #f7efff; }
+.callout strong { display: block; font-family: var(--font-ui); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.35rem; color: var(--muted); }
+
+/* ── Diagram / Flow ─────────────────────────────────────────── */
+.flow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 1.2rem 0;
+  font-family: var(--font-ui);
+  font-size: 0.85rem;
+}
+.flow-node {
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.45rem 0.8rem;
+  text-align: center;
+  min-width: 80px;
+}
+.flow-node.highlight { border-color: var(--accent); background: #e8f0ff; font-weight: 600; }
+.flow-node.service   { border-color: #0a9e5c; background: #e8faf0; }
+.flow-node.db        { border-color: #8a6000; background: var(--warn-bg); }
+.flow-arrow { color: var(--muted); font-size: 1.1rem; flex-shrink: 0; }
+.flow-label { font-size: 0.72rem; color: var(--muted); margin-top: 0.15rem; }
+
+/* ── Service Cards ──────────────────────────────────────────── */
+.service-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin: 1.2rem 0;
+}
+.service-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+}
+.service-card h4 { margin: 0 0 0.4rem; font-family: var(--font-ui); text-transform: none; letter-spacing: 0; font-size: 0.9rem; color: var(--text); }
+.service-card .tag {
+  display: inline-block;
+  font-family: var(--font-ui);
+  font-size: 0.7rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 20px;
+  background: var(--code-bg);
+  color: var(--muted);
+  margin-bottom: 0.5rem;
+}
+.service-card p { font-size: 0.88rem; margin: 0; color: var(--muted); }
+
+/* ── Claims Table ───────────────────────────────────────────── */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0 1.4rem;
+  font-size: 0.88rem;
+  font-family: var(--font-ui);
+}
+th {
+  text-align: left;
+  border-bottom: 2px solid var(--border);
+  padding: 0.5rem 0.7rem;
+  background: var(--code-bg);
+  font-weight: 600;
+}
+td {
+  padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+tr:last-child td { border-bottom: none; }
+
+/* ── Quiz Widget ────────────────────────────────────────────── */
+.quiz {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.3rem 1.5rem;
+  margin: 2rem 0;
+}
+.quiz h3 {
+  font-family: var(--font-ui);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--accent);
+  margin: 0 0 1rem;
+}
+.quiz-question { margin-bottom: 1.5rem; }
+.quiz-question p {
+  font-weight: 600;
+  margin-bottom: 0.6rem;
+  font-size: 0.97rem;
+}
+.quiz-options { list-style: none; margin: 0; padding: 0; }
+.quiz-options li {
+  margin-bottom: 0.4rem;
+}
+.quiz-options label {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  cursor: pointer;
+  font-size: 0.92rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  transition: background 0.15s;
+}
+.quiz-options label:hover { background: var(--code-bg); }
+.quiz-options input[type="radio"] { margin-top: 0.25rem; flex-shrink: 0; }
+.quiz-options label.correct   { background: var(--success-bg); border-color: var(--success); color: var(--success); }
+.quiz-options label.incorrect { background: var(--error-bg);   border-color: var(--error);   color: var(--error); }
+
+.quiz-btn {
+  display: inline-block;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  padding: 0.55rem 1.2rem;
+  font-family: var(--font-ui);
+  font-size: 0.88rem;
+  cursor: pointer;
+  margin-top: 0.5rem;
+}
+.quiz-btn:hover { background: var(--accent-dark); }
+
+.quiz-feedback {
+  margin-top: 0.7rem;
+  padding: 0.7rem 0.9rem;
+  border-radius: var(--radius);
+  font-family: var(--font-ui);
+  font-size: 0.88rem;
+  display: none;
+}
+.quiz-feedback.show { display: block; }
+.quiz-feedback.correct   { background: var(--success-bg); color: var(--success); }
+.quiz-feedback.incorrect { background: var(--error-bg);   color: var(--error); }
+
+.quiz-score {
+  margin-top: 1rem;
+  padding: 0.8rem 1rem;
+  background: var(--code-bg);
+  border-radius: var(--radius);
+  font-family: var(--font-ui);
+  font-size: 0.9rem;
+  display: none;
+}
+.quiz-score.show { display: block; }
+
+/* ── Navigation ─────────────────────────────────────────────── */
+.lesson-nav {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 3rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border);
+  font-family: var(--font-ui);
+  font-size: 0.85rem;
+}
+.lesson-nav a {
+  color: var(--accent);
+  max-width: 45%;
+}
+.lesson-nav .next { text-align: right; }
+
+/* ── Footer ─────────────────────────────────────────────────── */
+.lesson-footer {
+  margin-top: 3rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  font-family: var(--font-ui);
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.ask-claude {
+  background: linear-gradient(135deg, #e8f0ff 0%, #f0f5ff 100%);
+  border: 1px solid #c0d0f0;
+  border-radius: var(--radius);
+  padding: 1rem 1.2rem;
+  margin-top: 2rem;
+  font-family: var(--font-ui);
+  font-size: 0.88rem;
+}
+.ask-claude strong { display: block; margin-bottom: 0.3rem; color: var(--accent); }
+
+/* ── Print ──────────────────────────────────────────────────── */
+@media print {
+  body { max-width: 100%; padding: 0; font-size: 11pt; }
+  .quiz-btn, .lesson-nav, .ask-claude { display: none; }
+  a { color: var(--text); }
+  pre, .callout, .service-card { break-inside: avoid; }
+}

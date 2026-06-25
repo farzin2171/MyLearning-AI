@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 2 — Triggers &amp; Conditions</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    .trigger-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 0.9rem;
+      margin: 1.25rem 0 1.75rem;
+    }
+    .trigger-card {
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      padding: 0.9rem 1rem;
+      background: var(--surface);
+    }
+    .trigger-card .tc-keyword {
+      font-family: var(--font-mono);
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--accent-dark);
+      margin-bottom: 0.35rem;
+    }
+    .trigger-card .tc-fires {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+    .trigger-card .tc-note {
+      margin-top: 0.4rem;
+      font-size: 0.78rem;
+      color: var(--warn);
+      font-style: italic;
+    }
+
+    /* Condition table */
+    .cond-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+      margin: 1rem 0 1.5rem;
+    }
+    .cond-table th {
+      text-align: left;
+      padding: 0.45rem 0.75rem;
+      background: var(--code-bg);
+      border-bottom: 2px solid var(--border);
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-muted);
+    }
+    .cond-table td {
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    .cond-table tr:last-child td { border-bottom: none; }
+    .cond-table code { font-size: 0.85em; }
+    .cond-table .ok  { color: var(--success); font-weight: 600; }
+    .cond-table .err { color: var(--error); font-weight: 600; }
+    .cond-table .dim { color: var(--text-muted); }
+
+    /* Cron builder */
+    .cron-parts {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      margin: 0.75rem 0;
+    }
+    .cron-part {
+      text-align: center;
+      min-width: 60px;
+    }
+    .cron-part .cp-val {
+      font-family: var(--font-mono);
+      font-size: 1.3rem;
+      font-weight: 700;
+      color: var(--accent);
+      display: block;
+    }
+    .cron-part .cp-label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+<main>
+
+  <!-- ── Header ─────────────────────────────────────────── -->
+  <header class="lesson-header">
+    <div class="breadcrumb">Azure CI/CD · <a href="0001-yaml-pipeline-anatomy.html">Lesson 1</a> → Lesson 2</div>
+    <h1>Triggers &amp; Conditions</h1>
+    <p class="subtitle">Control <em>when</em> a pipeline runs and <em>what</em> runs based on the outcome.</p>
+  </header>
+
+  <!-- ── Why this matters ───────────────────────────────── -->
+  <h2>Why this lesson</h2>
+  <p>
+    Knowing the YAML hierarchy (Lesson 1) tells you how a pipeline is <em>structured</em>.
+    Triggers and conditions tell you <em>when</em> it fires and how it reacts to failures.
+    In a team workflow, getting these wrong means either too many noisy builds — or PRs that
+    deploy to production unchecked.
+  </p>
+
+  <!-- ── Three trigger types ───────────────────────────── -->
+  <h2>The three trigger types</h2>
+
+  <div class="trigger-grid">
+    <div class="trigger-card">
+      <div class="tc-keyword">trigger:</div>
+      <div class="tc-fires">Fires on <strong>push</strong> to specified branches or when matching paths change.</div>
+    </div>
+    <div class="trigger-card">
+      <div class="tc-keyword">pr:</div>
+      <div class="tc-fires">Fires when a <strong>pull request</strong> targets a branch. Validates code before merge.</div>
+      <div class="tc-note">⚠ Azure Repos Git: has no effect — see below.</div>
+    </div>
+    <div class="trigger-card">
+      <div class="tc-keyword">schedules:</div>
+      <div class="tc-fires">Fires on a <strong>cron schedule</strong>, regardless of code changes.</div>
+    </div>
+  </div>
+
+  <!-- ── CI trigger ─────────────────────────────────────── -->
+  <h2>1. CI trigger — push-based</h2>
+  <p>
+    The CI trigger fires every time code is pushed to a matching branch.
+    Specify <code>include</code> or <code>exclude</code> lists for branches and paths.
+    <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/yaml-schema/trigger?view=azure-pipelines" target="_blank">Schema reference →</a>
+  </p>
+
+  <pre><span class="y-key">trigger</span>:
+  <span class="y-key">branches</span>:
+    <span class="y-key">include</span>:
+      - <span class="y-val">main</span>
+      - <span class="y-val">develop</span>
+      - <span class="y-val">feature/*</span>    <span class="y-cmt"># wildcards supported</span>
+    <span class="y-key">exclude</span>:
+      - <span class="y-val">feature/wip-*</span> <span class="y-cmt"># skip work-in-progress branches</span>
+  <span class="y-key">paths</span>:
+    <span class="y-key">include</span>:
+      - <span class="y-val">src/**</span>         <span class="y-cmt"># only trigger when src/ changes</span>
+    <span class="y-key">exclude</span>:
+      - <span class="y-val">**/*.md</span>        <span class="y-cmt"># doc-only changes won't run the pipeline</span></pre>
+
+  <div class="callout tip">
+    <div class="callout label">Path filters — monorepo pattern</div>
+    If your repo has multiple apps, point <code>paths.include</code> at the relevant app folder.
+    Changing <code>apps/dashboard/**</code> won't trigger the <code>apps/api</code> pipeline — clean, fast builds.
+  </div>
+
+  <p>
+    To <strong>disable</strong> the CI trigger entirely (manual or PR only):
+  </p>
+  <pre><span class="y-key">trigger</span>: <span class="y-val">none</span></pre>
+
+  <!-- ── PR trigger (the gotcha) ───────────────────────── -->
+  <h2>2. PR trigger — the Azure Repos gotcha</h2>
+
+  <div class="callout warn">
+    <div class="callout label">Critical — Azure Repos Git behaviour</div>
+    If your repo is in <strong>Azure Repos Git</strong>, the YAML <code>pr:</code> keyword
+    is <strong>silently ignored</strong>. It works for GitHub and Bitbucket Cloud, not Azure Repos.
+    <br><br>
+    For Azure Repos, PR build validation is configured through
+    <strong>branch policies</strong> in the Azure DevOps UI:
+    <em>Repos → Branches → ⋯ → Branch policies → Build validation</em>.
+    <a href="https://learn.microsoft.com/en-us/azure/devops/repos/git/branch-policies?view=azure-devops" target="_blank">Branch policies docs →</a>
+  </div>
+
+  <p>
+    If you're on GitHub and have connected it to Azure Pipelines, the <code>pr:</code> keyword
+    works as expected:
+  </p>
+  <pre><span class="y-cmt"># Only for GitHub / Bitbucket Cloud repos</span>
+<span class="y-key">pr</span>:
+  <span class="y-key">branches</span>:
+    <span class="y-key">include</span>:
+      - <span class="y-val">main</span>
+  <span class="y-key">paths</span>:
+    <span class="y-key">exclude</span>:
+      - <span class="y-val">docs/**</span></pre>
+
+  <!-- ── Scheduled trigger ──────────────────────────────── -->
+  <h2>3. Scheduled trigger — cron</h2>
+  <p>
+    Use <code>schedules:</code> to run nightly builds, weekly dependency audits, etc.
+    The cron syntax is:
+    <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/process/scheduled-triggers?view=azure-devops" target="_blank">scheduled triggers docs →</a>
+  </p>
+
+  <div class="cron-parts">
+    <div class="cron-part"><span class="cp-val">0</span><span class="cp-label">Minute</span></div>
+    <div class="cron-part"><span class="cp-val">2</span><span class="cp-label">Hour (UTC)</span></div>
+    <div class="cron-part"><span class="cp-val">*</span><span class="cp-label">Day of month</span></div>
+    <div class="cron-part"><span class="cp-val">*</span><span class="cp-label">Month</span></div>
+    <div class="cron-part"><span class="cp-val">1-5</span><span class="cp-label">Day of week</span></div>
+  </div>
+  <p style="font-size:0.88rem;color:var(--text-muted);margin-top:-0.5rem;margin-bottom:1rem">↑ This runs at 02:00 UTC, Monday–Friday (day-of-week 1=Mon, 5=Fri, 0=Sun)</p>
+
+  <pre><span class="y-key">schedules</span>:
+  - <span class="y-key">cron</span>: <span class="y-str">'0 2 * * 1-5'</span>     <span class="y-cmt"># 02:00 UTC, Mon–Fri</span>
+    <span class="y-key">displayName</span>: <span class="y-str">Nightly build</span>
+    <span class="y-key">branches</span>:
+      <span class="y-key">include</span>:
+        - <span class="y-val">main</span>
+    <span class="y-key">always</span>: <span class="y-bool">true</span>         <span class="y-cmt"># run even if no new commits</span></pre>
+
+  <div class="callout">
+    <div class="callout label">Note</div>
+    <code>always: true</code> forces the schedule to run even when there are no new commits since the last build.
+    Without it, Azure skips the run if nothing changed — usually what you want, but not for dependency audits.
+  </div>
+
+  <!-- ── Conditions ─────────────────────────────────────── -->
+  <h2>Conditions — controlling what runs</h2>
+  <p>
+    Conditions apply to stages, jobs, or steps and decide whether that unit runs based on
+    the outcome of what came before.
+    <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/process/conditions?view=azure-devops" target="_blank">Conditions docs →</a>
+  </p>
+
+  <table class="cond-table">
+    <thead>
+      <tr>
+        <th>Expression</th>
+        <th>Runs when…</th>
+        <th>Run if cancelled?</th>
+        <th>Use case</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>succeeded()</code></td>
+        <td>All dependencies <span class="ok">succeeded</span></td>
+        <td class="err">No</td>
+        <td>Default — normal happy-path steps</td>
+      </tr>
+      <tr>
+        <td><code>succeededOrFailed()</code></td>
+        <td>Dependencies succeeded <span class="ok">or failed</span></td>
+        <td class="err">No</td>
+        <td>Cleanup, artifact upload — must run after failures but respects cancel</td>
+      </tr>
+      <tr>
+        <td><code>always()</code></td>
+        <td><span class="ok">Always</span></td>
+        <td class="ok">Yes</td>
+        <td>Critical notifications — even on cancel</td>
+      </tr>
+      <tr>
+        <td><code>failed()</code></td>
+        <td>At least one dependency <span class="err">failed</span></td>
+        <td class="err">No</td>
+        <td>Failure-only alerts or rollback steps</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    The <strong>default is <code>succeeded()</code></strong> — you don't need to write it explicitly
+    on every step. You only need a condition when you want non-default behaviour.
+  </p>
+
+  <h3>Practical example — test report even on failure</h3>
+  <p>
+    A common pattern: always publish the test results file even if <code>npm test</code> fails,
+    so you can see <em>which</em> tests failed in the Azure DevOps UI:
+  </p>
+
+  <pre><span class="y-key">steps</span>:
+  - <span class="y-key">script</span>: <span class="y-val">npm ci</span>
+
+  - <span class="y-key">script</span>: <span class="y-val">npm test -- --reporter=junit --output=results.xml</span>
+    <span class="y-key">displayName</span>: <span class="y-str">'Run tests'</span>
+
+  - <span class="y-key">task</span>: <span class="y-val">PublishTestResults@2</span>
+    <span class="y-key">displayName</span>: <span class="y-str">'Publish test results'</span>
+    <span class="y-key">condition</span>: <span class="y-val">succeededOrFailed()</span>   <span class="y-cmt"># ← runs even if tests fail</span>
+    <span class="y-key">inputs</span>:
+      <span class="y-key">testResultsFormat</span>: <span class="y-str">'JUnit'</span>
+      <span class="y-key">testResultsFiles</span>: <span class="y-str">'results.xml'</span></pre>
+
+  <h3>Combining conditions with variables</h3>
+  <p>
+    You can write richer conditions using the
+    <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/process/expressions?view=azure-devops" target="_blank">expression language</a>.
+    A common one: only deploy from <code>main</code>:
+  </p>
+  <pre><span class="y-key">condition</span>: <span class="y-val">and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))</span></pre>
+
+  <div class="callout tip">
+    <div class="callout label">Read-only built-in variables</div>
+    <code>Build.SourceBranch</code>, <code>Build.Reason</code>, <code>Build.BuildId</code> are automatically set
+    by Azure Pipelines on every run. You'll use them often in conditions and scripts.
+    <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/build/variables?view=azure-devops" target="_blank">Full list →</a>
+  </div>
+
+  <!-- ── Quiz ──────────────────────────────────────────────── -->
+  <section class="quiz-section">
+    <h2>Check your understanding</h2>
+    <p style="color:var(--text-muted);font-size:0.9rem;margin-bottom:1.25rem">
+      Answer from memory — retrieval practice is what builds long-term retention.
+    </p>
+    <div id="quiz"></div>
+  </section>
+
+  <!-- ── Primary source ─────────────────────────────────── -->
+  <h2>Primary source</h2>
+  <p>
+    <strong>Read next:</strong>
+    <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/build/triggers?view=azure-devops" target="_blank">
+      Triggers in Azure Pipelines — Microsoft Learn
+    </a><br>
+    <span style="color:var(--text-muted);font-size:0.9rem">
+      The official overview of all trigger types with examples. Scroll past the intro to the
+      branch/path filter section — it's the most practically useful part.
+    </span>
+  </p>
+
+  <!-- ── Ask questions ──────────────────────────────────── -->
+  <div class="callout" style="margin-top:2rem">
+    <div class="callout label">Your teacher is here</div>
+    Ask a follow-up in the Claude Code chat. Try:
+    <em>"How do I trigger a pipeline only on changes to a specific folder?"</em> or
+    <em>"What's the difference between always() and succeededOrFailed()?"</em>
+  </div>
+
+  <!-- ── Footer ─────────────────────────────────────────── -->
+  <footer class="lesson-footer">
+    <span>← <a href="0001-yaml-pipeline-anatomy.html">Lesson 1: YAML Anatomy</a></span>
+    <span>Next: <a href="0003-variables-and-secrets.html">Lesson 3: Variables &amp; Secrets →</a></span>
+  </footer>
+
+</main>
+
+<script src="../assets/quiz.js"></script>
+<script>
+new Quiz('quiz', [
+  {
+    q: 'Which YAML keyword fires a pipeline run on every push to a branch?',
+    options: ['pr:', 'push:', 'trigger:', 'schedules:'],
+    answer: 2,
+    explanation: 'trigger: is the CI push trigger. pr: is for pull requests (and only works for GitHub/Bitbucket). schedules: is for cron. push: is not a valid keyword.'
+  },
+  {
+    q: 'In Azure Repos Git, the YAML pr: trigger...',
+    options: [
+      'fires on every pull request automatically',
+      'has no effect on Azure Repos',
+      'works the same as in GitHub repos',
+      'runs only on draft pull requests'
+    ],
+    answer: 1,
+    explanation: 'In Azure Repos Git, pr: is silently ignored. PR build validation is configured via branch policies in the Azure DevOps UI (Repos → Branches → Branch policies → Build validation).'
+  },
+  {
+    q: 'A scheduled trigger with `always: true` does what differently from the default?',
+    options: [
+      'Runs faster on the agent pool',
+      'Runs even with no new commits',
+      'Runs on all branches at once',
+      'Runs with elevated permissions always'
+    ],
+    answer: 1,
+    explanation: 'By default, Azure skips a scheduled run if nothing has changed since the last build. always: true forces it to run regardless — useful for nightly dependency audits.'
+  },
+  {
+    q: 'Which condition lets a "publish test results" step run after a failed test run, but still stop if a user cancels the pipeline?',
+    options: [
+      'condition: always()',
+      'condition: failed()',
+      'condition: succeeded()',
+      'condition: succeededOrFailed()'
+    ],
+    answer: 3,
+    explanation: 'succeededOrFailed() runs whether previous steps succeeded or failed — but respects a manual cancellation. always() would run even on cancel, which is usually not what you want for artifact publishing.'
+  },
+  {
+    q: 'What is the default condition on any step or job when no condition: is specified?',
+    options: [
+      'condition: always()',
+      'condition: failed()',
+      'condition: succeeded()',
+      'condition: succeededOrFailed()'
+    ],
+    answer: 2,
+    explanation: 'succeeded() is the implicit default. A step only runs if all previous steps in the job succeeded. You only need to write it explicitly when you want a different behaviour.'
+  }
+]);
+</script>
+
+</body>
+</html>

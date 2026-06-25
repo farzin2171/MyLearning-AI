@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 4 — The Authorization Service: From Token to Permission</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    .hierarchy {
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.1rem 1.3rem;
+      line-height: 1.8;
+      margin: 1rem 0 1.4rem;
+    }
+    .hierarchy .l0 { color: #0055cc; font-weight: bold; }
+    .hierarchy .l1 { color: #0a9e5c; padding-left: 1.5rem; }
+    .hierarchy .l2 { color: #8a6000; padding-left: 3rem; }
+    .hierarchy .l3 { color: #7700cc; padding-left: 4.5rem; }
+    .hierarchy .key { color: var(--muted); font-size: 0.78rem; margin-left: 0.5rem; }
+    .step-list { counter-reset: steps; list-style: none; padding: 0; margin: 1rem 0; }
+    .step-list li {
+      counter-increment: steps;
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 1.2rem;
+      align-items: flex-start;
+    }
+    .step-list li::before {
+      content: counter(steps);
+      background: var(--accent);
+      color: white;
+      border-radius: 50%;
+      width: 1.6rem;
+      height: 1.6rem;
+      min-width: 1.6rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-ui);
+      font-size: 0.8rem;
+      font-weight: 700;
+      margin-top: 0.15rem;
+    }
+    .step-list li > div { flex: 1; }
+  </style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="../MISSION.md">Identity &amp; Authorization</a> ›
+    <a href="0003-token-anatomy.html">Lesson 3</a> › Lesson 4 of 6
+  </div>
+  <h1>The Authorization Service: From Token to Permission</h1>
+  <div class="meta">
+    <span>~35 minutes</span>
+    <span>Code-heavy + interactive</span>
+    <span>Prerequisites: <a href="0003-token-anatomy.html">Lesson 3</a></span>
+  </div>
+</div>
+
+<p>
+  You now know what a token contains. This lesson covers what happens after a downstream API asks
+  <em>"but can this user actually do X?"</em> — a question the token alone cannot answer.
+  The Authorization Service bridges that gap.
+</p>
+
+<h2>The Core Question the Authorization Service Answers</h2>
+
+<p>
+  Every authorization check in the ecosystem boils down to one HTTP call:
+</p>
+
+<pre><code>GET /api/v1/Authorize?key=shared.eapp.Lock
+Authorization: Bearer &lt;user's access token&gt;
+
+200 OK         → the user has this permission
+403 Forbidden  → the user does not</code></pre>
+
+<p>
+  That is the entire public API surface for permission checking. The complexity lives inside the
+  service — in how it maps a token to a set of access keys. That mapping is what this lesson explains.
+</p>
+
+<hr>
+
+<h2>The Permission Model: A Three-Layer Hierarchy</h2>
+
+<p>
+  The Authorization Service's data model has three entities: <strong>Roles</strong>,
+  <strong>Policies</strong>, and <strong>Permissions</strong>. They form a tree.
+</p>
+
+<div class="hierarchy">
+  <div class="l0">Role: "Advisor" <span class="key">(identityRole claim from JWT)</span></div>
+  <div class="l1">→ Policy: "shared" <span class="key">(top-level policy)</span></div>
+  <div class="l2">→ Policy: "eapp" <span class="key">(child policy)</span></div>
+  <div class="l3">→ Permission: "Lock" <span class="key">→ access key: <strong>shared.eapp.Lock</strong></span></div>
+  <div class="l3">→ Permission: "Create" <span class="key">→ access key: <strong>shared.eapp.Create</strong></span></div>
+  <div class="l2">→ Policy: "reports" <span class="key">(sibling child policy)</span></div>
+  <div class="l3">→ Permission: "View" <span class="key">→ access key: <strong>shared.reports.View</strong></span></div>
+  <div class="l1">→ Policy: "assistants" <span class="key">(top-level policy)</span></div>
+  <div class="l2">→ Permission: "Manage" <span class="key">→ access key: <strong>assistants.Manage</strong></span></div>
+</div>
+
+<p>
+  The separator is always <code>.</code> (dot). An access key is the full path from root policy
+  down to the leaf permission or role, joined by dots. The stored procedure
+  <code>spGetUserAccessKeys</code> computes this path using a recursive SQL CTE.
+</p>
+
+<div class="callout">
+  <strong>The key insight</strong>
+  A user does not have permissions directly — they have a <strong>Role</strong>. The Role
+  maps to one or more Policies. Policies contain Permissions. The full dot-path from root
+  to leaf is the Access Key. Checking a permission means checking whether a specific
+  access key is in the user's computed set.
+</div>
+
+<hr>
+
+<h2>How the Authorization Service Resolves a User's Permissions</h2>
+
+<p>
+  When a token arrives at <code>GET /api/v1/Authorize?key=…</code>, the service runs through
+  these steps internally:
+</p>
+
+<ol class="step-list">
+  <li>
+    <div>
+      <strong>Extract identity from the JWT.</strong><br>
+      The DIT Identity middleware populates <code>IIdentityContext</code>. For user tokens:
+      <code>TenantId</code>, <code>ResourceOwnerId</code> (sub), <code>ExternalPrincipalId</code>
+      (the external IdP user ID). For service tokens: <code>IdentityType.Service</code>,
+      <code>service_role</code> claim.
+    </div>
+  </li>
+  <li>
+    <div>
+      <strong>Check the Redis cache.</strong><br>
+      Cache key: <code>authz.keys.{userId}</code>. TTL: 300 seconds (5 minutes). If the user's
+      access keys are cached, return immediately — no DB query needed. This is why permission
+      changes can take up to 5 minutes to propagate.
+    </div>
+  </li>
+  <li>
+    <div>
+      <strong>Resolve external roles via providers.</strong><br>
+      The service queries the active <em>External Role Providers</em> (configured per tenant in the
+      DB) to find the user's roles. The first provider that returns results wins. Provider types:
+      <code>ClaimBased</code>, <code>MicrosoftGraph</code>, <code>CustomApi</code>,
+      <code>OipaExposedComputation</code>, <code>Assistant</code>. Results are a list of role name
+      strings (e.g. <code>["Advisor", "SeniorAdvisor"]</code>).
+    </div>
+  </li>
+  <li>
+    <div>
+      <strong>Map external roles to internal roles.</strong><br>
+      The <code>ExternalRole</code> table maps provider role names to internal Role entities.
+      A single external role can map to multiple internal roles, or directly to permissions
+      (bypassing roles entirely).
+    </div>
+  </li>
+  <li>
+    <div>
+      <strong>Compute access keys via SQL stored procedure.</strong><br>
+      <code>spGetUserAccessKeys(@TenantId, @Roles)</code> uses a recursive CTE to walk the policy
+      tree for each role and returns the flat list of access keys. This is the most expensive step
+      — it's why the cache matters.
+    </div>
+  </li>
+  <li>
+    <div>
+      <strong>Store in cache and answer the query.</strong><br>
+      The access key set is stored in Redis. The requested key is checked against the set.
+      Binary answer: in the set → 200 OK, not in the set → 403 Forbidden.
+    </div>
+  </li>
+</ol>
+
+<hr>
+
+<h2>The Stored Procedure: The Heart of Permission Resolution</h2>
+
+<p>
+  Understanding <code>spGetUserAccessKeys</code> is essential for debugging permission problems.
+  Here is a simplified version of what it does (the real file is at
+  <code>Services.Authorization\src\Equisoft.AuthorizationService.Data\Scripts\StoredProcedures\spGetUserAccessKeys.sql</code>):
+</p>
+
+<pre><code>-- Input: @TenantId (GUID), @Roles (comma-separated role names like 'Advisor,Admin')
+-- Output: flat list of access keys
+
+WITH PolicyHierarchy AS (
+  -- Anchor: top-level policies (no parent)
+  SELECT PolicyId, [Key], [Key] AS FullPath
+  FROM   tblPolicy
+  WHERE  ParentPolicyId IS NULL AND TenantId = @TenantId AND IsActive = 1
+
+  UNION ALL
+
+  -- Recursive: child policies
+  SELECT  p.PolicyId, p.[Key], ph.FullPath + '.' + p.[Key]
+  FROM    tblPolicy p
+  JOIN    PolicyHierarchy ph ON p.ParentPolicyId = ph.PolicyId
+  WHERE   p.IsActive = 1
+)
+
+-- Combine: path + permission key = access key
+SELECT DISTINCT ph.FullPath + '.' + perm.[Key] AS AccessKey
+FROM   PolicyHierarchy ph
+JOIN   tblPolicyPermissionMapping ppm ON ppm.PolicyId = ph.PolicyId
+JOIN   tblPermission perm             ON perm.PermissionId = ppm.PermissionId
+JOIN   tblPolicyRoleMapping prm       ON prm.PolicyId = ph.PolicyId
+JOIN   tblRole r                      ON r.RoleId = prm.RoleId
+WHERE  r.[Key] IN (SELECT value FROM STRING_SPLIT(@Roles, ','))
+  AND  r.IsActive = 1
+  AND  perm.IsActive = 1</code></pre>
+
+<div class="callout tip">
+  <strong>Debugging tip</strong>
+  If a user unexpectedly lacks a permission, run this stored procedure directly in SSMS against
+  the Authorization Service database with the user's <code>tenantId</code> and their role name(s)
+  from the token's <code>identityRole</code> claim. If the expected access key is missing from
+  the results, the role-to-policy mapping is incomplete.
+</div>
+
+<hr>
+
+<h2>The <code>Evaluate</code> Endpoint: Getting All Keys at Once</h2>
+
+<p>
+  The <code>Authorize</code> endpoint answers one key at a time. The <code>Evaluate</code> endpoint
+  returns the full access-key set — useful for caching permissions client-side or populating a UI:
+</p>
+
+<pre><code>-- Only accessible to service accounts (service_isService: true)
+GET /api/v1/Evaluate
+Authorization: Bearer &lt;service account token&gt;
+
+Response: {
+  "accessKeys": [
+    "shared.eapp.Lock",
+    "shared.eapp.Create",
+    "shared.reports.View",
+    "assistants.Manage"
+  ]
+}
+
+-- Check if a specific user can access a product (for licensing checks):
+GET /api/v1/Evaluate/{userId}?productKey=equisoft-connect
+Authorization: Bearer &lt;service account token&gt;
+
+Response: true / false</code></pre>
+
+<div class="callout warn">
+  <strong>Important: Evaluate is service-account-only</strong>
+  <code>GET /api/v1/Evaluate</code> requires a token with <code>service_isService: true</code>.
+  If you call it with a user token, you get <strong>403 Forbidden</strong>. This is by design —
+  users should not be able to enumerate all their own permissions.
+</div>
+
+<hr>
+
+<h2>External Role Providers: Where Roles Actually Come From</h2>
+
+<p>
+  The <code>identityRole</code> claim in the JWT is a shortcut — it's the role that the Identity
+  Gateway knew about at token issuance time. The Authorization Service does not rely solely on it.
+  Instead, it queries <em>External Role Providers</em> configured in its own database per tenant.
+</p>
+
+<table>
+  <thead>
+    <tr><th>Provider Type</th><th>Where roles come from</th><th>When to use</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>ClaimBased</code></td>
+      <td>The user's JWT claims (standard <code>role</code> claim)</td>
+      <td>Simplest setup; roles are already in the token</td>
+    </tr>
+    <tr>
+      <td><code>MicrosoftGraph</code></td>
+      <td>Azure AD group memberships (via Graph API)</td>
+      <td>Tenant manages roles in Azure AD; groups map to internal roles</td>
+    </tr>
+    <tr>
+      <td><code>CustomApi</code></td>
+      <td>Any HTTP endpoint returning role names</td>
+      <td>Role management lives in a bespoke service</td>
+    </tr>
+    <tr>
+      <td><code>OipaExposedComputation</code></td>
+      <td>OIPA system computation results</td>
+      <td>Roles are derived from policy admin data in OIPA</td>
+    </tr>
+    <tr>
+      <td><code>Assistant</code></td>
+      <td>AssistantManagement service</td>
+      <td>Roles derive from assistant relationships in AssistantManagement</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  Providers are tried in priority order. The first one that returns <em>any</em> roles wins — the
+  others are skipped. If a provider fails (HTTP error, timeout), the service catches the exception,
+  logs it, and tries the next provider.
+</p>
+
+<div class="callout key">
+  <strong>Key insight: roles are resolved at request time, not at login time</strong>
+  This is the core reason for the separate Authorization Service. If a user's Azure AD group
+  membership changes, the <em>next</em> authorization check (after the cache expires) will reflect
+  that change — no re-login required. The JWT's <code>identityRole</code> is just a hint; the
+  Authorization Service always re-derives from the source of truth.
+</div>
+
+<hr>
+
+<h2>Cache Invalidation: When Permissions Change Immediately</h2>
+
+<p>
+  The 5-minute TTL means permission changes take up to 5 minutes to propagate normally. But there
+  is an explicit cache invalidation endpoint for urgent cases:
+</p>
+
+<pre><code>-- Clear all cached permissions for a specific user (service account only):
+DELETE /api/v1/Cache/permissions/{executedBy}?executedFor={executedFor}
+Authorization: Bearer &lt;service account token with service_isService: true&gt;
+
+-- Clear cached permissions related to an assistant:
+DELETE /api/v1/Cache/clear/assistants/{assistantId}
+Authorization: Bearer &lt;user token&gt;  ← this one accepts user tokens</code></pre>
+
+<p>
+  AssistantManagement calls the second endpoint whenever it modifies assistant relationships —
+  so that permission changes from assistant assignment take effect immediately. See
+  <code>Services.AssistantManagement\src\AssistantManagementService.Data\External\V1\Clients\IAuthorizationCacheClient.cs</code>.
+</p>
+
+<hr>
+
+<h2>Practical Walkthrough: Tracing a Permission Check</h2>
+
+<p>
+  Here is the full trace of what happens when a user tries to lock an eApp and the API checks
+  <code>shared.eapp.Lock</code>:
+</p>
+
+<pre><code>// 1. In the API controller (simplified):
+var result = await _authorizationClient.AuthorizeAsync(
+    key:   "shared.eapp.Lock",
+    token: Request.Headers["Authorization"]  // forwarded user token
+);
+if (!result.IsAuthorized) return Forbid();
+
+// 2. The Authorization Service receives:
+// GET /api/v1/Authorize?key=shared.eapp.Lock
+// Authorization: Bearer eyJhbGci... (user token)
+
+// 3. Internally:
+// → Extract sub = "user-guid", tenantId = "tenant-guid"
+// → Check Redis: authz.keys.user-guid — MISS (first request)
+// → Query AssistantExternalRolesProvider (priority 1 for this tenant):
+//   POST https://assistmgntapi/v2/... → returns ["Advisor"]
+// → Map "Advisor" external role → internal Role "Advisor" (row in tblRole)
+// → Run spGetUserAccessKeys("tenant-guid", "Advisor")
+// → Returns: ["shared.eapp.Lock", "shared.eapp.Create", "shared.reports.View"]
+// → Store in Redis: authz.keys.user-guid → [...] TTL 300s
+// → Check: "shared.eapp.Lock" IN result set → YES
+// → Return 200 OK</code></pre>
+
+<hr>
+
+<div class="quiz" data-quiz="quiz4">
+  <h3>Knowledge Check</h3>
+
+  <div class="quiz-question" data-correct="c">
+    <p>1. A user's Azure AD group is updated to add a new role. How long before an authorization check reflects this change?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz4-q0" value="a"> Immediately — the token is re-issued on the next request</label></li>
+      <li><label><input type="radio" name="quiz4-q0" value="b"> On the user's next login session only</label></li>
+      <li><label><input type="radio" name="quiz4-q0" value="c"> Up to 5 minutes — the Redis cache TTL</label></li>
+      <li><label><input type="radio" name="quiz4-q0" value="d"> Up to 1 hour — the access token lifetime</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="b">
+    <p>2. What does the stored procedure <code>spGetUserAccessKeys</code> take as input?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz4-q1" value="a"> The user's JWT and a list of requested access keys</label></li>
+      <li><label><input type="radio" name="quiz4-q1" value="b"> The tenant GUID and a comma-separated list of role names</label></li>
+      <li><label><input type="radio" name="quiz4-q1" value="c"> The user's sub claim and their email address</label></li>
+      <li><label><input type="radio" name="quiz4-q1" value="d"> The policy tree root ID and the user's external role IDs</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="d">
+    <p>3. Which endpoint would you call to get the <em>complete</em> set of permissions for the current service-account context?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz4-q2" value="a"> <code>GET /api/v1/Authorize</code> with multiple keys</label></li>
+      <li><label><input type="radio" name="quiz4-q2" value="b"> <code>GET /api/v1/Cache/permissions</code></label></li>
+      <li><label><input type="radio" name="quiz4-q2" value="c"> <code>GET /connect/userinfo</code> on the Identity Gateway</label></li>
+      <li><label><input type="radio" name="quiz4-q2" value="d"> <code>GET /api/v1/Evaluate</code> with a service account token</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="a">
+    <p>4. The <code>MicrosoftGraph</code> external role provider is configured for a tenant. Where are role assignments managed for that tenant?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz4-q3" value="a"> In Azure AD group memberships for that tenant's directory</label></li>
+      <li><label><input type="radio" name="quiz4-q3" value="b"> In the Authorization Service's own <code>tblRole</code> table</label></li>
+      <li><label><input type="radio" name="quiz4-q3" value="c"> In the Identity Gateway's user claims database</label></li>
+      <li><label><input type="radio" name="quiz4-q3" value="d"> In the AssistantManagement service's permission groups</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="b">
+    <p>5. The access key <code>shared.eapp.Lock</code> is composed of what parts?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz4-q4" value="a"> Service name + API version + operation name</label></li>
+      <li><label><input type="radio" name="quiz4-q4" value="b"> Top-level policy + child policy + permission key</label></li>
+      <li><label><input type="radio" name="quiz4-q4" value="c"> Tenant key + role name + permission identifier</label></li>
+      <li><label><input type="radio" name="quiz4-q4" value="d"> Client ID + resource scope + action name</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <button class="quiz-btn" data-quiz-submit="quiz4">Check Answers</button>
+  <div class="quiz-score"></div>
+</div>
+
+<script>
+window.quizExplanations = {
+  'quiz4-q0': 'The Redis cache has a 300-second (5-minute) TTL. After that, the next request re-queries the external role providers and re-computes access keys from the live DB.',
+  'quiz4-q1': 'The SP takes TenantId and a comma-separated role-name list. It uses a recursive CTE to walk the policy tree and returns the flat access-key set.',
+  'quiz4-q2': 'GET /api/v1/Evaluate returns the full access-key list. It requires a service-account token (service_isService: true).',
+  'quiz4-q3': 'When MicrosoftGraph is the provider, the source of truth for role assignments is Azure AD group memberships — not any internal Equisoft database.',
+  'quiz4-q4': 'Access keys encode the policy hierarchy path: "shared" is the top-level policy, "eapp" is its child, "Lock" is the permission leaf. All joined with dots.'
+};
+</script>
+
+<hr>
+
+<h2>Hands-on: Inspect the Permission Model</h2>
+
+<p>
+  On your dev environment, connect to the Authorization Service database and run:
+</p>
+
+<pre><code>-- 1. See all active policies and their hierarchy:
+SELECT p.Key, parent.Key AS ParentPolicy, p.TenantId
+FROM   tblPolicy p
+LEFT JOIN tblPolicy parent ON parent.PolicyId = p.ParentPolicyId
+WHERE  p.IsActive = 1
+ORDER BY p.TenantId, parent.Key, p.Key;
+
+-- 2. See all roles and their policy mappings:
+SELECT r.Key AS Role, p.Key AS Policy
+FROM   tblRole r
+JOIN   tblPolicyRoleMapping prm ON prm.RoleId = r.RoleId
+JOIN   tblPolicy p              ON p.PolicyId = prm.PolicyId
+WHERE  r.IsActive = 1;
+
+-- 3. Manually compute access keys for a role in your tenant:
+EXEC spGetUserAccessKeys
+  @TenantId = 'your-tenant-guid-here',
+  @Roles    = 'Advisor';</code></pre>
+
+<p>
+  Compare the output of query #3 to what you see in a decoded JWT (Lesson 3 exercise).
+  The access keys computed here are exactly what the Authorization Service caches in Redis
+  and checks against.
+</p>
+
+<hr>
+
+<h2>Reference</h2>
+<p>
+  The cheat sheet for this lesson:
+  <a href="../reference/authorization-cheatsheet.html">Authorization Service Quick Reference</a>
+</p>
+
+<h2>Primary Source</h2>
+<p>
+  Read the actual stored procedure in the codebase:
+  <code>Services.Authorization\src\Equisoft.AuthorizationService.Data\Scripts\StoredProcedures\spGetUserAccessKeys.sql</code>
+  <br>
+  And the cache manager:
+  <code>Services.Authorization\src\Equisoft.AuthorizationService.Domain\Caching\AuthorizationCacheManager.cs</code>
+</p>
+
+<div class="ask-claude">
+  <strong>Questions? Ask your teacher.</strong>
+  Try: <em>"If two external role providers are configured for a tenant, how does the Authorization Service decide which one to use?"</em>
+  Or: <em>"How would I add a new permission to an existing role without modifying the Identity Gateway?"</em>
+</div>
+
+<div class="lesson-nav">
+  <a href="0003-token-anatomy.html">← Lesson 3: Token Anatomy</a>
+  <a class="next" href="0005-registering-clients.html">Next → Lesson 5: Registering Clients &amp; APIs</a>
+</div>
+
+<div class="lesson-footer">
+  Equisoft Identity Learning · Lesson 4 · Sources: spGetUserAccessKeys.sql,
+  AuthorizationCacheManager.cs, AuthorizeController.cs, EvaluateController.cs
+</div>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

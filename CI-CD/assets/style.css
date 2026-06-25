@@ -1,0 +1,348 @@
+/* Shared stylesheet for Azure CI/CD lessons */
+
+:root {
+  --bg: #fafaf8;
+  --surface: #ffffff;
+  --border: #e4e2dc;
+  --text: #1a1a18;
+  --text-muted: #6b6b68;
+  --accent: #0078d4;       /* Azure blue */
+  --accent-dark: #005a9e;
+  --success: #107c10;
+  --error: #a4262c;
+  --warn: #c17f24;
+  --code-bg: #f3f2f0;
+  --highlight: #fff4ce;
+  --font-body: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Cascadia Code', 'Consolas', 'Fira Code', monospace;
+  --max-width: 780px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 17px;
+  line-height: 1.65;
+  padding: 2rem 1.25rem 4rem;
+}
+
+main {
+  max-width: var(--max-width);
+  margin: 0 auto;
+}
+
+/* ── Header ─────────────────────────────────────────────── */
+.lesson-header {
+  border-bottom: 2px solid var(--accent);
+  padding-bottom: 1rem;
+  margin-bottom: 2.5rem;
+}
+
+.lesson-header .breadcrumb {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.lesson-header h1 {
+  font-size: 1.9rem;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text);
+}
+
+.lesson-header .subtitle {
+  color: var(--text-muted);
+  font-size: 1rem;
+  margin-top: 0.35rem;
+}
+
+/* ── Typography ─────────────────────────────────────────── */
+h2 {
+  font-size: 1.2rem;
+  font-weight: 600;
+  margin: 2.5rem 0 0.75rem;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 1.5rem 0 0.5rem;
+  color: var(--accent-dark);
+}
+
+p { margin-bottom: 1rem; }
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+ul, ol {
+  margin: 0 0 1rem 1.4rem;
+  padding: 0;
+}
+
+li { margin-bottom: 0.3rem; }
+
+strong { font-weight: 600; }
+
+/* ── Code ───────────────────────────────────────────────── */
+code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+}
+
+pre {
+  background: #1e1e1e;
+  color: #d4d4d4;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  line-height: 1.6;
+  border-radius: 6px;
+  padding: 1.25rem 1.5rem;
+  overflow-x: auto;
+  margin: 1rem 0 1.5rem;
+  position: relative;
+}
+
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
+}
+
+/* Syntax highlight classes (manual) */
+.y-key   { color: #9cdcfe; }
+.y-val   { color: #ce9178; }
+.y-num   { color: #b5cea8; }
+.y-bool  { color: #569cd6; }
+.y-cmt   { color: #6a9955; font-style: italic; }
+.y-str   { color: #ce9178; }
+.y-anchor{ color: #c586c0; }
+
+/* ── Callouts ───────────────────────────────────────────── */
+.callout {
+  border-left: 4px solid var(--accent);
+  background: var(--surface);
+  border-radius: 0 6px 6px 0;
+  padding: 0.85rem 1.1rem;
+  margin: 1.25rem 0;
+  font-size: 0.95rem;
+}
+
+.callout.warn  { border-color: var(--warn);  background: #fff8f0; }
+.callout.tip   { border-color: var(--success); background: #f0fff4; }
+.callout.label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 0.3rem;
+}
+
+/* ── Hierarchy diagram ─────────────────────────────────── */
+.hierarchy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 1.5rem 0;
+}
+
+.h-level {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.h-indent { flex-shrink: 0; }
+
+.h-box {
+  border: 2px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 1rem;
+  font-size: 0.9rem;
+  flex: 1;
+  position: relative;
+  background: var(--surface);
+}
+
+.h-box .h-name {
+  font-weight: 700;
+  color: var(--accent-dark);
+}
+
+.h-box .h-desc {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  margin-top: 0.1rem;
+}
+
+.h-box.level-0 { border-color: var(--accent); border-width: 2px; }
+.h-box.level-1 { border-color: #c19b26; }
+.h-box.level-2 { border-color: var(--success); }
+.h-box.level-3 { border-color: #881798; }
+
+/* ── Annotated YAML ─────────────────────────────────────── */
+.annotated {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin: 1.25rem 0 1.5rem;
+  align-items: start;
+}
+
+@media (max-width: 600px) {
+  .annotated { grid-template-columns: 1fr; }
+}
+
+.annotated pre { margin: 0; }
+
+.annotations {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.annotations li {
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: 0.5rem;
+}
+
+.ann-num {
+  background: var(--accent);
+  color: white;
+  border-radius: 50%;
+  width: 1.3em;
+  height: 1.3em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+/* ── Quiz ────────────────────────────────────────────────── */
+.quiz-section {
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  padding: 1.5rem;
+  margin: 2.5rem 0 1.5rem;
+}
+
+.quiz-section h2 { margin-top: 0; }
+
+.question {
+  margin-bottom: 1.5rem;
+}
+
+.question p {
+  font-weight: 600;
+  margin-bottom: 0.6rem;
+  font-size: 0.97rem;
+}
+
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.opt-btn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.55rem 0.9rem;
+  border: 1.5px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 0.92rem;
+  font-family: var(--font-body);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  color: var(--text);
+}
+
+.opt-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: #eaf4fb;
+}
+
+.opt-btn.correct {
+  border-color: var(--success);
+  background: #f0fff4;
+  color: var(--success);
+  font-weight: 600;
+}
+
+.opt-btn.wrong {
+  border-color: var(--error);
+  background: #fff0f1;
+  color: var(--error);
+}
+
+.feedback {
+  margin-top: 0.5rem;
+  font-size: 0.87rem;
+  min-height: 1.2em;
+  padding: 0.3rem 0;
+}
+
+.feedback.ok  { color: var(--success); }
+.feedback.err { color: var(--error); }
+
+.quiz-score {
+  font-weight: 700;
+  font-size: 1rem;
+  text-align: center;
+  padding: 0.75rem;
+  border-radius: 6px;
+  display: none;
+  margin-top: 0.5rem;
+  background: var(--highlight);
+}
+
+/* ── Footer ─────────────────────────────────────────────── */
+.lesson-footer {
+  margin-top: 3rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.lesson-footer a { color: var(--accent); }
+
+/* ── Print ───────────────────────────────────────────────── */
+@media print {
+  body { background: white; padding: 0; font-size: 14px; }
+  .quiz-section, .lesson-footer { display: none; }
+  pre { background: #f3f2f0; color: var(--text); border: 1px solid var(--border); }
+  pre .y-key { color: #0000cc; }
+  pre .y-val { color: #800000; }
+  pre .y-cmt { color: #008000; }
+}

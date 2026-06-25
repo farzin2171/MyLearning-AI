@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reference — Policy, Role &amp; Permission Hierarchy</title>
+  <link rel="stylesheet" href="../assets/style.css" />
+  <style>
+    @media print { body { font-size: 11px; } .lesson-container { max-width: 100%; } }
+    .ref-table { width:100%; border-collapse:collapse; font-family:sans-serif; font-size:0.79rem; margin:0.7rem 0 1.2rem; }
+    .ref-table th { text-align:left; padding:0.35rem 0.6rem; border-bottom:2px solid #ddd; font-weight:700; }
+    .ref-table td { padding:0.35rem 0.6rem; border-bottom:1px solid #eee; vertical-align:top; }
+    .ref-table tr:nth-child(even) td { background:#fafaf8; }
+    h2 { margin-top:1.5rem; }
+  </style>
+</head>
+<body>
+<div class="lesson-container">
+
+  <header class="lesson-header">
+    <div class="lesson-meta">Reference · Authorization Service · Data Model</div>
+    <h1 class="lesson-title">Policy / Role / Permission — Quick Reference</h1>
+    <p class="lesson-subtitle">See <a href="../lessons/0004-policy-role-permission-hierarchy.html">Lesson 04</a> for full walkthrough.</p>
+  </header>
+
+  <h2>Access Key Format</h2>
+  <div class="diagram">Root.Child.Grandchild.PermissionKey   (permission inside a nested policy)
+Root.Child.RoleKey                     (role inside a child policy)
+
+Each segment = the Key field of a Policy, Role, or Permission entity.</div>
+
+  <h2>How Keys Are Built ([dbo].[GetUserAccessKeys])</h2>
+  <div class="diagram">Step 1 — Recursive CTE builds policy identifiers:
+  root policy Key = "platform"          → Identifier = "platform"
+  child policy Key = "reports"          → Identifier = "platform.reports"
+  grandchild Key = "export"             → Identifier = "platform.reports.export"
+
+Step 2 — Final SELECT joins identifiers to mapped permissions/roles:
+  Identifier + "." + Permission.Key  → "platform.reports.export.run"
+  Identifier + "." + Role.Key        → "platform.admin.administrator"</div>
+
+  <h2>Table Summary</h2>
+  <table class="ref-table">
+    <thead><tr><th>Table</th><th>Purpose</th><th>Hierarchical</th></tr></thead>
+    <tbody>
+      <tr><td><code>tblPolicy</code></td><td>Policy definitions. <code>ParentPolicyId</code> = self-referential FK.</td><td>Yes (recursive CTE)</td></tr>
+      <tr><td><code>tblRole</code></td><td>Internal role definitions.</td><td>No</td></tr>
+      <tr><td><code>tblPermission</code></td><td>Atomic permission definitions.</td><td>No</td></tr>
+      <tr><td><code>tblPolicyRole</code></td><td>M:M Policy ↔ Role.</td><td>Via policy</td></tr>
+      <tr><td><code>tblPolicyPermission</code></td><td>M:M Policy ↔ Permission.</td><td>Via policy</td></tr>
+      <tr><td><code>tblExternalRoleToRole</code></td><td>ExternalRole → tblPolicyRole mapping.</td><td>—</td></tr>
+      <tr><td><code>tblExternalRoleToPermission</code></td><td>ExternalRole → tblPolicyPermission mapping.</td><td>—</td></tr>
+      <tr><td><code>tblPermissionGroup</code></td><td>Named collection of PolicyPermissions (OnBehalfOf use).</td><td>No</td></tr>
+      <tr><td><code>tblPermissionGroupToPermission</code></td><td>M:M PermissionGroup ↔ PolicyPermission.</td><td>—</td></tr>
+    </tbody>
+  </table>
+
+  <h2>User → Access Chain</h2>
+  <div class="diagram">JWT (external identity)
+→ ExternalRolesProvider  →  role name strings
+→ tblExternalRole (ExternalSourceId matches name)
+→ tblExternalRoleToPermission  →  tblPolicyPermission  →  tblPolicy
+→ tblExternalRoleToRole        →  tblPolicyRole        →  tblPolicy
+→ [dbo].[GetUserAccessKeys] (recursive CTE + JOIN)
+→ List&lt;string&gt; of dot-separated access keys
+→ cached in Redis under authz.eval.{userId}</div>
+
+  <h2>Stored Procedures</h2>
+  <table class="ref-table">
+    <thead><tr><th>Procedure</th><th>Input</th><th>Returns</th><th>Used for</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>[dbo].[GetUserAccessKeys]</code></td>
+        <td><code>@TenantId</code>, <code>@Roles</code> (CSV of ext role names)</td>
+        <td>Dot-separated access key strings</td>
+        <td>User, ServiceAccount, Guest, OnBehalfOf (step 4)</td>
+      </tr>
+      <tr>
+        <td><code>[dbo].[GetUserAccessKeysFromPermissionGroups]</code></td>
+        <td><code>@TenantId</code>, <code>@PermissionGroups</code> (CSV of group names)</td>
+        <td>Dot-separated access key strings (permissions only)</td>
+        <td>OnBehalfOf intersection (assistant scope limit)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Management API (service account only)</h2>
+  <table class="ref-table">
+    <thead><tr><th>Endpoint</th><th>Creates/updates</th></tr></thead>
+    <tbody>
+      <tr><td><code>POST /management/policies</code></td><td>Entire policy tree (nested JSON). Auto-creates junctions.</td></tr>
+      <tr><td><code>POST /management/roles</code></td><td>Role definitions (flat list).</td></tr>
+      <tr><td><code>POST /management/permissions</code></td><td>Permission definitions (flat list).</td></tr>
+      <tr><td><code>POST /management/external-roles</code></td><td>ExternalRole records + mappings.</td></tr>
+      <tr><td><code>POST /management/permission-groups</code></td><td>PermissionGroup records.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Delete Cascade</h2>
+  <p style="font-family:sans-serif; font-size:0.83rem;">
+    Deleting a policy cascades through:
+    PolicyPermissionMapping → ExternalRoleToPermissionMapping, PermissionGroupToPermissionMapping<br/>
+    PolicyRoleMapping → ExternalRoleToRoleMapping<br/>
+    Then all child policies recursively.<br/>
+    <strong>Effect on users:</strong> cached entries remain until TTL expires. Force invalidation with <code>DELETE /cache/permissions/{userId}</code>.
+  </p>
+
+  <footer class="lesson-footer" style="margin-top:1.5rem;">
+    <div>Reference card · Authorization Service · 2026-06-22 · <a href="../reference/external-role-providers.html">← External Providers ref</a></div>
+  </footer>
+
+</div>
+</body>
+</html>

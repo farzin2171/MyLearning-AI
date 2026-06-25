@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Caching Layer — Quick Reference</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    table { width: 100%; border-collapse: collapse; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 0.875rem; margin: 1rem 0; }
+    th { background: var(--accent); color: #fff; text-align: left; padding: 0.5rem 0.75rem; }
+    td { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+    tr:nth-child(even) td { background: var(--light); }
+    .ref-section { margin-bottom: 2.5rem; }
+    .state-box { display: inline-block; border-radius: 4px; padding: 0.15em 0.5em; font-size: 0.8rem; font-weight: 700; font-family: -apple-system, sans-serif; }
+    .closed { background: #f0fdf4; color: #15803d; border: 1px solid #86efac; }
+    .open   { background: #fef2f2; color: #b91c1c; border: 1px solid #fca5a5; }
+    .half   { background: #fffbeb; color: #92400e; border: 1px solid #fcd34d; }
+    @media print { body { max-width: none; padding: 1rem; } }
+  </style>
+</head>
+<body>
+
+<nav class="breadcrumb"><a href="../lessons/0003-the-redis-caching-layer.html">← Lesson 3</a></nav>
+
+<header class="lesson-header">
+  <p class="lesson-number">Reference</p>
+  <h1>Application Caching Layer</h1>
+  <p class="subtitle">Data model, interface, hybrid strategy, and circuit breaker states</p>
+</header>
+
+<main>
+
+<div class="ref-section">
+  <h2>The Data Model in Redis</h2>
+  <pre><code>// Key: applicationId converted to a plain string (Guid.ToString())
+Key:   "efa9b2c1-…"
+
+// Value: JSON array — multiple users can share one applicationId
+Value: [
+  {
+    "connectionId":  "abc123…",    // SignalR socket ID (changes on reconnect)
+    "userId":        "user-42",    // JWT NameIdentifier — stable
+    "applicationId": "efa9b2c1-…" // repeated in value for convenience
+  },
+  // … more entries for other users on the same applicationId
+]
+
+// TTL: configurable — default 3600 seconds (1 hour)
+// Source: persistence:cacheOptions:expiryTimeSpanInSecs</code></pre>
+</div>
+
+<div class="ref-section">
+  <h2>IServiceCacheManager Interface</h2>
+  <pre><code>Task&lt;T&gt;   GetAsync&lt;T&gt;(string key)                              // read
+Task      SetAsync&lt;T&gt;(string key, T value, TimeSpan timeToLive) // write</code></pre>
+  <p style="font-family: -apple-system, sans-serif; font-size: 0.875rem; color: var(--muted);">Implemented by <code>NotificationServiceCacheManager</code> (singleton). Called by <code>KeepAliveManagementService</code>.</p>
+</div>
+
+<div class="ref-section">
+  <h2>GetAsync — Read Path</h2>
+  <pre><code>if (circuit is Open)  → FallbackToInMemoryCache(key)      // early exit
+try {
+    ExecuteAsync → _redisCache.GetStringAsync(key)         // Redis
+    Deserialize JSON → return T
+}
+catch { FallbackToInMemoryCache(key) }                     // any Redis error</code></pre>
+</div>
+
+<div class="ref-section">
+  <h2>SetAsync — Write Path</h2>
+  <pre><code>if (circuit is Open)  → FallbackToInMemoryCache(key, value)  // early exit
+try {
+    ExecuteAsync → {
+        AcquireLock(key + "_lock")       // RedLock distributed lock
+        if (!lock.IsAcquired) throw      // lock fail = circuit breaker hit
+        AddStringAsync(key, json, ttl)   // write to Redis
+    }
+}
+catch { FallbackToInMemoryCache(key, value) }               // any error</code></pre>
+  <p style="font-family: -apple-system, sans-serif; font-size: 0.875rem; color: var(--muted);">Lock prevents two instances overwriting the same key simultaneously. Lock key = <code>"{key}_lock"</code>.</p>
+</div>
+
+<div class="ref-section">
+  <h2>Circuit Breaker States</h2>
+  <table>
+    <thead><tr><th>State</th><th>How you enter</th><th>What happens</th><th>How you exit</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><span class="state-box closed">Closed</span></td>
+        <td>Normal / after successful probe</td>
+        <td>Redis is tried for every call</td>
+        <td>N exceptions → Open</td>
+      </tr>
+      <tr>
+        <td><span class="state-box open">Open</span></td>
+        <td>N exceptions in Closed state</td>
+        <td>Redis is bypassed; in-memory cache used; <code>OnCircuitBreak</code> logged</td>
+        <td>Break duration expires → HalfOpen</td>
+      </tr>
+      <tr>
+        <td><span class="state-box half">HalfOpen</span></td>
+        <td>Break duration expires (default: 60s)</td>
+        <td>One probe request allowed through to Redis</td>
+        <td>Probe succeeds → Closed; probe fails → Open again</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ref-section">
+  <h2>Configuration Reference</h2>
+  <table>
+    <thead><tr><th>Key (in appsettings.json)</th><th>Default</th><th>Controls</th></tr></thead>
+    <tbody>
+      <tr><td><code>cacheOptions:expiryTimeSpanInSecs</code></td><td>3600 s</td><td>Connection record TTL (1 hour)</td></tr>
+      <tr><td><code>persistence:circuitBreaker:exceptionsAllowedBeforeBreaking</code></td><td>1</td><td>Failures before circuit opens</td></tr>
+      <tr><td><code>persistence:circuitBreaker:durationOfBreakInSeconds</code></td><td>60 s</td><td>How long circuit stays Open</td></tr>
+      <tr><td><code>persistence:enableMemoryCacheProvider</code></td><td>true</td><td>Whether in-memory fallback is active</td></tr>
+      <tr><td><code>persistence:redis:lock:expiryTimeSpanInSecs</code></td><td>30 s</td><td>Max time a write lock lives</td></tr>
+      <tr><td><code>persistence:redis:lock:waitTimeSpanInSecs</code></td><td>30 s</td><td>How long to wait to acquire lock</td></tr>
+      <tr><td><code>persistence:redis:lock:retryTimeSpanInSecs</code></td><td>5 s</td><td>Retry interval while waiting for lock</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ref-section">
+  <h2>Fallback Caveat</h2>
+  <p style="font-family: -apple-system, sans-serif; font-size: 0.875rem;">The in-memory fallback is <strong>per-instance</strong>. In a multi-replica deployment, instance A's memory cache is invisible to instance B. During a Redis outage, keep-alive signals may not find connections registered on a different instance.</p>
+</div>
+
+</main>
+
+<footer class="lesson-footer" style="border-top: 1px solid var(--border); padding-top: 1.5rem; margin-top: 2rem; font-family: -apple-system, sans-serif; font-size: 0.875rem;">
+  <a href="../lessons/0003-the-redis-caching-layer.html">← Back to Lesson 3</a>
+</footer>
+
+</body>
+</html>

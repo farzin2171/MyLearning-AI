@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lesson 9 — Service Containers</title>
+  <link rel="stylesheet" href="../assets/style.css" />
+  <style>
+    /* Container anatomy diagram */
+    .agent-box {
+      border: 2px solid var(--accent);
+      border-radius: 8px;
+      padding: 1rem 1.1rem 0.75rem;
+      margin: 1.5rem 0;
+      position: relative;
+    }
+    .agent-box .agent-label {
+      position: absolute;
+      top: -0.75em;
+      left: 0.9rem;
+      background: var(--bg);
+      padding: 0 0.4rem;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--accent);
+    }
+    .container-row {
+      display: flex;
+      gap: 0.7rem;
+      flex-wrap: wrap;
+      margin-top: 0.4rem;
+    }
+    .cbox {
+      border: 1.5px solid var(--border);
+      border-radius: 5px;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.83rem;
+      min-width: 130px;
+      text-align: center;
+    }
+    .cbox.main {
+      border-color: var(--accent);
+      background: #eef6ff;
+    }
+    .cbox.sidecar {
+      border-color: var(--warn);
+      background: #fdf6ec;
+    }
+    .cbox strong { display: block; margin-bottom: 0.15rem; }
+    .cbox .img { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-muted); }
+    .cbox-label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-top: 0.3rem;
+    }
+
+    .callout {
+      border-left: 4px solid var(--accent);
+      background: #eef6ff;
+      padding: 0.9rem 1rem;
+      margin: 1.5rem 0;
+      border-radius: 0 4px 4px 0;
+    }
+    .callout.tip  { border-left-color: var(--success); background: #f0faf0; }
+    .callout.warn { border-left-color: var(--warn); background: #fdf6ec; }
+    .callout p { margin: 0; }
+    .callout p + p { margin-top: 0.5rem; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.87rem; margin: 0.75rem 0 1.25rem; }
+    th { background: var(--code-bg); text-align: left; padding: 0.38rem 0.7rem; border-bottom: 2px solid var(--border); }
+    td { padding: 0.38rem 0.7rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+    tr:last-child td { border-bottom: none; }
+    code { background: var(--code-bg); padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.84em; }
+  </style>
+</head>
+<body>
+  <article>
+    <header>
+      <p class="lesson-number">Lesson 9 of <em>Azure CI/CD with Azure Pipelines</em> — from <em>Applications.Apply</em></p>
+      <h1>Service Containers</h1>
+      <p class="subtitle">Running SQL Server and Redis alongside your build job — no external infrastructure needed</p>
+    </header>
+
+    <!-- ── WHY ─────────────────────────────────────────── -->
+    <section>
+      <h2>The problem: integration tests need real services</h2>
+      <p>The <code>Applications.Apply</code> build job runs integration tests against a real SQL Server database and a real Redis cache. Without containers, you'd need either a shared test database (fragile, slow, causes flaky tests) or mocks (which don't catch SQL dialect bugs or Redis TTL edge cases).</p>
+      <p><strong>Service containers</strong> solve this: Azure Pipelines spins up SQL Server and Redis as Docker containers alongside your build job, on the same agent network. The containers start before your first step runs and are torn down when the job finishes. Your tests connect to them as if they were local services.</p>
+    </section>
+
+    <!-- ── ANATOMY ─────────────────────────────────────── -->
+    <section>
+      <h2>What runs where</h2>
+
+      <div class="agent-box">
+        <span class="agent-label">Pipeline Agent</span>
+        <div class="container-row">
+          <div class="cbox main">
+            <strong>Job container</strong>
+            <div class="img">dotnet/sdk:10.0</div>
+            <div class="cbox-label">your steps run here</div>
+          </div>
+          <div class="cbox sidecar">
+            <strong>db (sidecar)</strong>
+            <div class="img">mssql/server:2022</div>
+            <div class="cbox-label">hostname: db · port 1433</div>
+          </div>
+          <div class="cbox sidecar">
+            <strong>redis (sidecar)</strong>
+            <div class="img">redis:latest</div>
+            <div class="cbox-label">hostname: redis · port 6379</div>
+          </div>
+        </div>
+      </div>
+
+      <p>The job container (<code>net10</code>) runs your steps. The sidecar containers (<code>db</code>, <code>redis</code>) are network-reachable services. The alias you give a sidecar (<code>db</code>, <code>redis</code>) becomes its hostname inside the job container.</p>
+    </section>
+
+    <!-- ── RESOURCES BLOCK ────────────────────────────── -->
+    <section>
+      <h2>Step 1 — define containers as pipeline resources</h2>
+      <p>Containers are declared in the top-level <code>resources.containers</code> block, just like repositories. Each entry needs a name (alias), an image, and optionally ports and environment variables.</p>
+
+      <pre><code># From azure-pipelines.yml in Applications.Apply
+
+resources:
+  repositories:
+    - repository: templates
+      type: git
+      name: PipelineTemplates
+
+  containers:
+    - container: net10                            # alias — used to reference this container
+      image: "mcr.microsoft.com/dotnet/sdk:10.0"
+
+    - container: db
+      image: "mcr.microsoft.com/mssql/server:2022-latest"
+      hostname: db                                # hostname other containers use to reach it
+      ports:
+        - '1433:1433'                             # host:container port mapping
+      env:
+        MSSQL_SA_PASSWORD: '$(sa_password)'       # secret from variable group
+        ACCEPT_EULA: "Y"                          # required by SQL Server image
+
+    - container: redis
+      hostname: redis
+      image: redis
+      ports:
+        - '6379:6379'</code></pre>
+
+      <div class="callout warn">
+        <p><strong>Secrets in container <code>env:</code>:</strong> Pass sensitive values like <code>MSSQL_SA_PASSWORD</code> via pipeline variables (<code>$(sa_password)</code> from the variable group), never hard-coded. The value is masked in logs automatically.</p>
+      </div>
+    </section>
+
+    <!-- ── JOB LEVEL ──────────────────────────────────── -->
+    <section>
+      <h2>Step 2 — attach containers to the job</h2>
+      <p>Inside the job, two keys control which containers are attached:</p>
+      <ul>
+        <li><code>container:</code> — the job container; your steps run <em>inside</em> this image</li>
+        <li><code>services:</code> — sidecar containers; they run alongside and are reachable by hostname</li>
+      </ul>
+
+      <pre><code># From build-app.yml in Applications.Apply
+
+jobs:
+  - job: BuildApp
+    container: net10        # steps execute inside the .NET SDK container
+    services:
+      db: db                # left = hostname the job uses, right = resource alias from above
+      redis: redis
+    steps:
+      - checkout: self
+
+      # Integration tests connect using "db" as the server hostname
+      # e.g. "Server=db,1433;Database=Apply;User=sa;Password=$(sa_password)"
+      - task: DotNetCoreCLI@2
+        displayName: "Tests"
+        env:
+          ASPNETCORE_ENVIRONMENT: Integration    # picks up appsettings.Integration.json
+        inputs:
+          command: test
+          arguments: '--no-build --configuration Release --collect "XPlat Code Coverage"'</code></pre>
+
+      <div class="callout">
+        <p><strong><code>ASPNETCORE_ENVIRONMENT: Integration</code></strong> is the connection between the container and the test configuration. The test project's <code>appsettings.Integration.json</code> file contains a connection string pointing to <code>Server=db,1433</code>. The hostname matches the sidecar alias.</p>
+      </div>
+
+      <table>
+        <thead><tr><th>Key</th><th>What it controls</th><th>Applications.Apply value</th></tr></thead>
+        <tbody>
+          <tr><td><code>container:</code></td><td>Image the job's steps run inside</td><td><code>net10</code> (dotnet/sdk:10.0)</td></tr>
+          <tr><td><code>services:</code></td><td>Sidecar containers started before steps</td><td><code>db</code> (SQL Server), <code>redis</code></td></tr>
+          <tr><td>sidecar hostname</td><td>How steps reach the service</td><td><code>db</code> and <code>redis</code> (alias = hostname)</td></tr>
+          <tr><td><code>ports:</code></td><td>Port published on the agent network</td><td>1433:1433 and 6379:6379</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- ── WITHOUT A JOB CONTAINER ───────────────────── -->
+    <section>
+      <h2>Using services without a job container</h2>
+      <p>You don't have to run your steps inside a container. <code>services:</code> works on its own — the steps run directly on the agent, but the sidecars are still reachable:</p>
+
+      <pre><code>jobs:
+  - job: IntegrationTests
+    # no container: key — steps run on the host agent
+    services:
+      db: db         # SQL Server still starts as a sidecar
+      redis: redis   # Redis still starts as a sidecar
+    steps:
+      - script: dotnet test ...</code></pre>
+
+      <p>The Applications.Apply build uses a job container (<code>net10</code>) because it needs a specific .NET SDK version that may not be installed on the host agent. For teams running on self-hosted agents with the right SDK, the job container can be omitted.</p>
+    </section>
+
+    <!-- ── QUIZ ───────────────────────────────────────── -->
+    <section>
+      <h2>Check your understanding</h2>
+      <div id="quiz"></div>
+    </section>
+
+    <!-- ── PRIMARY SOURCE ─────────────────────────────── -->
+    <section>
+      <h2>Primary source</h2>
+      <p>
+        <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/process/service-containers?view=azure-devops&tabs=yaml" target="_blank" rel="noopener">
+          Service containers — Microsoft Learn
+        </a><br>
+        Full reference for container resources, port mapping, healthchecks, networking, and volume mounts.
+      </p>
+    </section>
+
+    <!-- ── RELATED LESSONS ────────────────────────────── -->
+    <section>
+      <h2>Related lessons</h2>
+      <ul>
+        <li><a href="0001-yaml-pipeline-anatomy.html">Lesson 1 — YAML Pipeline Anatomy</a> — the <code>resources:</code> block structure</li>
+        <li><a href="0003-variables-and-variable-groups.html">Lesson 3 — Variables</a> — <code>$(sa_password)</code> comes from the Pipeline_Main variable group</li>
+        <li><a href="0005-pipeline-artifacts.html">Lesson 5 — Artifacts</a> — artifacts published from the same BuildApp job</li>
+      </ul>
+    </section>
+
+    <div class="ask-question">
+      <strong>Something unclear?</strong> Ask your teacher — type a follow-up and Claude will answer it in context.
+    </div>
+  </article>
+
+  <script src="../assets/quiz.js"></script>
+  <script>
+    new Quiz('quiz', [
+      {
+        q: 'In the Applications.Apply pipeline, what hostname do integration tests use to reach SQL Server?',
+        options: [
+          'db — the sidecar alias becomes the hostname',
+          'localhost — sidecars always bind to localhost',
+          'mssql — the default SQL Server hostname',
+          'sqlserver — the container image hostname'
+        ],
+        answer: 0,
+        explanation: 'The alias you assign in services: (left side of the key-value pair) becomes the hostname inside the job container. "db: db" means the service is reachable as "db". The connection string uses Server=db,1433.'
+      },
+      {
+        q: 'What is the difference between container: and services: at the job level?',
+        options: [
+          'container runs steps inside it; services run alongside',
+          'container runs alongside; services run steps inside',
+          'container provides secrets; services provide networking',
+          'container builds images; services pull images'
+        ],
+        answer: 0,
+        explanation: 'container: specifies the image your job\'s steps actually execute inside. services: defines sidecar containers that start before your steps and are reachable by their alias as a hostname — but your steps run in the container:, not the services:.'
+      },
+      {
+        q: 'Why does the Applications.Apply build job use container: net10?',
+        options: [
+          'To ensure a specific .NET SDK version on any agent',
+          'To run SQL Server inside the build container',
+          'To isolate the job from the agent file system',
+          'To enable Docker commands inside the build steps'
+        ],
+        answer: 0,
+        explanation: 'The job container (net10 = dotnet/sdk:10.0) guarantees the correct .NET version regardless of what\'s installed on the host agent. This makes the build reproducible on any agent in the pool.'
+      },
+      {
+        q: 'Where must MSSQL_SA_PASSWORD be stored to avoid exposing it in the YAML?',
+        options: [
+          'In a variable group, referenced as $(sa_password)',
+          'In the container env block as a plain-text value',
+          'In a pipeline parameter with isSecret: true',
+          'In a separate secrets.yml file in the repository'
+        ],
+        answer: 0,
+        explanation: 'Secrets go in Azure DevOps variable groups (marked as secret), then referenced as $(sa_password) in the YAML. Azure Pipelines masks secret variable values in logs automatically. Never put passwords as plain text in YAML checked into source control.'
+      }
+    ]);
+  </script>
+</body>
+</html>

@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 17 — Private Package Feeds in Azure Pipelines</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    /* ── Lesson-specific ────────────────────────────────────── */
+    .scenario {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1.1rem 1.4rem;
+      margin-bottom: 1.1rem;
+    }
+    .scenario h3 {
+      font-size: 0.97rem;
+      font-weight: 700;
+      margin-bottom: 0.4rem;
+    }
+    .scenario p {
+      color: var(--text-muted);
+      font-size: 0.92rem;
+    }
+
+    /* Two-scenario layout */
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin: 1.1rem 0;
+    }
+    @media (max-width: 600px) { .two-col { grid-template-columns: 1fr; } }
+
+    /* Feed type badge */
+    .feed-badge {
+      display: inline-block;
+      padding: 0.2em 0.6em;
+      border-radius: 3px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      vertical-align: middle;
+      margin-left: 0.4em;
+    }
+    .feed-badge.same  { background: #e6f4ea; color: var(--success); border: 1px solid #b7dfb8; }
+    .feed-badge.ext   { background: #fff8e1; color: #856404;         border: 1px solid #fcd97d; }
+
+    /* Auth flow diagram */
+    .auth-flow {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      margin: 1.1rem 0;
+      font-size: 0.88rem;
+      font-family: var(--font-mono);
+    }
+    .af-box {
+      padding: 0.35em 0.75em;
+      border-radius: 4px;
+      white-space: nowrap;
+    }
+    .af-box.pipeline { background: var(--accent);  color: white; }
+    .af-box.conn     { background: var(--warn);    color: white; }
+    .af-box.feed     { background: var(--success); color: white; }
+    .af-box.token    { background: var(--code-bg); color: var(--text-muted); border: 1px solid var(--border); }
+    .af-arrow        { color: var(--text-muted); }
+
+    /* Tab switcher (reuse Lesson 16 style) */
+    .stack-tabs {
+      display: flex;
+      gap: 0;
+      border-bottom: 2px solid var(--border);
+      margin-bottom: 1.25rem;
+    }
+    .stack-tab {
+      padding: 0.5em 1.2em;
+      background: none;
+      border: none;
+      border-bottom: 3px solid transparent;
+      cursor: pointer;
+      font-family: var(--font-body);
+      font-size: 0.93rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: -2px;
+      transition: all 0.12s;
+    }
+    .stack-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .stack-panel { display: none; }
+    .stack-panel.active { display: block; }
+
+    /* Callouts */
+    .callout {
+      padding: 0.9rem 1.1rem;
+      border-radius: 6px;
+      margin: 1rem 0;
+      font-size: 0.93rem;
+      border-left: 4px solid;
+    }
+    .callout.info  { background: #e8f4fd; border-color: var(--accent);  color: #003f6b; }
+    .callout.warn  { background: #fff8e1; border-color: var(--warn);    color: #5a3a00; }
+    .callout.ok    { background: #e6f4ea; border-color: var(--success);  color: #1a4a1a; }
+
+    /* Step annotation */
+    .code-note {
+      background: var(--highlight);
+      border-left: 3px solid var(--warn);
+      padding: 0.6rem 0.9rem;
+      margin: 0.5rem 0;
+      font-size: 0.87rem;
+      border-radius: 0 4px 4px 0;
+    }
+  </style>
+</head>
+<body>
+<main>
+
+  <!-- ── HEADER ─────────────────────────────────────────────── -->
+  <header class="lesson-header">
+    <p class="breadcrumb">Azure CI/CD · Lesson 17</p>
+    <h1>Private Package Feeds in Azure Pipelines</h1>
+    <p style="color:var(--text-muted); margin-top:0.5rem;">
+      Your team hosts internal npm and NuGet packages on Azure Artifacts. This lesson
+      shows exactly how to authenticate to them from a pipeline — and why the
+      <em>same-org vs cross-org</em> distinction determines which approach to use.
+    </p>
+  </header>
+
+  <!-- ── WHY PRIVATE FEEDS ──────────────────────────────────── -->
+  <section style="margin-bottom:2rem;">
+    <h2 style="margin-bottom:0.75rem;">Why private feeds exist</h2>
+    <div class="two-col">
+      <div class="scenario">
+        <h3>Internal shared packages</h3>
+        <p>
+          Your team publishes reusable code (auth helpers, API clients, design tokens)
+          as versioned packages. Internal consumers should not pull from npm/NuGet.org
+          — those packages are private company code.
+        </p>
+      </div>
+      <div class="scenario">
+        <h3>Upstream proxying</h3>
+        <p>
+          Azure Artifacts can proxy public registries (npm.org, nuget.org). Your pipeline
+          only ever talks to one URL. If a public package disappears, the cached copy
+          still exists in your feed.
+        </p>
+      </div>
+    </div>
+    <p>
+      The team's feed is hosted at
+      <code>pkgs.dev.azure.com/EquisoftOrganization/…/_packaging/Libraries/…</code>.
+      Services.Authorization uses it for NuGet; the team's JS projects use a separate
+      npm feed reachable via the <code>Equisoft.npm</code> service connection.
+    </p>
+  </section>
+
+  <!-- ── SAME-ORG VS EXTERNAL ──────────────────────────────── -->
+  <section style="margin-bottom:2rem;">
+    <h2 style="margin-bottom:0.75rem;">The key distinction: same-org vs external feeds</h2>
+
+    <p>
+      Azure DevOps pipelines authenticate to feeds automatically — but only when both the
+      pipeline and the feed live in the <strong>same Azure DevOps organization</strong>.
+    </p>
+
+    <div class="two-col" style="margin-top:1rem;">
+      <div class="scenario" style="border-color:#b7dfb8;">
+        <h3>Same organization <span class="feed-badge same">auto</span></h3>
+        <p>
+          Pipeline lives in <code>EquisoftOrganization</code>.
+          Feed lives in <code>EquisoftOrganization</code>.
+          Azure injects an auth token automatically — no service connection needed.
+        </p>
+      </div>
+      <div class="scenario" style="border-color:#fcd97d;">
+        <h3>External / cross-org <span class="feed-badge ext">manual</span></h3>
+        <p>
+          Feed lives in a different Azure DevOps org, or on ProGet, GitHub Packages, etc.
+          You must create a <strong>service connection</strong> and reference it explicitly.
+        </p>
+      </div>
+    </div>
+
+    <div class="auth-flow">
+      <span class="af-box pipeline">Your pipeline</span>
+      <span class="af-arrow">→</span>
+      <span class="af-box conn">Service connection</span>
+      <span class="af-arrow">→</span>
+      <span class="af-box token">PAT / workload identity</span>
+      <span class="af-arrow">→</span>
+      <span class="af-box feed">Private feed</span>
+    </div>
+
+    <div class="callout info">
+      <strong>Your team's situation:</strong> The npm feed uses an explicit service connection
+      (<code>Equisoft.npm</code>) even though both pipeline and feed appear to be in the same
+      org. This is common when the feed is scoped to a specific project and the pipeline
+      lives in a different project — project-scoped feeds require explicit auth.
+    </div>
+  </section>
+
+  <!-- ── IMPLEMENTATION ─────────────────────────────────────── -->
+  <section style="margin-bottom:2rem;">
+    <h2 style="margin-bottom:0.75rem;">Implementation</h2>
+
+    <div class="stack-tabs">
+      <button class="stack-tab active" onclick="switchTab(this,'node')">Node.js / npm</button>
+      <button class="stack-tab" onclick="switchTab(this,'dotnet')">.NET / NuGet</button>
+    </div>
+
+    <!-- NODE.JS PANEL ─────────────────────────────────────── -->
+    <div class="stack-panel active" id="tab-node">
+
+      <h3 style="margin-bottom:0.75rem;">Option A: <code>customEndpoint</code> in Npm@1 (simplest)</h3>
+      <p style="color:var(--text-muted); font-size:0.93rem; margin-bottom:0.75rem;">
+        This is the team's pattern. The <code>customEndpoint</code> points to a service connection
+        of type <strong>npm</strong>. The Npm@1 task injects auth credentials automatically at
+        run time — you do not manage tokens yourself.
+      </p>
+
+      <pre><code>- task: Npm@1
+  displayName: 'npm ci (private registry)'
+  inputs:
+    command: 'ci'
+    customRegistry: useNpmrc    # ← reads the registry URL from .npmrc
+    customEndpoint: 'Equisoft.npm'   # ← service connection name that holds the PAT</code></pre>
+
+      <div class="code-note">
+        <strong><code>customRegistry: useNpmrc</code></strong> — tells the task to read the
+        registry URL from your <code>.npmrc</code> file rather than using the public registry.
+        The task then authenticates to whichever URL is in <code>.npmrc</code> using the
+        credentials from <code>customEndpoint</code>.
+      </div>
+
+      <h3 style="margin:1.5rem 0 0.75rem;">The <code>.npmrc</code> file (commit to repo)</h3>
+      <pre><code>; .npmrc — at the root of your repository
+registry=https://pkgs.dev.azure.com/EquisoftOrganization/_packaging/LibrariesNpm/npm/registry/
+always-auth=true</code></pre>
+
+      <div class="callout warn">
+        <strong>Do not put credentials in <code>.npmrc</code>.</strong> The URL and
+        <code>always-auth=true</code> are safe to commit. The Npm@1 task injects the PAT at
+        run time via the service connection. Hardcoded tokens in source files are a
+        security incident waiting to happen.
+      </div>
+
+      <h3 style="margin:1.5rem 0 0.75rem;">Creating the npm service connection</h3>
+      <p style="color:var(--text-muted); font-size:0.93rem;">
+        In Azure DevOps: <strong>Project Settings → Service connections → New → npm</strong>
+      </p>
+      <ul style="margin:0.5rem 0 0.75rem 1.5rem; color:var(--text-muted); font-size:0.93rem; line-height:1.8;">
+        <li>Registry URL: the <code>pkgs.dev.azure.com/…/registry/</code> URL</li>
+        <li>Authentication: <strong>Username and Password (Token)</strong></li>
+        <li>Password: a Personal Access Token with <strong>Packaging (Read)</strong> scope</li>
+        <li>Name: <code>Equisoft.npm</code> (match what you put in the pipeline)</li>
+      </ul>
+
+      <h3 style="margin:1.5rem 0 0.75rem;">Combining with the cache from Lesson 16</h3>
+      <pre><code>variables:
+  npm_config_cache: $(Pipeline.Workspace)/.npm
+
+steps:
+  - task: Cache@2
+    inputs:
+      key: 'npm | "$(Agent.OS)" | package-lock.json'
+      restoreKeys: |
+        npm | "$(Agent.OS)"
+      path: $(npm_config_cache)
+
+  - task: Npm@1
+    displayName: 'npm ci'
+    inputs:
+      command: 'ci'
+      customRegistry: useNpmrc
+      customEndpoint: 'Equisoft.npm'   # ← add this to your Lesson 16 snippet</code></pre>
+      <div class="callout ok">
+        The cache is keyed on <code>package-lock.json</code> — packages from the private
+        registry are cached exactly like public packages. Authentication is only needed on
+        a cache miss (first run or after a dependency change).
+      </div>
+    </div>
+
+    <!-- DOTNET PANEL ──────────────────────────────────────── -->
+    <div class="stack-panel" id="tab-dotnet">
+
+      <h3 style="margin-bottom:0.75rem;">Option A: Inline feed selection (same-org feeds)</h3>
+      <p style="color:var(--text-muted); font-size:0.93rem; margin-bottom:0.75rem;">
+        When your pipeline and feed are in the same Azure DevOps organization, reference the
+        feed ID directly in <code>DotNetCoreCLI@2</code>. Azure injects auth automatically.
+      </p>
+      <pre><code>- task: DotNetCoreCLI@2
+  displayName: 'Restore'
+  inputs:
+    command: 'restore'
+    projects: '**/*.csproj'
+    feedsToUse: 'select'
+    vstsFeed: '7b9dd9ad-2823-4d24-b1e5-6d0b0f3c4601/Libraries'
+    # Format: <project-GUID>/<feed-name>
+    # OR just <feed-name> for org-scoped feeds</code></pre>
+
+      <div class="callout info">
+        <strong>Find the feed ID:</strong> In Azure DevOps, go to Artifacts → select the feed →
+        Connect to feed → .NET → copy the source URL. The GUID is the project ID.
+      </div>
+
+      <h3 style="margin:1.5rem 0 0.75rem;">Option B: NuGet.Config + external credentials (Services.Authorization pattern)</h3>
+      <p style="color:var(--text-muted); font-size:0.93rem; margin-bottom:0.75rem;">
+        The team's real approach. The <code>NuGet.Config</code> file is committed to the repo;
+        the pipeline provides credentials for it via a service connection.
+      </p>
+
+      <p style="font-size:0.9rem; font-weight:600; margin-bottom:0.4rem;">NuGet.Config (committed to repo)</p>
+      <pre><code>&lt;?xml version="1.0" encoding="utf-8"?&gt;
+&lt;configuration&gt;
+  &lt;packageSources&gt;
+    &lt;clear /&gt;
+    &lt;add key="DIT.Libraries"
+         value="https://pkgs.dev.azure.com/EquisoftOrganization/7b9dd9ad-2823-4d24-b1e5-6d0b0f3c4601/_packaging/Libraries/nuget/v3/index.json" /&gt;
+  &lt;/packageSources&gt;
+&lt;/configuration&gt;</code></pre>
+
+      <p style="font-size:0.9rem; font-weight:600; margin:1rem 0 0.4rem;">Pipeline YAML</p>
+      <pre><code>- task: DotNetCoreCLI@2
+  displayName: 'Restore'
+  inputs:
+    command: 'restore'
+    projects: '**/*.csproj'
+    feedsToUse: 'config'
+    nugetConfigPath: 'NuGet.Config'
+    externalFeedCredentials: 'Equisoft.nuget'   # ← NuGet service connection name</code></pre>
+
+      <div class="code-note">
+        <strong><code>externalFeedCredentials</code></strong> maps a service connection name to
+        the feed URL defined in <code>NuGet.Config</code>. The task rewrites the config at run
+        time to inject the auth token — the committed config never contains secrets.
+      </div>
+
+      <div class="callout warn">
+        <strong>When to use Option B over A:</strong> Use Option B when your project already
+        has a <code>NuGet.Config</code> that developers use locally (as Services.Authorization
+        does). Developers get auth via their Azure DevOps credential provider; the pipeline gets
+        it via the service connection. One config file serves both contexts.
+      </div>
+    </div>
+  </section>
+
+  <!-- ── COMMON ERRORS ──────────────────────────────────────── -->
+  <section style="margin-bottom:2rem;">
+    <h2 style="margin-bottom:0.75rem;">Common errors &amp; fixes</h2>
+    <table style="width:100%; border-collapse:collapse; font-size:0.88rem;">
+      <thead>
+        <tr>
+          <th style="background:var(--code-bg); padding:0.5rem 0.75rem; text-align:left; border-bottom:2px solid var(--border);">Error</th>
+          <th style="background:var(--code-bg); padding:0.5rem 0.75rem; text-align:left; border-bottom:2px solid var(--border);">Cause</th>
+          <th style="background:var(--code-bg); padding:0.5rem 0.75rem; text-align:left; border-bottom:2px solid var(--border);">Fix</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:0.5rem 0.75rem; border-bottom:1px solid var(--border);">401 Unauthorized</td>
+          <td style="padding:0.5rem 0.75rem; border-bottom:1px solid var(--border);">Service connection not granted access to the pipeline, or PAT expired</td>
+          <td style="padding:0.5rem 0.75rem; border-bottom:1px solid var(--border);">Library → Service connection → Security → add the pipeline; regenerate PAT if expired</td>
+        </tr>
+        <tr>
+          <td style="padding:0.5rem 0.75rem; border-bottom:1px solid var(--border);">404 Not Found on package</td>
+          <td style="padding:0.5rem 0.75rem; border-bottom:1px solid var(--border);">Wrong feed URL, or package only exists in a different feed/scope</td>
+          <td style="padding:0.5rem 0.75rem; border-bottom:1px solid var(--border);">Verify URL in Azure Artifacts → Connect to feed → copy the exact URL</td>
+        </tr>
+        <tr>
+          <td style="padding:0.5rem 0.75rem; border-bottom:1px solid var(--border);">npm ERR! code E401 (no <code>.npmrc</code>)</td>
+          <td style="padding:0.5rem 0.75rem; border-bottom:1px solid var(--border);"><code>.npmrc</code> not committed, or registry URL missing</td>
+          <td style="padding:0.5rem 0.75rem; border-bottom:1px solid var(--border);">Add <code>.npmrc</code> with registry URL + <code>always-auth=true</code>; commit to repo</td>
+        </tr>
+        <tr>
+          <td style="padding:0.5rem 0.75rem; border-bottom:1px solid var(--border);">Service connection not found</td>
+          <td style="padding:0.5rem 0.75rem; border-bottom:1px solid var(--border);">Name in YAML does not exactly match the service connection name</td>
+          <td style="padding:0.5rem 0.75rem; border-bottom:1px solid var(--border);">Check Project Settings → Service connections — names are case-sensitive</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ── QUIZ ──────────────────────────────────────────────── -->
+  <section style="margin-top:2.5rem;">
+    <h2 style="margin-bottom:1rem;">Check your understanding</h2>
+    <div id="quiz-container"></div>
+  </section>
+
+  <!-- ── PRIMARY SOURCE ─────────────────────────────────────── -->
+  <section class="primary-source" style="margin-top:2.5rem; padding:1.25rem; background:var(--highlight); border-radius:8px;">
+    <h3 style="margin-bottom:0.5rem;">Primary source</h3>
+    <p>
+      <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/artifacts/npm" target="_blank">
+        Use npm packages from Azure Artifacts — Azure Pipelines (Microsoft Learn)
+      </a>
+    </p>
+    <p style="font-size:0.9rem; color:var(--text-muted); margin-top:0.5rem;">
+      Covers service connections, <code>.npmrc</code> setup, the <code>Npm@1</code> task options,
+      project-scoped vs org-scoped feeds, and how upstream sources work with private feeds.
+      Companion article for NuGet:
+      <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/artifacts/nuget" target="_blank">
+        Use NuGet packages from Azure Artifacts
+      </a>
+    </p>
+  </section>
+
+  <p style="margin-top:2.5rem; color:var(--text-muted); font-size:0.9rem; border-top:1px solid var(--border); padding-top:1rem;">
+    Getting auth errors? Paste the exact error + which option (A or B) you used and ask your teacher agent.
+    <br>
+    <a href="0016-pipeline-caching.html">← Lesson 16 (pipeline caching)</a>
+    &nbsp;·&nbsp;
+    <a href="0013-build-your-own-pipeline-azure-app-service.html">← Lesson 13 (your pipeline)</a>
+  </p>
+
+</main>
+
+<script src="../assets/quiz.js"></script>
+<script>
+  function switchTab(btn, id) {
+    document.querySelectorAll('.stack-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.stack-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + id).classList.add('active');
+  }
+
+  new Quiz('quiz-container', [
+    {
+      q: 'Your pipeline and feed are both in the same Azure DevOps organization. What auth setup is required?',
+      options: [
+        'A service connection — Azure never injects credentials automatically for any feed',
+        'No extra setup — Azure injects a token automatically for same-org feeds',
+        'A Personal Access Token stored as a secret variable in a variable group',
+        'An .npmrc file with credentials encoded in base64 and committed to the repo'
+      ],
+      answer: 1,
+      explanation: 'For same-org feeds (pipeline and feed in the same Azure DevOps organization), Azure Pipelines automatically injects authentication. No service connection or PAT management is needed. This breaks only for project-scoped feeds in a different project, or external/cross-org feeds.'
+    },
+    {
+      q: 'Why does the team commit `.npmrc` with only the registry URL and `always-auth=true`, never credentials?',
+      options: [
+        'Credentials in .npmrc are ignored by Azure Pipelines — they have no effect',
+        'The Npm@1 task injects credentials at run time via the service connection',
+        'npm always prompts for credentials if they are not in the lock file',
+        'Azure DevOps blocks pushes that contain authentication tokens in any file'
+      ],
+      answer: 1,
+      explanation: 'The Npm@1 task with customEndpoint rewrites or augments .npmrc at run time to inject a valid token from the service connection. The committed .npmrc defines WHERE to look; the task supplies the credential. Hardcoded tokens in source files are a security risk and are also impractical (PATs expire).'
+    },
+    {
+      q: 'In the DotNetCoreCLI@2 restore task, what does `externalFeedCredentials: \'Equisoft.nuget\'` do?',
+      options: [
+        'Creates a new NuGet.Config file overwriting the one committed to the repository',
+        'Maps the named service connection credentials to the feed URL in NuGet.Config',
+        'Adds the Equisoft.nuget feed as an extra source on top of NuGet.org by default',
+        'Stores the PAT as a pipeline variable named Equisoft.nuget for later steps'
+      ],
+      answer: 1,
+      explanation: 'externalFeedCredentials tells the task which service connection to use for each feed source listed in nugetConfigPath. The task rewrites NuGet.Config at run time to inject the auth token for any matching feed URL. The committed config never contains secrets.'
+    },
+    {
+      q: 'You add a private npm package to your project. The pipeline fails with 401 on the first run after adding the cache task. Why?',
+      options: [
+        'The cache causes auth tokens to be skipped — remove Cache@2 when using private feeds',
+        'The cache key must be different for private feeds than for public package installs',
+        'A cache miss runs npm ci normally with auth — the 401 is a service connection issue',
+        'The CACHE_RESTORED variable blocks auth injection when the cache directory exists'
+      ],
+      answer: 2,
+      explanation: 'Caching and authentication are independent. A cache miss runs npm ci as normal, using whatever auth is configured. A 401 here means the service connection is missing, misconfigured, or does not have permission to the pipeline — not a caching problem. Debugging step: temporarily add condition: always() to disable the cache and confirm the 401 reproduces without it.'
+    }
+  ]);
+</script>
+</body>
+</html>

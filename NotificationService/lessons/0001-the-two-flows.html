@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 1: The Two Flows — Notification Service</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<nav class="breadcrumb">Notification Service &rsaquo; Lesson 1 of 6</nav>
+
+<header class="lesson-header">
+  <p class="lesson-number">Lesson 1</p>
+  <h1>The Two Flows</h1>
+  <p class="subtitle">How a notification travels from an API call to a live browser tab</p>
+  <div class="objectives">
+    <p><strong>After this lesson you can:</strong></p>
+    <ul>
+      <li>Explain how a browser registers itself to receive notifications</li>
+      <li>Trace a notification from a REST call all the way to a browser event handler</li>
+      <li>Describe what the circuit breaker does when Redis fails</li>
+    </ul>
+  </div>
+</header>
+
+<main>
+
+<section>
+  <h2>The Big Picture</h2>
+  <p>The Notification Service is a <strong>relay</strong>. It does not generate notifications — it delivers them. When another microservice wants to tell a user something, it sends a REST request here. This service finds the user's live browser connection and pushes the message in real time.</p>
+  <p>Two distinct flows make this possible. You must understand both before you can confidently maintain or extend this service.</p>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section>
+  <h2>Flow 1 — Connection Registration</h2>
+  <p>Before any notification can reach a browser, the browser must <em>register itself</em>. This happens when the front-end application loads.</p>
+
+  <ol class="flow-steps">
+    <li>
+      <div class="step-content">
+        <strong>Browser opens a WebSocket</strong>
+        <p>The browser connects to <code>/hubs/notifications</code>, passing its JWT as a query parameter (<code>?access_token=…</code>). SignalR negotiates the transport — preferring WebSocket — and the connection is held open for the life of the session.</p>
+      </div>
+    </li>
+    <li>
+      <div class="step-content">
+        <strong>Hub assigns a ConnectionId</strong>
+        <p><code>NotificationHub.OnConnectedAsync()</code> fires automatically. SignalR assigns the socket a unique <code>ConnectionId</code> string. The hub adds this connection to the <em>"Authenticated SignalR Users"</em> group.</p>
+      </div>
+    </li>
+    <li>
+      <div class="step-content">
+        <strong>Browser calls <code>SetApplicationId</code></strong>
+        <p>The front-end immediately invokes a hub method, passing an <code>applicationId</code> — a Guid that identifies this specific browser tab or application instance. This step is essential: without it, the connection is open but cannot be associated with an application for keep-alive targeting.</p>
+      </div>
+    </li>
+    <li>
+      <div class="step-content">
+        <strong>Mapping stored in Redis</strong>
+        <p><code>KeepAliveManagementService.LinkAsync()</code> writes the connection record to Redis:</p>
+        <pre><code>// Stored under a key derived from userId + applicationId
+CachedConnectionIdentifier {
+    ConnectionId  = "abc123…",   // SignalR-assigned socket ID
+    UserId        = "user-42",
+    ApplicationId = Guid("efa9…")
+}</code></pre>
+        <p>If the same user reconnects with the same <code>applicationId</code>, the old record is <strong>replaced</strong>. Only one active connection per user per application is ever held — this handles browser refreshes and reconnects cleanly.</p>
+      </div>
+    </li>
+  </ol>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section>
+  <h2>Flow 2 — Notification Delivery</h2>
+  <p>Once a connection is registered, any other microservice can push a notification. Here is how a request travels through the system.</p>
+
+  <ol class="flow-steps">
+    <li>
+      <div class="step-content">
+        <strong>Caller POSTs to <code>/api/v1/notifications</code></strong>
+        <p>Another service sends a JSON body:</p>
+        <pre><code>POST /api/v1/notifications
+{
+    "userId":  "user-42",          // required
+    "code":    "POLICY_APPROVED",  // required — event type identifier
+    "subject": "Your policy is approved",  // optional
+    "body":    "…"                 // optional
+}</code></pre>
+      </div>
+    </li>
+    <li>
+      <div class="step-content">
+        <strong>Controller looks up the connection</strong>
+        <p><code>NotificationsController</code> queries the cache manager by <code>userId</code>. It gets back the <code>CachedConnectionIdentifier</code>, which contains the live <code>ConnectionId</code> — the socket address for that user's current browser session.</p>
+      </div>
+    </li>
+    <li>
+      <div class="step-content">
+        <strong>Hub context pushes the message</strong>
+        <p>Using <code>IHubContext&lt;NotificationHub&gt;</code>, the controller calls a method on that specific client:</p>
+        <pre><code>await _hubContext.Clients
+    .Client(connectionId)
+    .SendAsync("notificationReceived", new {
+        code    = model.Code,
+        subject = model.Subject,
+        body    = model.Body
+    });</code></pre>
+        <p><code>IHubContext</code> is the key interface that lets ordinary ASP.NET code — controllers, background services — push SignalR messages without being inside a hub class itself.</p>
+      </div>
+    </li>
+    <li>
+      <div class="step-content">
+        <strong>Browser fires its event handler</strong>
+        <p>The SignalR client library in the browser fires the registered <code>notificationReceived</code> handler with <code>{ code, subject, body }</code>. The front-end reacts — displaying an alert, refreshing a panel, or whatever behaviour the application defines for that <code>code</code>.</p>
+      </div>
+    </li>
+  </ol>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section>
+  <h2>What Happens When Redis Goes Down?</h2>
+  <p>Redis serves as both the connection registry and the SignalR backplane. A Redis outage would normally break the service entirely. Two mechanisms working together prevent that.</p>
+
+  <div class="callout">
+    <div class="callout-steps">
+      <div class="callout-step">
+        <span class="callout-icon">①</span>
+        <div><strong>Redis throws an exception</strong> — a cache read or write fails.</div>
+      </div>
+      <div class="callout-step">
+        <span class="callout-icon">②</span>
+        <div><strong>Circuit breaker opens</strong> — after 1 failure (configurable via <code>circuitBreaker.exceptionsAllowedBeforeBreaking</code>), the Polly circuit breaker opens. Redis is not called again for 60 seconds. The service logs the break.</div>
+      </div>
+      <div class="callout-step">
+        <span class="callout-icon">③</span>
+        <div><strong>In-memory cache takes over</strong> — all connection lookups fall through to a local <code>IMemoryCache</code>. The service continues to accept and deliver notifications, using whatever connection state it holds locally.</div>
+      </div>
+      <div class="callout-step">
+        <span class="callout-icon">④</span>
+        <div><strong>Circuit half-opens at 60 seconds</strong> — one probe request is sent to Redis. If it succeeds, the circuit closes and normal operation resumes. The service logs the reset.</div>
+      </div>
+    </div>
+  </div>
+
+  <p class="aside"><strong>Important operational caveat:</strong> while the circuit is open, connection state lives only in each service instance's local memory. In a multi-replica deployment (e.g. Kubernetes with 3 pods), a browser registered on pod A will not be found by pod B during the outage — and any notification routed to pod B for that user will be silently dropped.</p>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section class="quiz-section">
+  <h2>Check Your Understanding</h2>
+  <p>Click an option to check your answer immediately.</p>
+
+  <div class="quiz-question" data-answer="2">
+    <p class="question-text">1. What transport does the browser use to hold a live connection to the Notification Service?</p>
+    <div class="quiz-options">
+      <div class="quiz-option">HTTP long-polling</div>
+      <div class="quiz-option">Server-Sent Events (SSE)</div>
+      <div class="quiz-option">WebSocket via SignalR</div>
+      <div class="quiz-option">gRPC bidirectional stream</div>
+    </div>
+    <div class="feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-answer="3">
+    <p class="question-text">2. Where does the service store the mapping from a user to their active SignalR connection?</p>
+    <div class="quiz-options">
+      <div class="quiz-option">An in-process Dictionary</div>
+      <div class="quiz-option">A SQL database row</div>
+      <div class="quiz-option">The hub's internal state</div>
+      <div class="quiz-option">Redis distributed cache</div>
+    </div>
+    <div class="feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-answer="1">
+    <p class="question-text">3. What must the browser call on the hub right after connecting?</p>
+    <div class="quiz-options">
+      <div class="quiz-option">OnConnectedAsync()</div>
+      <div class="quiz-option">SetApplicationId(appId)</div>
+      <div class="quiz-option">RegisterUserId(userId)</div>
+      <div class="quiz-option">JoinGroup("notifications")</div>
+    </div>
+    <div class="feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-answer="2">
+    <p class="question-text">4. When the Polly circuit breaker opens due to Redis failure, what happens to connection lookups?</p>
+    <div class="quiz-options">
+      <div class="quiz-option">They queue and retry Redis later</div>
+      <div class="quiz-option">They return 503 to the caller</div>
+      <div class="quiz-option">They use the in-memory cache</div>
+      <div class="quiz-option">They broadcast to all users</div>
+    </div>
+    <div class="feedback"></div>
+  </div>
+</section>
+
+<!-- ─────────────────────────────────────────────── -->
+<section class="primary-source">
+  <h2>Go Deeper</h2>
+  <p><strong>Recommended reading:</strong> <a href="https://learn.microsoft.com/en-us/aspnet/core/signalr/introduction" target="_blank">Introduction to ASP.NET Core SignalR — Microsoft Docs</a>. Read the "Hubs" section to see exactly how <code>OnConnectedAsync</code>, client method invocation, and <code>IHubContext</code> fit together. This is the authoritative source for every SignalR concept covered in this lesson.</p>
+</section>
+
+</main>
+
+<footer class="lesson-footer">
+  <p class="ask-teacher">Questions about this lesson? <strong>Ask your teacher</strong> — reply in the chat and I'll clarify anything unclear, go deeper on any concept, or walk through the actual source code with you line by line.</p>
+  <p><a href="0002-signalr-hubs-in-depth.html">Next lesson: SignalR Hubs in Depth &rarr;</a></p>
+</footer>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

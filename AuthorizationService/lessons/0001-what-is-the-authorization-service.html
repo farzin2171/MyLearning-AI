@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lesson 01 — What Is the Authorization Service?</title>
+  <link rel="stylesheet" href="../assets/style.css" />
+</head>
+<body>
+<div class="lesson-container">
+
+  <!-- ── Header ─────────────────────────────────────────── -->
+  <header class="lesson-header">
+    <div class="lesson-meta">Lesson 01 · Authorization Service · Foundations</div>
+    <h1 class="lesson-title">What Is the Authorization Service?</h1>
+    <p class="lesson-subtitle">The big picture: what problem it solves, how it is structured, and the four core building blocks.</p>
+  </header>
+
+  <!-- ── 1. The Problem ──────────────────────────────────── -->
+  <h2>The Problem It Solves</h2>
+
+  <p>
+    Every microservice on the platform needs to answer one question before it does any work:
+    <strong>"Is this caller allowed to do this?"</strong>
+    Without a central answer, each service would have to maintain its own copy of permission rules —
+    a recipe for drift, inconsistency, and security bugs.
+  </p>
+
+  <p>
+    The Authorization Service is the single source of truth for that question.
+    Every other service that needs to make an access decision calls it first.
+  </p>
+
+  <div class="callout key">
+    <div class="callout-title">The core contract</div>
+    <p>
+      Call <code>GET /api/v1/authorize?key={accessKey}</code> and get back <code>"Allow"</code> or <code>"Deny"</code>.
+      That's it. The complexity of policies, roles, external providers, and caching is hidden behind this simple answer.
+    </p>
+  </div>
+
+  <!-- ── 2. The Four Building Blocks ────────────────────── -->
+  <h2>The Four Building Blocks</h2>
+
+  <p>Authorization decisions are the result of combining four concepts:</p>
+
+  <h3>1. Permission</h3>
+  <p>
+    The most granular unit. A <strong>Permission</strong> is a named capability: something like
+    <code>policy.read</code>, <code>client.create</code>, or <code>report.export</code>.
+    Each permission has a unique <code>Key</code> within a tenant.
+    Permissions are what access keys ultimately resolve to.
+  </p>
+
+  <h3>2. Role</h3>
+  <p>
+    A <strong>Role</strong> is a named group of permissions (and sometimes other roles).
+    Rather than assigning dozens of permissions to a user directly,
+    you assign them a role: <code>underwriter</code>, <code>admin</code>, <code>readonly-agent</code>.
+    This is the "internal role" — distinct from external roles (see below).
+  </p>
+
+  <h3>3. Policy</h3>
+  <p>
+    A <strong>Policy</strong> is the assignment vehicle. It connects <em>who</em> to <em>what</em>.
+    A policy bundles Roles and Permissions together, and is assigned to users.
+    Crucially, policies are <strong>hierarchical</strong>: a child policy inherits everything from its parent.
+    This lets you build a tree of access — product-level → tenant-level → feature-level — without repeating rules.
+  </p>
+
+  <div class="diagram">Policy Tree (example)
+
+  [Root Policy: BasicAccess]
+    ├── permission: dashboard.view
+    └── [Child Policy: UnderwriterAccess]
+          ├── role: underwriter
+          └── permission: policy.submit
+
+  A user assigned UnderwriterAccess
+  gets dashboard.view + underwriter role + policy.submit
+  </div>
+
+  <h3>4. External Role</h3>
+  <p>
+    The platform does not control all identity systems. Users may have roles defined in
+    <strong>Azure AD, OIPA, a custom API, or via JWT claims</strong>.
+    An <strong>External Role</strong> maps an identity from one of these external providers
+    into the internal Role/Permission system.
+  </p>
+  <p>
+    At authorization time, the service queries the configured external providers for the user,
+    translates those external roles into internal ones, and evaluates the whole picture together.
+  </p>
+
+  <div class="callout info">
+    <div class="callout-title">Why External Roles matter</div>
+    <p>
+      A user might never appear in the service's own database. Their identity lives in Azure AD.
+      External roles are the bridge — without them, those users would always be denied.
+    </p>
+  </div>
+
+  <!-- ── 3. The Four-Layer Architecture ─────────────────── -->
+  <h2>The Four-Layer Architecture</h2>
+
+  <p>The service is built on clean architecture with four distinct layers:</p>
+
+  <div class="diagram">┌─────────────────────────────────────────────────┐
+│  Equisoft.AuthorizationService  (Web API)        │
+│  Controllers · Filters · DI modules             │
+├─────────────────────────────────────────────────┤
+│  Equisoft.AuthorizationService.Services          │
+│  Business logic · Factory pattern · Providers    │
+├─────────────────────────────────────────────────┤
+│  Equisoft.AuthorizationService.Data              │
+│  EF Core DbContext · Repositories · Dapper SPs  │
+├─────────────────────────────────────────────────┤
+│  Equisoft.AuthorizationService.Domain            │
+│  Domain models · Cache manager · Constants       │
+└─────────────────────────────────────────────────┘</div>
+
+  <p>Each layer depends only on layers below it. The Web API layer never talks to the database directly.</p>
+
+  <!-- ── 4. The Two Primary Endpoints ───────────────────── -->
+  <h2>The Two Primary Endpoints</h2>
+
+  <p>Everyday consumers of the service use exactly two endpoints:</p>
+
+  <table style="width:100%; border-collapse:collapse; font-family:sans-serif; font-size:0.85rem; margin:1rem 0 1.5rem;">
+    <thead>
+      <tr style="border-bottom:2px solid #ddd;">
+        <th style="text-align:left; padding:0.5rem 0.7rem;">Endpoint</th>
+        <th style="text-align:left; padding:0.5rem 0.7rem;">Returns</th>
+        <th style="text-align:left; padding:0.5rem 0.7rem;">Use case</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr style="border-bottom:1px solid #eee;">
+        <td style="padding:0.5rem 0.7rem;"><code>GET /authorize?key=X</code></td>
+        <td style="padding:0.5rem 0.7rem;"><code>Allow</code> / <code>Deny</code></td>
+        <td style="padding:0.5rem 0.7rem;">Guard a specific feature (one key = one permission check)</td>
+      </tr>
+      <tr>
+        <td style="padding:0.5rem 0.7rem;"><code>GET /evaluate</code></td>
+        <td style="padding:0.5rem 0.7rem;"><code>string[]</code> of access keys</td>
+        <td style="padding:0.5rem 0.7rem;">Get the full permission set for a user (to populate a UI)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <div class="callout-title">Management endpoints are service-account only</div>
+    <p>
+      <code>POST /management/policies</code>, <code>/management/roles</code>, etc. require a service account token.
+      Regular user JWTs are rejected by <code>ServiceAccountAuthorizeFilter</code>.
+    </p>
+  </div>
+
+  <!-- ── 5. Key Terms Glossary ──────────────────────────── -->
+  <h2>Quick Reference: Key Terms</h2>
+
+  <dl style="font-family:sans-serif; font-size:0.88rem;">
+    <dt style="font-weight:700; margin-top:0.8rem;">Permission</dt>
+    <dd style="margin-left:1.2rem; color:var(--muted);">A named, atomic capability. The finest grain of access control.</dd>
+
+    <dt style="font-weight:700; margin-top:0.8rem;">Role</dt>
+    <dd style="margin-left:1.2rem; color:var(--muted);">A named bundle of permissions (internal to this service).</dd>
+
+    <dt style="font-weight:700; margin-top:0.8rem;">Policy</dt>
+    <dd style="margin-left:1.2rem; color:var(--muted);">Assigns roles/permissions to users. Forms a hierarchy (parent → child inheritance).</dd>
+
+    <dt style="font-weight:700; margin-top:0.8rem;">External Role</dt>
+    <dd style="margin-left:1.2rem; color:var(--muted);">A role from an outside provider (Azure AD, OIPA, custom API, claims) mapped into internal roles/permissions.</dd>
+
+    <dt style="font-weight:700; margin-top:0.8rem;">External Role Provider</dt>
+    <dd style="margin-left:1.2rem; color:var(--muted);">A plugin (one of five types: CustomApi, Oipa, Claims, Assistant, MicrosoftGraph) that retrieves external roles for a user.</dd>
+
+    <dt style="font-weight:700; margin-top:0.8rem;">Access Key</dt>
+    <dd style="margin-left:1.2rem; color:var(--muted);">A string identifier for a specific permission, used as the lookup key in <code>/authorize</code>.</dd>
+
+    <dt style="font-weight:700; margin-top:0.8rem;">TenantId</dt>
+    <dd style="margin-left:1.2rem; color:var(--muted);">All entities (policies, roles, permissions) are scoped to a tenant. The service is multi-tenant by design.</dd>
+  </dl>
+
+  <!-- ── Quiz ───────────────────────────────────────────── -->
+  <h2>Check Your Understanding</h2>
+  <div class="quiz">
+    <div class="quiz-title">Self-check — pick the best answer for each question</div>
+
+    <div class="quiz-q">
+      <p>1. A user is denied access to a feature. You suspect they have the right Role but not the right Policy. What is most likely missing?</p>
+      <button class="quiz-option" data-correct="false">
+        The Role does not include the required Permission
+      </button>
+      <button class="quiz-option" data-correct="true"
+        data-explanation="✓ Correct. Roles and Permissions are defined in the system, but a Policy is what assigns them to a user. Without a Policy linking the user to the Role, the Role is irrelevant.">
+        The user has not been assigned a Policy that includes the Role
+      </button>
+      <button class="quiz-option" data-correct="false">
+        The Permission does not exist in the database
+      </button>
+      <button class="quiz-option" data-correct="false">
+        The External Role Provider has not been configured
+      </button>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-q">
+      <p>2. Your service needs to know <em>all</em> access keys a user has, to build a dynamic menu. Which endpoint do you call?</p>
+      <button class="quiz-option" data-correct="false">
+        GET /authorize?key=* (wildcard)
+      </button>
+      <button class="quiz-option" data-correct="false">
+        POST /management/policies
+      </button>
+      <button class="quiz-option" data-correct="true"
+        data-explanation="✓ Correct. /evaluate returns the full list of access keys for the authenticated user — exactly what a UI needs to decide which menu items to show.">
+        GET /evaluate
+      </button>
+      <button class="quiz-option" data-correct="false">
+        GET /authorize?key=all
+      </button>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-q">
+      <p>3. A user's roles are managed in Azure Active Directory, not in the Authorization Service database. What makes their access work?</p>
+      <button class="quiz-option" data-correct="false">
+        They must also be assigned an internal Role with the same name
+      </button>
+      <button class="quiz-option" data-correct="false">
+        A Policy must be seeded with their Azure AD user ID
+      </button>
+      <button class="quiz-option" data-correct="true"
+        data-explanation="✓ Correct. The MicrosoftGraph External Role Provider fetches the user's Azure AD roles and maps them to internal Roles/Permissions. No separate internal assignment is needed.">
+        A MicrosoftGraph External Role Provider maps their AD roles to internal permissions
+      </button>
+      <button class="quiz-option" data-correct="false">
+        Azure AD roles bypass the Authorization Service entirely
+      </button>
+      <div class="quiz-feedback"></div>
+    </div>
+
+    <div class="quiz-q">
+      <p>4. A child Policy is assigned to a user. Its parent Policy grants <code>dashboard.view</code>. Does the user have <code>dashboard.view</code>?</p>
+      <button class="quiz-option" data-correct="true"
+        data-explanation="✓ Correct. Child policies inherit all permissions and roles from their parent. Assigning the child policy implicitly grants everything the parent grants.">
+        Yes — child policies inherit all permissions from their parent
+      </button>
+      <button class="quiz-option" data-correct="false">
+        No — the child policy must explicitly list all permissions
+      </button>
+      <button class="quiz-option" data-correct="false">
+        Only if the child policy has the same TenantId as the parent
+      </button>
+      <button class="quiz-option" data-correct="false">
+        Only if the permission is also assigned via an External Role
+      </button>
+      <div class="quiz-feedback"></div>
+    </div>
+
+  </div>
+
+  <!-- ── What's Next ─────────────────────────────────────── -->
+  <h2>What's Next</h2>
+  <p>
+    In the next lesson we will trace a real authorization request from the moment a JWT arrives at the API
+    through the factory pattern, the cache lookup, the stored procedure, and back to <code>Allow</code> or <code>Deny</code>.
+    That end-to-end trace is where the architecture becomes concrete.
+  </p>
+
+  <!-- ── Primary Source ─────────────────────────────────── -->
+  <h2>Primary Source</h2>
+  <p>
+    The most trustworthy reading for this lesson is the codebase itself — specifically
+    <code>AuthorizeController.cs</code> and <code>EvaluateController.cs</code>
+    in <code>src/Equisoft.AuthorizationService/V1/Controllers/</code>.
+    Read each action method and trace which service it delegates to.
+    That is the canonical source of truth for what these endpoints actually do.
+  </p>
+
+  <!-- ── Footer ─────────────────────────────────────────── -->
+  <footer class="lesson-footer">
+    <div>Lesson 01 of the Authorization Service series · 2026-06-22</div>
+    <div class="ask-teacher">
+      <strong>Questions?</strong> Ask your Claude Code agent anything that was unclear.
+      Good follow-up questions: "Walk me through what happens when a user is assigned two policies",
+      "Show me the actual Policy entity in the database", or
+      "What happens if the External Role Provider is down?"
+    </div>
+  </footer>
+
+</div>
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

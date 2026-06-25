@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Service Flows Comparison — Quick Reference</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    table { width: 100%; border-collapse: collapse; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 0.875rem; margin: 1rem 0; }
+    th { background: var(--accent); color: #fff; text-align: left; padding: 0.5rem 0.75rem; }
+    th.notif { background: #1d4ed8; }
+    th.ka    { background: #7c3aed; }
+    td { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+    tr:nth-child(even) td { background: var(--light); }
+    .ref-section { margin-bottom: 2.5rem; }
+    @media print { body { max-width: none; padding: 1rem; } }
+  </style>
+</head>
+<body>
+
+<nav class="breadcrumb"><a href="../lessons/0004-the-keep-alive-flow.html">← Lesson 4</a></nav>
+
+<header class="lesson-header">
+  <p class="lesson-number">Reference</p>
+  <h1>Service Flows Comparison</h1>
+  <p class="subtitle">Notifications vs. Keep-Alive — side by side</p>
+</header>
+
+<main>
+
+<div class="ref-section">
+  <h2>Side-by-Side Comparison</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="background:#374151;">Property</th>
+        <th class="notif">Notification Flow</th>
+        <th class="ka">Keep-Alive Flow</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Endpoint</strong></td>
+        <td><code>POST /api/v1/notifications</code></td>
+        <td><code>POST /api/v1/keepalive</code></td>
+      </tr>
+      <tr>
+        <td><strong>Request body</strong></td>
+        <td><code>{ userId, code, subject?, body? }</code></td>
+        <td><code>{ userId, applicationId }</code></td>
+      </tr>
+      <tr>
+        <td><strong>Redis lookup?</strong></td>
+        <td>No — SignalR routes by user</td>
+        <td>Yes — <code>GetConnectionIdListAsync</code></td>
+      </tr>
+      <tr>
+        <td><strong>Routing method</strong></td>
+        <td><code>Clients.User(userId)</code></td>
+        <td><code>Clients.Clients(connectionIds)</code></td>
+      </tr>
+      <tr>
+        <td><strong>Reaches</strong></td>
+        <td>All connections for the user (every tab, every instance)</td>
+        <td>Only connections for that specific applicationId + userId</td>
+      </tr>
+      <tr>
+        <td><strong>Client event name</strong></td>
+        <td><code>notificationReceived</code></td>
+        <td><code>keepAliveReceived</code></td>
+      </tr>
+      <tr>
+        <td><strong>Payload</strong></td>
+        <td><code>{ code, subject, body }</code></td>
+        <td>None — event only</td>
+      </tr>
+      <tr>
+        <td><strong>HTTP response</strong></td>
+        <td>200 OK</td>
+        <td>204 No Content</td>
+      </tr>
+      <tr>
+        <td><strong>Controller</strong></td>
+        <td><code>NotificationsController</code></td>
+        <td><code>KeepAliveController</code></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="ref-section">
+  <h2>Connection Registration (shared by both flows)</h2>
+  <pre><code>// 1. Browser opens WebSocket
+GET /hubs/notifications?access_token=...
+
+// 2. Hub assigns ConnectionId, joins group
+OnConnectedAsync() → Groups.AddToGroupAsync(ConnectionId, "Authenticated SignalR Users")
+
+// 3. Browser registers applicationId
+SetApplicationId(appId) → KeepAliveManagementService.LinkAsync(appId, ConnectionId, UserId)
+
+// 4. Stored in Redis:
+Key:   appId.ToString()
+Value: [{ connectionId, userId, applicationId }]
+TTL:   3600s</code></pre>
+</div>
+
+<div class="ref-section">
+  <h2>The Single-Connection Guarantee</h2>
+  <p style="font-family: -apple-system, sans-serif; font-size: 0.875rem;">When <code>LinkAsync</code> is called for a <code>userId</code> that already has an entry under the same <code>applicationId</code>, the old entry is <strong>replaced</strong> (not accumulated). One active connection per <code>userId + applicationId</code> at all times. A browser refresh replaces the old record automatically.</p>
+</div>
+
+<div class="ref-section">
+  <h2>Two Redis Stores — Don't Confuse Them</h2>
+  <table>
+    <thead><tr><th>Store</th><th>Managed by</th><th>Used for</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>SignalR Redis backplane</td>
+        <td>SignalR/ASP.NET automatically</td>
+        <td><code>Clients.User(userId)</code> routing in notification flow</td>
+      </tr>
+      <tr>
+        <td>Application cache (<code>NotificationServiceCacheManager</code>)</td>
+        <td><code>KeepAliveManagementService</code></td>
+        <td>Connection ID lookup for keep-alive flow only</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+</main>
+
+<footer class="lesson-footer" style="border-top: 1px solid var(--border); padding-top: 1.5rem; margin-top: 2rem; font-family: -apple-system, sans-serif; font-size: 0.875rem;">
+  <a href="../lessons/0004-the-keep-alive-flow.html">← Back to Lesson 4</a>
+  &nbsp;&nbsp;|&nbsp;&nbsp;
+  <a href="signalr-hub-patterns.html">SignalR Hub Patterns →</a>
+  &nbsp;&nbsp;|&nbsp;&nbsp;
+  <a href="caching-layer.html">Caching Layer →</a>
+</footer>
+
+</body>
+</html>

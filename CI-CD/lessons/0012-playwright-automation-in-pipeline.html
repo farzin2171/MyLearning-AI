@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lesson 12 — Playwright Automation Tests in the Pipeline</title>
+  <link rel="stylesheet" href="../assets/style.css" />
+  <style>
+    /* Data flow diagram */
+    .flow-row {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      margin: 0.45rem 0;
+      flex-wrap: wrap;
+    }
+    .flow-source {
+      background: var(--code-bg);
+      border: 1.5px solid var(--border);
+      border-radius: 5px;
+      padding: 0.35rem 0.75rem;
+      font-family: var(--font-mono);
+      font-size: 0.81rem;
+      white-space: nowrap;
+    }
+    .flow-source.param { border-color: var(--accent); background: #eef6ff; }
+    .flow-source.env   { border-color: var(--warn);   background: #fdf6ec; }
+    .flow-source.code  { border-color: var(--success); background: #f0faf0; }
+    .flow-arrow { color: var(--text-muted); font-size: 1rem; }
+    .flow-desc  { font-size: 0.82rem; color: var(--text-muted); }
+
+    /* Two-column code compare */
+    .code-compare {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.8rem;
+      margin: 1rem 0;
+    }
+    @media (max-width: 600px) { .code-compare { grid-template-columns: 1fr; } }
+    .cc-box { overflow: hidden; border-radius: 5px; border: 1px solid var(--border); }
+    .cc-head {
+      background: var(--code-bg);
+      padding: 0.3rem 0.75rem;
+      font-size: 0.77rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+    }
+    .cc-head.pipeline { color: var(--accent); }
+    .cc-head.csharp   { color: var(--success); }
+    .cc-box pre { margin: 0; border: none; border-radius: 0; }
+
+    /* Category badge */
+    .cat-badge {
+      display: inline-block;
+      background: #fff4ce;
+      border: 1.5px solid var(--warn);
+      border-radius: 4px;
+      padding: 0.15em 0.5em;
+      font-family: var(--font-mono);
+      font-size: 0.82em;
+      color: var(--warn);
+      font-weight: 700;
+    }
+
+    .callout {
+      border-left: 4px solid var(--accent);
+      background: #eef6ff;
+      padding: 0.9rem 1rem;
+      margin: 1.5rem 0;
+      border-radius: 0 4px 4px 0;
+    }
+    .callout.tip  { border-left-color: var(--success); background: #f0faf0; }
+    .callout.warn { border-left-color: var(--warn); background: #fdf6ec; }
+    .callout p { margin: 0; }
+    .callout p + p { margin-top: 0.5rem; }
+
+    code { background: var(--code-bg); padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.84em; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.86rem; margin: 0.75rem 0 1.25rem; }
+    th { background: var(--code-bg); text-align: left; padding: 0.38rem 0.7rem; border-bottom: 2px solid var(--border); }
+    td { padding: 0.38rem 0.7rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+    tr:last-child td { border-bottom: none; }
+  </style>
+</head>
+<body>
+  <article>
+    <header>
+      <p class="lesson-number">Lesson 12 of <em>Azure CI/CD with Azure Pipelines</em> — deep-dive: <em>Applications.Apply</em></p>
+      <h1>Playwright Automation Tests in the Pipeline</h1>
+      <p class="subtitle">How pipeline parameters travel through environment variables into C# test code — and how to debug a failed test run</p>
+    </header>
+
+    <!-- ── OVERVIEW ───────────────────────────────────── -->
+    <section>
+      <h2>What you're dealing with</h2>
+      <p>The <code>automated-tests.yml</code> template runs C# + NUnit tests that use <strong>Microsoft.Playwright.NUnit</strong> — the .NET binding of Playwright (not the JavaScript version). Each test opens a real browser, navigates the live application, and asserts on what it sees. Understanding how the pipeline controls this is essential for debugging failed runs and for adding new tests.</p>
+    </section>
+
+    <!-- ── DATA FLOW ──────────────────────────────────── -->
+    <section>
+      <h2>How pipeline parameters reach the C# test code</h2>
+      <p>The data flow has three hops: template parameter → environment variable → C# code reading it.</p>
+
+      <div style="margin: 1.25rem 0;">
+        <div class="flow-row">
+          <div class="flow-source param">parameters.baseUrl</div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-source env">env: BASE_URL</div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-source code">Environment.GetEnvironmentVariable("BASE_URL")</div>
+          <div class="flow-desc">— target URL for the live environment</div>
+        </div>
+        <div class="flow-row">
+          <div class="flow-source param">parameters.deviceName</div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-source env">env: DEVICE_NAME</div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-source code">Environment.GetEnvironmentVariable("DEVICE_NAME")</div>
+          <div class="flow-desc">— which device to emulate</div>
+        </div>
+        <div class="flow-row">
+          <div class="flow-source param">parameters.browserName</div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-source env">Playwright.BrowserName runsetting</div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-source code">PageTest internals</div>
+          <div class="flow-desc">— which browser engine (chromium, webkit, firefox)</div>
+        </div>
+        <div class="flow-row">
+          <div class="flow-source param">parameters.expectTimout</div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-source env">Playwright.ExpectTimeout runsetting</div>
+          <div class="flow-arrow">→</div>
+          <div class="flow-source code">PageTest internals</div>
+          <div class="flow-desc">— how long Expect() waits (default 45 000 ms)</div>
+        </div>
+      </div>
+
+      <div class="code-compare">
+        <div class="cc-box">
+          <div class="cc-head pipeline">automated-tests.yml (pipeline)</div>
+          <pre><code>- task: DotNetCoreCLI@2
+  env:
+    BASE_URL: "${{ parameters.baseUrl }}"
+    DEVICE_NAME: "${{ parameters.deviceName }}"
+  inputs:
+    command: test
+    arguments: >
+      --filter "Category=Deployment"
+      Playwright.BrowserName=
+        ${{ parameters.browserName }}
+      Playwright.ExpectTimeout=
+        ${{ parameters.expectTimout }}</code></pre>
+        </div>
+        <div class="cc-box">
+          <div class="cc-head csharp">Main.cs (C# test)</div>
+          <pre><code>public string GetBaseURL() {
+  var baseURL =
+    Environment.GetEnvironmentVariable(
+      "BASE_URL");
+  // throws if not set
+  return baseURL;
+}
+
+public override BrowserNewContextOptions
+  ContextOptions() {
+  var deviceName =
+    Environment.GetEnvironmentVariable(
+      "DEVICE_NAME");
+  var device = Playwright.Devices[deviceName];
+  // uses Playwright device registry
+}</code></pre>
+        </div>
+      </div>
+
+      <div class="callout">
+        <p><strong>The <code>Playwright.BrowserName</code> and <code>Playwright.ExpectTimeout</code> values</strong> are passed as MSTest/NUnit runsettings (<code>-- KEY=VALUE</code> after the double dash in <code>dotnet test</code>). They're consumed internally by <code>Microsoft.Playwright.NUnit</code>'s <code>PageTest</code> base class — your code doesn't read them directly; Playwright's test infrastructure uses them to launch the correct browser and configure timeouts.</p>
+      </div>
+    </section>
+
+    <!-- ── CATEGORY FILTER ────────────────────────────── -->
+    <section>
+      <h2>Why only some tests run in the pipeline</h2>
+      <p>The pipeline passes <code>--filter "Category=Deployment"</code> to <code>dotnet test</code>. This runs only tests decorated with <span class="cat-badge">[Category("Deployment")]</span>.</p>
+
+      <div class="code-compare">
+        <div class="cc-box">
+          <div class="cc-head csharp">Runs in pipeline smoke test</div>
+          <pre><code>[Test, Category("Deployment")]
+public async Task ApplyForms()
+{
+  // login, create app, delete app,
+  // navigate pages — a full happy path
+  await Login(Page, Users.User1);
+  await Expect(Page.GetByRole(
+    AriaRole.Heading,
+    new() { Name = "Application Overview" }
+  )).ToBeVisibleAsync();
+  // ...
+}</code></pre>
+        </div>
+        <div class="cc-box">
+          <div class="cc-head csharp">Does NOT run in smoke test</div>
+          <pre><code>[Test]
+// no Category("Deployment") —
+// only runs in nightly full matrix
+public async Task AppCaptureForms()
+{
+  // deeper AppCapture workflow
+  // skipped in postRouteTraffic
+}</code></pre>
+        </div>
+      </div>
+
+      <p>The <code>postRouteTraffic</code> hook in the deployment stage runs a quick smoke test — one browser, one device (Desktop Chrome), only <code>Category=Deployment</code> tests. The nightly pipeline runs the full suite across 8 device/browser combinations with no category filter.</p>
+
+      <table>
+        <thead><tr><th>Context</th><th>Filter</th><th>Devices</th><th>When</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>postRouteTraffic</code> (deploy pipeline)</td>
+            <td><code>Category=Deployment</code></td>
+            <td>Desktop Chrome only</td>
+            <td>After every Dev/QA deploy</td>
+          </tr>
+          <tr>
+            <td><code>azure-pipelines-tests.yml</code> (nightly)</td>
+            <td>No filter — all tests</td>
+            <td>8 device/browser combos</td>
+            <td>2 AM daily, always</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- ── DEVICE EMULATION ───────────────────────────── -->
+    <section>
+      <h2>How device emulation works</h2>
+      <p>When <code>DEVICE_NAME</code> is set (e.g. <code>"iPhone 15 Pro Max"</code>), <code>ContextOptions()</code> in <code>Main.cs</code> looks it up in Playwright's built-in device registry:</p>
+
+      <pre><code>// From Main.cs — ContextOptions()
+var deviceName = Environment.GetEnvironmentVariable("DEVICE_NAME");
+
+if (!string.IsNullOrEmpty(deviceName))
+{
+    var device = Playwright.Devices[deviceName];   // ← Playwright knows ~50 real devices
+    context = new BrowserNewContextOptions(device)
+    {
+        BaseURL = context.BaseURL,
+        Locale  = context.Locale,
+        TimezoneId = context.TimezoneId
+    };
+}
+
+IsMobile = context.IsMobile.GetValueOrDefault(false);
+Viewport = context.ViewportSize;</code></pre>
+
+      <p>The <code>Playwright.Devices["iPhone 15 Pro Max"]</code> lookup sets the viewport size, user agent string, touch support, and pixel ratio — exactly as if a real iPhone was browsing. The test code then reads <code>IsMobile</code> to decide between hamburger-menu paths and desktop-menu paths.</p>
+
+      <div class="callout tip">
+        <p><strong>If <code>DEVICE_NAME</code> is empty</strong>, the test runs with a standard desktop viewport. This is what happens when you run the tests locally without setting the env var — desktop behaviour, no device emulation.</p>
+      </div>
+    </section>
+
+    <!-- ── FAILURE ARTIFACTS ─────────────────────────── -->
+    <section>
+      <h2>What gets captured when a test fails</h2>
+      <p>The <code>TearDown</code> method in <code>Main.cs</code> automatically captures debugging artefacts when a test fails and attaches them to the Azure DevOps test result:</p>
+
+      <pre><code>// From Main.cs — TearDown
+[TearDown]
+public async Task TearDown()
+{
+    if (!IsTestPassed)
+    {
+        // 1. Screenshot of the browser at the moment of failure
+        var screenshotFile = Path.Combine(
+            TestContext.CurrentContext.WorkDirectory,
+            $"screenshot-{TestFullName}.png");
+        await Page.ScreenshotAsync(new() { Path = screenshotFile });
+        TestContext.AddTestAttachment(screenshotFile, "Error Snapshot:");
+
+        // 2. Playwright trace — every action, DOM snapshot, network log
+        var traceFile = Path.Combine(
+            TestContext.CurrentContext.WorkDirectory,
+            $"trace-{TestFullName}.zip");
+        await Page.Context.Tracing.StopAsync(new() { Path = traceFile });
+        TestContext.AddTestAttachment(traceFile, "Test Trace:");
+    }
+    // On pass: tracing is stopped without saving (no overhead in the artifact)
+}</code></pre>
+
+      <p>Tracing starts in <code>SetUp</code> (before each test) and stops in <code>TearDown</code>. On failure, both the PNG and the trace ZIP are attached to the test result in Azure DevOps.</p>
+
+      <div class="callout tip">
+        <p><strong>To debug a failing Playwright test:</strong></p>
+        <p>1. In Azure DevOps, open the pipeline run → click the failing job → click the <strong>Tests</strong> tab → click the failing test → click <strong>Attachments</strong><br>
+        2. Download the <code>trace-*.zip</code> file<br>
+        3. Open it at <a href="https://trace.playwright.dev" target="_blank" rel="noopener">trace.playwright.dev</a> — you'll see a timeline of every click, navigation, and DOM snapshot, with network requests alongside</p>
+      </div>
+    </section>
+
+    <!-- ── NIGHTLY MATRIX ─────────────────────────────── -->
+    <section>
+      <h2>The nightly matrix: 8 browsers, one at a time</h2>
+      <p>The nightly pipeline uses a matrix strategy to run the same test suite across 8 device/browser combinations. The critical detail: <code>maxParallel: 1</code> means they run <strong>sequentially</strong>, not simultaneously.</p>
+
+      <pre><code># From azure-pipelines-tests.yml
+strategy:
+  matrix:
+    'Desktop Chrome':
+      deviceName: "Desktop Chrome"
+      browserName: "chromium"
+    'iPhone 15 Pro Max':
+      deviceName: "iPhone 15 Pro Max"
+      browserName: "webkit"
+    # ... 6 more combinations
+  maxParallel: 1          # ← run one at a time, not all 8 in parallel</code></pre>
+
+      <p>With <code>maxParallel: 1</code>, one matrix job starts, runs all tests to completion, then the next starts. If it were set to 8, all eight browsers would hit the Dev environment simultaneously — creating interference between tests that create/modify/delete the same application records.</p>
+
+      <div class="callout warn">
+        <p><strong>The 120-minute timeout</strong> (<code>timeoutInMinutes: 120</code> on the job) is needed because 8 sequential runs of the full test suite can take well over an hour. If you're seeing nightly runs expire, this is where to look first.</p>
+      </div>
+    </section>
+
+    <!-- ── PAGE OBJECT MODEL ──────────────────────────── -->
+    <section>
+      <h2>The Page Object Model structure</h2>
+      <p>The test project follows the Page Object Model (POM) pattern — each page/component of the app has a corresponding C# class that wraps its Playwright locators.</p>
+
+      <pre><code>tests/Equisoft.Apply.AutomationTests/
+├── Main.cs                    ← PageTest base: browser setup, env vars, tracing
+├── BaseTest.cs                ← shared helpers: GetToken(), CreateSimplifiedIssueForm()
+├── Common/
+│   ├── Pages/
+│   │   ├── ApplicationOverviewPage.cs   ← locators for the home page table
+│   │   ├── TopMenu.cs                   ← login, logout, language switch
+│   │   └── SignInPage.cs                ← AzureADB2C login form
+│   ├── Modals/
+│   │   ├── DeleteModal.cs               ← confirm-delete dialog
+│   │   └── StartNewApplicationModal.cs  ← new application wizard
+│   └── Controls/
+│       └── CalendarControl.cs           ← date picker component
+├── Pages/
+│   └── SimplifiedIssue/                 ← page objects for the application form wizard
+└── Tests/
+    ├── HomePageHapyPath/
+    │   └── HomePageHappyPath.cs         ← [Category("Deployment")] smoke test
+    ├── SimplifiedIssue/                 ← full workflow tests (nightly only)
+    └── SpecificPermissions/             ← permission-based test matrix</code></pre>
+
+      <p>When a test fails, the trace zip shows you exactly which page object method was executing. Cross-reference the failing action in the trace against the page object class to find where to look in the code.</p>
+    </section>
+
+    <!-- ── QUIZ ───────────────────────────────────────── -->
+    <section>
+      <h2>Check your understanding</h2>
+      <div id="quiz"></div>
+    </section>
+
+    <!-- ── PRIMARY SOURCE ─────────────────────────────── -->
+    <section>
+      <h2>Primary source</h2>
+      <p>
+        <a href="https://playwright.dev/dotnet/docs/running-tests" target="_blank" rel="noopener">
+          Running tests — Playwright for .NET
+        </a><br>
+        Official .NET Playwright documentation covering NUnit integration, runsettings, device emulation, tracing, and the test runner CLI options used in the pipeline.
+      </p>
+    </section>
+
+    <!-- ── RELATED LESSONS ────────────────────────────── -->
+    <section>
+      <h2>Related lessons</h2>
+      <ul>
+        <li><a href="0010-deployment-lifecycle-hooks.html">Lesson 10 — Lifecycle Hooks</a> — <code>postRouteTraffic</code> is where <code>automated-tests.yml</code> is called after each deployment</li>
+        <li><a href="0008-debugging-pipelines.html">Lesson 8 — Debugging Pipelines</a> — the <code>##[error]</code> log format applies to test failures too; the Tests tab is where attachment links appear</li>
+        <li><a href="0011-lean-pipelines-and-completion-triggers.html">Lesson 11 — Lean Pipelines</a> — the nightly test pipeline (<code>azure-pipelines-tests.yml</code>) uses a schedule trigger with <code>always: true</code></li>
+      </ul>
+    </section>
+
+    <div class="ask-question">
+      <strong>Something unclear?</strong> Ask your teacher. Good starting questions: "How do I add a new test to the Deployment category?" or "Why is my new test passing locally but failing in the pipeline?"
+    </div>
+  </article>
+
+  <script src="../assets/quiz.js"></script>
+  <script>
+    new Quiz('quiz', [
+      {
+        q: 'How does the pipeline pass the target URL to the C# Playwright test code?',
+        options: [
+          'Via the BASE_URL environment variable read in Main.cs',
+          'Via a Playwright.BaseUrl runsetting in the test command',
+          'Via a config file generated by the automated-tests template',
+          'Via an NUnit test parameter defined in the project file'
+        ],
+        answer: 0,
+        explanation: 'The template sets env: BASE_URL: "${{ parameters.baseUrl }}" on the dotnet test task. Main.cs reads it with Environment.GetEnvironmentVariable("BASE_URL"). If the variable is not set, GetBaseURL() throws an exception — which is how you know it\'s missing when running locally.'
+      },
+      {
+        q: 'What does --filter "Category=Deployment" do in the pipeline test command?',
+        options: [
+          'Runs only tests marked with [Category("Deployment")]',
+          'Runs tests inside the Deployment project folder only',
+          'Deploys test dependencies before running the suite',
+          'Filters out tests known to fail in deployment environments'
+        ],
+        answer: 0,
+        explanation: 'The --filter argument to dotnet test uses NUnit\'s test selection syntax. Only tests decorated with [Test, Category("Deployment")] are executed. Tests without that category (like AppCaptureForms) are skipped — they only run in the nightly full-suite pipeline.'
+      },
+      {
+        q: 'What does TearDown in Main.cs attach to the test result when a test fails?',
+        options: [
+          'A screenshot PNG and a Playwright trace zip file',
+          'A video recording and an HTML report of the run',
+          'A console log file and a network traffic capture',
+          'A diff of the DOM before and after the test'
+        ],
+        answer: 0,
+        explanation: 'On failure, TearDown captures Page.ScreenshotAsync() (a PNG of the browser at the moment of failure) and stops the Playwright trace into a ZIP. Both are attached via TestContext.AddTestAttachment(). The trace ZIP can be opened at trace.playwright.dev for a full visual replay.'
+      },
+      {
+        q: 'Why does the nightly test pipeline set maxParallel: 1 for 8 matrix combinations?',
+        options: [
+          'Concurrent browsers would interfere by modifying shared test data',
+          'The Linux agent pool only has one available agent at night',
+          'Playwright cannot launch more than one browser simultaneously',
+          'The matrix strategy always forces sequential execution by default'
+        ],
+        answer: 0,
+        explanation: 'The tests create, modify, and delete application records on the shared Dev environment. If 8 browsers ran at the same time, they would collide — e.g., two browsers trying to delete the same application. maxParallel: 1 ensures they run one at a time to avoid interference.'
+      }
+    ]);
+  </script>
+</body>
+</html>

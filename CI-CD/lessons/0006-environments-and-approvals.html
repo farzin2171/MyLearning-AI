@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lesson 6 — Environments and Approvals</title>
+  <link rel="stylesheet" href="../assets/style.css" />
+  <style>
+    /* Approval gate flow */
+    .gate-flow {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+      margin: 2rem auto;
+      max-width: 340px;
+    }
+    .gate-step {
+      background: var(--surface);
+      border: 1.5px solid var(--border);
+      border-radius: 6px;
+      padding: 0.65rem 1.1rem;
+      width: 100%;
+      text-align: center;
+      font-size: 0.88rem;
+    }
+    .gate-step strong {
+      display: block;
+      font-size: 0.92rem;
+      color: var(--accent);
+    }
+    .gate-step.check {
+      border-color: var(--warn);
+      background: #fdf6ec;
+    }
+    .gate-step.check strong { color: var(--warn); }
+    .gate-step.pass {
+      border-color: var(--success);
+      background: #f0faf0;
+    }
+    .gate-step.pass strong { color: var(--success); }
+    .gate-connector {
+      width: 2px;
+      height: 22px;
+      background: var(--border);
+    }
+    .gate-connector.pending {
+      background: var(--warn);
+    }
+
+    /* Check type cards */
+    .check-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.85rem;
+      margin: 1.25rem 0;
+    }
+    @media (max-width: 560px) { .check-grid { grid-template-columns: 1fr; } }
+    .check-card {
+      border: 1.5px solid var(--border);
+      border-radius: 6px;
+      padding: 0.8rem 0.9rem;
+      font-size: 0.88rem;
+    }
+    .check-card h4 {
+      font-size: 0.9rem;
+      margin-bottom: 0.3rem;
+    }
+    .check-card p { color: var(--text-muted); margin: 0; }
+
+    /* Channel mapping table */
+    .channel-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+      margin: 1rem 0;
+    }
+    .channel-table th {
+      background: var(--code-bg);
+      text-align: left;
+      padding: 0.4rem 0.75rem;
+      border-bottom: 2px solid var(--border);
+    }
+    .channel-table td {
+      padding: 0.4rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    .channel-table tr:last-child td { border-bottom: none; }
+    .channel-table code {
+      background: var(--code-bg);
+      padding: 0.1em 0.3em;
+      border-radius: 3px;
+      font-size: 0.85em;
+    }
+
+    .callout {
+      border-left: 4px solid var(--accent);
+      background: #eef6ff;
+      padding: 0.9rem 1rem;
+      margin: 1.5rem 0;
+      border-radius: 0 4px 4px 0;
+    }
+    .callout.warn {
+      border-left-color: var(--warn);
+      background: #fdf6ec;
+    }
+    .callout.tip {
+      border-left-color: var(--success);
+      background: #f0faf0;
+    }
+    .callout p { margin: 0; }
+    .callout p + p { margin-top: 0.5rem; }
+
+    .ui-path {
+      display: inline-block;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.15em 0.5em;
+      font-family: var(--font-mono);
+      font-size: 0.82em;
+      letter-spacing: 0.01em;
+    }
+  </style>
+</head>
+<body>
+  <article>
+    <header>
+      <p class="lesson-number">Lesson 6 of <em>Azure CI/CD with Azure Pipelines</em></p>
+      <h1>Environments and Approvals</h1>
+      <p class="subtitle">Gating deployments with required reviewers and branch controls</p>
+    </header>
+
+    <!-- ── WHAT IS AN ENVIRONMENT ─────────────────────── -->
+    <section>
+      <h2>What an Environment actually is</h2>
+      <p>An <strong>Environment</strong> in Azure Pipelines is <em>not</em> a compute resource — it's a named deployment target that Azure DevOps tracks and lets you gate. It does three things:</p>
+      <ol>
+        <li><strong>Tracks history</strong> — records which pipeline run deployed what version, when, and who approved it</li>
+        <li><strong>Enforces checks</strong> — can pause the pipeline until a human approves, a branch rule passes, or a timer clears</li>
+        <li><strong>Provides an audit trail</strong> — the Environments view in Azure DevOps shows every deployment across all pipelines</li>
+      </ol>
+      <p>In your team's pipelines, environments are referenced by <em>name</em> inside a <code>deployment:</code> job. The actual deploy logic (Octopus Create Release, etc.) runs <em>after</em> all checks pass.</p>
+
+      <div class="gate-flow">
+        <div class="gate-step">
+          <strong>Build stage</strong>
+          runs, artifact published
+        </div>
+        <div class="gate-connector"></div>
+        <div class="gate-step check">
+          <strong>Approval check</strong>
+          pipeline pauses — waiting for reviewer
+        </div>
+        <div class="gate-connector pending"></div>
+        <div class="gate-step pass">
+          <strong>Reviewer approves ✓</strong>
+          deployment job now runs
+        </div>
+        <div class="gate-connector"></div>
+        <div class="gate-step">
+          <strong>Deploy stage</strong>
+          Octopus Create Release executes
+        </div>
+      </div>
+    </section>
+
+    <!-- ── YAML ───────────────────────────────────────── -->
+    <section>
+      <h2>Referencing an environment in YAML</h2>
+      <p>A <code>deployment:</code> job takes an <code>environment:</code> key. The value is the environment name as defined in Azure DevOps. If it doesn't exist yet, Azure Pipelines creates it on first run.</p>
+
+      <pre><code>stages:
+  - stage: Deploy
+    dependsOn: Build
+    condition: and(succeeded('Build'), eq(variables.isMaster, true))
+    jobs:
+      - deployment: DeployToProduction
+        displayName: Deploy to Production
+        pool:
+          name: $(CILinuxAgentPool)
+        environment: Production             # ← the environment name
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: none
+                - download: none
+                - task: OctopusCreateRelease@3
+                  inputs:
+                    OctopusServerEndpoint: $(OctopusEndpoint)
+                    Space: Default
+                    Project: my-app
+                    ReleaseNumber: $(GitVersion.SemVer)
+                    Channel: Release</code></pre>
+
+      <div class="callout">
+        <p><strong>The environment: key is the gate trigger.</strong> Before the <code>deploy:</code> steps run, Azure Pipelines evaluates every check configured on the <code>Production</code> environment. If a required reviewer hasn't approved, the pipeline pauses here — not before the stage, but specifically before this job's steps execute.</p>
+      </div>
+
+      <p>You can also use the object form to specify a resource within an environment (relevant for Kubernetes / VMs). For Octopus-based pipelines, the string form is all you need:</p>
+
+      <pre><code>environment: Production            # string form — sufficient for your team's pipelines
+# environment:                     # object form — only needed for Kubernetes/VM targets
+#   name: Production
+#   resourceName: web-server-01</code></pre>
+    </section>
+
+    <!-- ── APPROVAL CHECKS ────────────────────────────── -->
+    <section>
+      <h2>Configuring approval checks — the UI</h2>
+      <p>Checks are <strong>not configured in YAML</strong>. They live in the Azure DevOps UI under:</p>
+      <p><span class="ui-path">Azure DevOps → Pipelines → Environments → [Environment name] → ⋯ → Approvals and checks</span></p>
+
+      <p>The four checks your team is most likely to use:</p>
+
+      <div class="check-grid">
+        <div class="check-card">
+          <h4>Required reviewers</h4>
+          <p>Named users or groups must approve before the deployment job starts. Can require one reviewer or all of them.</p>
+        </div>
+        <div class="check-card">
+          <h4>Branch control</h4>
+          <p>Only pipelines triggered from listed branches can use this environment. Blocks feature/* branches from reaching Production.</p>
+        </div>
+        <div class="check-card">
+          <h4>Exclusive lock</h4>
+          <p>Only one pipeline run may deploy to this environment at a time. Subsequent runs queue and wait.</p>
+        </div>
+        <div class="check-card">
+          <h4>Business hours</h4>
+          <p>Deployments only proceed during a configured time window. Useful for restricting production changes to working hours.</p>
+        </div>
+      </div>
+
+      <div class="callout warn">
+        <p><strong>Branch control is critical for Production.</strong> Without it, anyone who can trigger a pipeline run — even from a <code>feature/</code> branch — could potentially reach the Production environment (if the YAML conditions pass). The branch control check adds a second layer: even if the YAML condition evaluates to true, the check fails if the run's source branch isn't on the allowlist.</p>
+      </div>
+    </section>
+
+    <!-- ── EXCLUSIVE LOCK ─────────────────────────────── -->
+    <section>
+      <h2>Exclusive lock — preventing concurrent deploys</h2>
+      <p>When two pipeline runs reach the same environment simultaneously, you get a race condition: two Octopus releases deploying to the same slot at once. The <strong>Exclusive Lock</strong> check prevents this.</p>
+
+      <pre><code># What happens with Exclusive Lock enabled on 'Staging':
+#
+# Run A starts → acquires lock → deploy proceeds
+# Run B starts → tries to acquire lock → waits
+# Run A finishes → releases lock
+# Run B → acquires lock → deploy proceeds
+#
+# The YAML doesn't change — the lock is enforced by the check in the UI.</code></pre>
+
+      <p>You can configure whether queued runs wait or are cancelled when a newer run is triggered. "Cancel older" is common for non-production environments — the latest commit is what matters.</p>
+    </section>
+
+    <!-- ── TEAM CHANNEL MAPPING ───────────────────────── -->
+    <section>
+      <h2>How this maps to your team's Octopus channels</h2>
+      <p>Your team maps branches to Octopus channels, and pipeline stages use runtime conditions to decide which stage runs. Environments map one-to-one to those channels:</p>
+
+      <table class="channel-table">
+        <thead>
+          <tr>
+            <th>Branch</th>
+            <th>Pipeline stage condition</th>
+            <th>Azure Environment</th>
+            <th>Octopus channel</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>develop</code></td>
+            <td><code>isDevelop = true</code></td>
+            <td>Development</td>
+            <td>Development</td>
+          </tr>
+          <tr>
+            <td><code>release/*</code>, <code>hotfix/*</code></td>
+            <td><code>isRelease = true</code></td>
+            <td>Testing</td>
+            <td>Testing</td>
+          </tr>
+          <tr>
+            <td><code>master</code>, tags</td>
+            <td><code>isMaster = true</code></td>
+            <td>Production</td>
+            <td>Release</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p>In practice, the YAML stage condition already ensures only the right branch runs the deploy stage. The environment check is a <em>second layer</em>: even if someone modifies the condition, the branch control check on the environment stops non-production branches from reaching Production.</p>
+
+      <pre><code># A complete multi-channel deploy section matching your team's style
+
+  - stage: DeployDevelopment
+    dependsOn: Build
+    condition: and(succeeded('Build'), eq(variables.isDevelop, true))
+    jobs:
+      - deployment: ToDevelopment
+        environment: Development           # ← no approvals, fast feedback
+        pool:
+          name: $(CILinuxAgentPool)
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: none
+                - download: none
+                - task: OctopusCreateRelease@3
+                  inputs:
+                    Channel: Development
+                    ReleaseNumber: $(GitVersion.SemVer)
+
+  - stage: DeployTesting
+    dependsOn: Build
+    condition: and(succeeded('Build'), eq(variables.isRelease, true))
+    jobs:
+      - deployment: ToTesting
+        environment: Testing               # ← light approval (team lead)
+        pool:
+          name: $(CILinuxAgentPool)
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: none
+                - download: none
+                - task: OctopusCreateRelease@3
+                  inputs:
+                    Channel: Testing
+                    ReleaseNumber: $(GitVersion.SemVer)
+
+  - stage: DeployProduction
+    dependsOn: Build
+    condition: and(succeeded('Build'), eq(variables.isMaster, true))
+    jobs:
+      - deployment: ToProduction
+        environment: Production            # ← required reviewer + branch control
+        pool:
+          name: $(CILinuxAgentPool)
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: none
+                - download: none
+                - task: OctopusCreateRelease@3
+                  inputs:
+                    Channel: Release
+                    ReleaseNumber: $(GitVersion.SemVer)</code></pre>
+    </section>
+
+    <!-- ── DEPLOYMENT HISTORY ─────────────────────────── -->
+    <section>
+      <h2>Deployment history</h2>
+      <p>Every time a deployment job completes, Azure DevOps records it against the environment. Navigate to <span class="ui-path">Pipelines → Environments → Production</span> to see:</p>
+      <ul>
+        <li>Which pipeline run deployed, and when</li>
+        <li>Who triggered it and who approved it</li>
+        <li>The commit SHA and branch the run came from</li>
+        <li>Whether the deployment succeeded or failed</li>
+      </ul>
+      <p>This is your team's production audit trail — useful for compliance, post-incident reviews, and answering "what's currently deployed?"</p>
+
+      <div class="callout tip">
+        <p><strong>Tip:</strong> Even if you don't add any checks to an environment, the deployment history alone is worth referencing a named environment. It gives you a free, automatic deployment log without any extra work.</p>
+      </div>
+    </section>
+
+    <!-- ── QUIZ ───────────────────────────────────────── -->
+    <section>
+      <h2>Check your understanding</h2>
+      <div id="quiz"></div>
+    </section>
+
+    <!-- ── PRIMARY SOURCE ─────────────────────────────── -->
+    <section>
+      <h2>Primary source</h2>
+      <p>
+        <a href="https://learn.microsoft.com/en-us/azure/devops/pipelines/process/environments?view=azure-devops" target="_blank" rel="noopener">
+          Create and target an environment — Microsoft Learn
+        </a><br>
+        Covers creating environments, configuring approval checks, branch controls, and exclusive locks with step-by-step UI instructions.
+      </p>
+    </section>
+
+    <!-- ── RELATED LESSONS ────────────────────────────── -->
+    <section>
+      <h2>Related lessons</h2>
+      <ul>
+        <li><a href="0002-triggers-and-conditions.html">Lesson 2 — Triggers and Conditions</a> — the <code>isDevelop</code>/<code>isMaster</code> expressions used in stage conditions</li>
+        <li><a href="0003-variables-and-variable-groups.html">Lesson 3 — Variables and Variable Groups</a> — <code>$(OctopusEndpoint)</code> and pool names from variable groups</li>
+        <li><a href="0005-pipeline-artifacts.html">Lesson 5 — Pipeline Artifacts</a> — <code>checkout: none</code> / <code>download: none</code> in deployment jobs</li>
+      </ul>
+    </section>
+
+    <div class="ask-question">
+      <strong>Something unclear?</strong> Ask your teacher — type a follow-up and Claude will answer it in context.
+    </div>
+  </article>
+
+  <script src="../assets/quiz.js"></script>
+  <script>
+    new Quiz('quiz', [
+      {
+        q: 'Where are approval checks for an environment configured?',
+        options: [
+          'Azure DevOps UI — Environments — Approvals and checks',
+          'Pipeline YAML — environment — approvals — block',
+          'Variable group Pipeline_Main — approval settings',
+          'Azure Portal — DevOps settings — approval rules'
+        ],
+        answer: 0,
+        explanation: 'Checks are NOT defined in YAML. They live in the Azure DevOps UI under Pipelines → Environments → [name] → Approvals and checks. The YAML only names the environment — the checks are attached to it externally.'
+      },
+      {
+        q: 'Which check type ensures only specific branches can deploy to an environment?',
+        options: [
+          'Branch control check blocks non-allowed branches',
+          'Required reviewer check blocks non-allowed branches',
+          'Exclusive lock check blocks non-allowed branches',
+          'Business hours check blocks non-allowed branches'
+        ],
+        answer: 0,
+        explanation: 'Branch control is the check that lets you specify a list of allowed source branches (e.g. refs/heads/master, refs/heads/release/*). Pipeline runs from any other branch will fail the check, even if the YAML conditions pass.'
+      },
+      {
+        q: 'When does the pipeline pause for a required-reviewer approval?',
+        options: [
+          'Before the deployment job\'s steps execute',
+          'Before the stage containing the deployment starts',
+          'Before the entire pipeline run begins',
+          'After the deployment job\'s steps complete'
+        ],
+        answer: 0,
+        explanation: 'The pause happens at the deployment job boundary — specifically before its steps run. The stage itself starts, the job starts, but the steps are held until approval is granted.'
+      },
+      {
+        q: 'What does the Exclusive Lock check on an environment prevent?',
+        options: [
+          'Two pipeline runs deploying to the same environment at once',
+          'Two pipeline runs building the same commit at once',
+          'Two approvers approving the same deployment at once',
+          'Two agents running the same job steps at once'
+        ],
+        answer: 0,
+        explanation: 'The Exclusive Lock check ensures only one pipeline run can deploy to the environment at a time. When a second run arrives, it either waits or is cancelled (depending on configuration) until the first run completes.'
+      }
+    ]);
+  </script>
+</body>
+</html>
