@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 9 — Services.User: The User Attributes Gateway</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script src="../assets/quiz.js" defer></script>
+  <style>
+    .step-list { counter-reset: steps; list-style: none; margin: 0.5rem 0 1.4rem 0; padding: 0; }
+    .step-list li {
+      counter-increment: steps;
+      display: grid;
+      grid-template-columns: 2.2rem 1fr;
+      gap: 0.7rem;
+      margin-bottom: 1rem;
+      align-items: start;
+    }
+    .step-list li::before {
+      content: counter(steps);
+      background: var(--accent);
+      color: #fff;
+      border-radius: 50%;
+      width: 2rem; height: 2rem;
+      display: flex; align-items: center; justify-content: center;
+      font-family: var(--font-ui);
+      font-size: 0.82rem;
+      font-weight: 700;
+      flex-shrink: 0;
+      margin-top: 0.15rem;
+    }
+
+    /* Three-column ownership table */
+    .ownership-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 1rem;
+      margin: 1.2rem 0;
+    }
+    .ownership-card {
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem;
+      background: var(--surface);
+    }
+    .ownership-card.idg    { border-color: #0a9e5c; background: #e8faf0; }
+    .ownership-card.apply  { border-color: var(--accent); background: #e8f0ff; }
+    .ownership-card.usersvc{ border-color: #7700cc; background: #f7efff; }
+    .ownership-card h4     { margin: 0 0 0.4rem; font-family: var(--font-ui); font-size: 0.88rem; }
+    .ownership-card .q     { font-size: 0.75rem; font-family: var(--font-ui); color: var(--muted); margin-bottom: 0.5rem; font-style: italic; }
+    .ownership-card ul     { font-size: 0.82rem; margin: 0 0 0 1rem; }
+    .ownership-card li     { margin-bottom: 0.25rem; }
+
+    @media (max-width: 600px) { .ownership-grid { grid-template-columns: 1fr; } }
+
+    /* Flow diagrams */
+    .flow-diagram {
+      overflow-x: auto;
+      margin: 1.4rem 0;
+    }
+    .flow-row {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      min-width: 560px;
+      font-family: var(--font-ui);
+      font-size: 0.8rem;
+      margin-bottom: 0.6rem;
+    }
+    .fn { border: 1.5px solid var(--border); border-radius: var(--radius); padding: 0.5rem 0.8rem; text-align: center; min-width: 100px; background: var(--surface); }
+    .fn.idg   { border-color: #0a9e5c; background: #e8faf0; }
+    .fn.apply { border-color: var(--accent); background: #e8f0ff; }
+    .fn.usvc  { border-color: #7700cc; background: #f7efff; }
+    .fn.db    { border-color: #8a6000; background: var(--warn-bg); }
+    .fn.ext   { border-color: #c0392b; background: #fdecea; }
+    .fn .fsub { display: block; font-size: 0.68rem; color: var(--muted); }
+    .fa { padding: 0 0.35rem; color: var(--muted); font-size: 1.2rem; }
+    .flow-label-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 0;
+      min-width: 560px;
+      font-family: var(--font-ui);
+      font-size: 0.68rem;
+      color: var(--muted);
+      margin-bottom: 1rem;
+    }
+    .fl { min-width: 100px; text-align: center; padding: 0 0.2rem; }
+    .fls { width: 1.9rem; flex-shrink: 0; }
+
+    .file-ref { font-family: var(--font-mono); font-size: 0.75rem; color: var(--muted); display: block; margin-bottom: 0.4rem; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin: 1rem 0; }
+    @media (max-width: 560px) { .two-col { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="../lessons/0008-apply-guest-auth.html">← Lesson 8: Apply Guest Auth</a>
+    &nbsp;/&nbsp; Equisoft Identity Learning
+  </div>
+  <h1>Services.User: The User Attributes Gateway</h1>
+  <div class="meta">
+    <span>Lesson 9 of 9</span>
+    <span>~25 min</span>
+    <span>Identity Architecture · Services.User · Connector Pattern</span>
+  </div>
+</div>
+
+<p>
+  After Lesson 8 you understand how Apply authenticates users — via OIDC cookies for regular users, and local cookies for
+  guests. But authentication answers <em>who are you?</em> A second question remains: <em>what can you do?</em> — i.e. what
+  is your role? This lesson explains why answering that question requires a separate service, what <strong>Services.User</strong>
+  actually is, and how Apply calls it.
+</p>
+
+<h2>1. The Three-Service Split: Who Owns What?</h2>
+
+<p>
+  A common mistake is to think one service handles "users". In reality, three services share responsibility — each owning
+  a different slice of what we loosely call "user information":
+</p>
+
+<div class="ownership-grid">
+  <div class="ownership-card idg">
+    <h4>Identity Gateway (IDG)</h4>
+    <div class="q">"Who are you?"</div>
+    <ul>
+      <li>Authenticates credentials</li>
+      <li>Issues access tokens &amp; ID tokens</li>
+      <li>Provides <code>sub</code> / <code>externalobjectidentifier</code></li>
+      <li>Manages sessions &amp; refresh tokens</li>
+      <li>Federated IdPs (Azure B2C, Okta)</li>
+    </ul>
+  </div>
+  <div class="ownership-card apply">
+    <h4>Apply (local User table)</h4>
+    <div class="q">"Do you exist here?"</div>
+    <ul>
+      <li>Local user record (GUID primary key)</li>
+      <li><code>ExternalId</code> → links to IDG's <code>sub</code></li>
+      <li><code>IsGuest</code> flag</li>
+      <li><code>TenantId</code> for multi-tenancy</li>
+      <li>Created/updated on first OIDC sign-in</li>
+    </ul>
+  </div>
+  <div class="ownership-card usersvc">
+    <h4>Services.User</h4>
+    <div class="q">"What is your role / profile?"</div>
+    <ul>
+      <li>Routes attribute queries to upstream sources</li>
+      <li>Azure Graph, WebAPIs, claim connectors</li>
+      <li><code>IdentityRole</code>, <code>AgentNumber</code>, email</li>
+      <li>No User table of its own</li>
+      <li>Returns <code>UserInformation</code> DTO</li>
+    </ul>
+  </div>
+</div>
+
+<div class="callout key">
+  <strong>The core insight</strong>
+  Services.User has <strong>no User entity in its database</strong>. Its SQL schema stores <em>connectors</em>,
+  <em>handlers</em>, and <em>configurations</em> — not user rows. When you ask it "what is Alice's role?", it fetches
+  that answer live from Azure Graph (or a WebAPI, or a configured claim) and returns it. It is a <em>routing layer</em>,
+  not a store.
+</div>
+
+<h2>2. The Sign-In Flow: How Apply's Local User Record Is Created</h2>
+
+<p>
+  When a user logs in for the first time, their Apply user record does not yet exist. It is created automatically by a
+  cookie event hook — not by a dedicated "register" endpoint.
+</p>
+
+<div class="flow-diagram">
+  <div class="flow-row">
+    <div class="fn"><span>Browser</span></div>
+    <div class="fa">→</div>
+    <div class="fn idg"><span>Identity Gateway</span><span class="fsub">issues id_token + code</span></div>
+    <div class="fa">→</div>
+    <div class="fn apply"><span>Apply OIDC handler</span><span class="fsub">exchanges code → tokens</span></div>
+    <div class="fa">→</div>
+    <div class="fn apply"><span>OnSignedIn event</span><span class="fsub">CookieAuthFunctions</span></div>
+    <div class="fa">→</div>
+    <div class="fn db"><span>Apply DB</span><span class="fsub">User row upserted</span></div>
+  </div>
+</div>
+
+<span class="file-ref">src/Equisoft.Apply/Infrastructure/Authentication/Functions/CookieAuthenticationFunctions.cs — OnSignedInFunction</span>
+
+<p>Inside <code>OnSignedInFunction</code>, the code does:</p>
+<ol class="step-list">
+  <li>
+    <div>Extract <code>externalobjectidentifier</code> claim from the newly-issued cookie principal.
+    This is the user's identity in the Identity Gateway — their <code>sub</code>.</div>
+  </li>
+  <li>
+    <div>Look up <code>User</code> row in Apply's database by <code>ExternalId == externalobjectidentifier</code>.</div>
+  </li>
+  <li>
+    <div><strong>If not found:</strong> create a new <code>User</code> row with <code>ExternalId</code>,
+    <code>FirstName</code>, <code>LastName</code>, <code>Email</code> from the OIDC claims.
+    <code>IsGuest = false</code>.</div>
+  </li>
+  <li>
+    <div><strong>If found:</strong> update <code>FirstName</code>, <code>LastName</code>, <code>Email</code>
+    if they changed (the user may have updated their profile in the IdP).</div>
+  </li>
+</ol>
+
+<div class="callout tip">
+  <strong>Tip — OnSignedIn only fires for OIDC users</strong>
+  Remember from Lesson 8: <code>OnValidatePrincipal</code> short-circuits for <code>isGuest = "true"</code>.
+  But <code>OnSignedIn</code> is only invoked when the OIDC handler issues a new cookie — guests never go through OIDC,
+  so they never trigger this event. Their user record is created directly in <code>GuestAuthenticationHelper</code>.
+</div>
+
+<h2>3. The Role-Check Flow: How Apply Calls Services.User</h2>
+
+<p>
+  After login, Apply often needs to know: "is this user an advisor? a manager?" It cannot store the answer locally because
+  the source of truth for roles lives in Azure AD (or another connector-backed source). This is where Services.User comes in.
+</p>
+
+<div class="flow-diagram">
+  <div class="flow-row">
+    <div class="fn apply"><span>Apply code</span><span class="fsub">UserService.UserHasRoleAsync</span></div>
+    <div class="fa">→</div>
+    <div class="fn apply"><span>UserServiceClient</span><span class="fsub">HTTP GET + Bearer token</span></div>
+    <div class="fa">→</div>
+    <div class="fn usvc"><span>Services.User</span><span class="fsub">GET /v2/user/identities/role/{id}</span></div>
+    <div class="fa">→</div>
+    <div class="fn usvc"><span>Connector handlers</span><span class="fsub">Azure Graph / WebAPI / Claims</span></div>
+    <div class="fa">→</div>
+    <div class="fn ext"><span>Upstream source</span><span class="fsub">Azure AD, custom API</span></div>
+  </div>
+</div>
+
+<span class="file-ref">src/Equisoft.Apply.Data/Externals/Clients/UserServiceClient.cs</span>
+<pre><code>// Apply's outbound HTTP call to Services.User
+GET /api/v2/user/identities/role/{externalUserId}
+Authorization: Bearer {service-account-token}</code></pre>
+
+<p>
+  Notice the token used here is a <strong>service account token</strong> — not the user's own access token.
+  Apply authenticates itself to Services.User as a service, not on behalf of the user. The <code>externalUserId</code>
+  parameter carries the user's identity.
+</p>
+
+<span class="file-ref">src/Equisoft.Apply.Services/Users/UserService.cs</span>
+<pre><code>public async Task&lt;bool&gt; UserHasRoleAsync(string externalUserId, string role)
+{
+    var userRole = await _userServiceClient.GetUserRoleByIdAsync(externalUserId);
+    return !string.IsNullOrWhiteSpace(userRole) &amp;&amp; userRole == role;
+}</code></pre>
+
+<h2>4. What Lives Inside Services.User</h2>
+
+<h3>The connector pattern</h3>
+
+<p>
+  Services.User doesn't hard-code any data source. Instead it has a pluggable
+  <strong>Connector → Handler</strong> system. Each tenant can have different connectors configured.
+  When a role query arrives, the service walks the configured connectors in order (with cascading fallback)
+  until one returns a result.
+</p>
+
+<div class="two-col">
+  <div class="service-card">
+    <h4>Connector types</h4>
+    <div class="tag">ServiceDbContext</div>
+    <ul style="font-size:0.85rem; margin-left:1rem">
+      <li><code>ClaimConnectorConfiguration</code> — reads a claim from the token</li>
+      <li><code>AzureGraphConnectorConfiguration</code> — queries Microsoft Graph API</li>
+      <li><code>WebApiConnectorConfiguration</code> — calls a custom REST endpoint with configurable routes</li>
+    </ul>
+  </div>
+  <div class="service-card">
+    <h4>What the DB actually stores</h4>
+    <div class="tag">No User rows</div>
+    <ul style="font-size:0.85rem; margin-left:1rem">
+      <li>Connector definitions (type, config)</li>
+      <li>Handlers (which operation each connector covers)</li>
+      <li>Tenant-specific connector-handler mappings</li>
+      <li>Cascading fallback chains</li>
+    </ul>
+  </div>
+</div>
+
+<h3>Services.User authentication</h3>
+
+<p>
+  Services.User validates inbound JWTs from the same Identity Gateway:
+</p>
+<pre><code>// appsettings.Development.json
+"auth": {
+    "jwt": {
+        "authority": "https://api.dev.equisoft.com/identity",
+        "audience": "userapi"   // ← "userapi" scope required on the token
+    }
+}</code></pre>
+
+<p>
+  The <code>ServiceAccountAuthorizeFilter</code> further restricts the management endpoints
+  (<code>/api/v2/management/…</code>) to callers whose token carries
+  <code>IdentityType == Service</code> — regular user tokens are rejected.
+</p>
+
+<h3>Services.User also calls the Identity Gateway</h3>
+
+<p>
+  For ID conversion queries (<code>GET /api/v2/useridentity/convert</code>), Services.User itself
+  calls back to the Identity Gateway's <code>/user/convert/{userId}</code> endpoint,
+  using a service account Bearer token obtained from a token endpoint. The IDG is simultaneously:
+</p>
+<ul>
+  <li>The token authority that validates incoming requests to Services.User</li>
+  <li>A downstream API that Services.User calls for ID conversion</li>
+</ul>
+
+<h2>5. The Two User IDs You'll See in Code</h2>
+
+<table>
+  <thead><tr><th>ID</th><th>What it is</th><th>Where it lives</th><th>Claim name</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>ExternalId</strong></td>
+      <td>The user's subject identifier in the Identity Gateway (<code>sub</code>)</td>
+      <td>Apply's <code>User.ExternalId</code> column; payload of service calls to Services.User</td>
+      <td><code>externalobjectidentifier</code></td>
+    </tr>
+    <tr>
+      <td><strong>Local GUID</strong></td>
+      <td>Apply's own primary key for the user row (<code>User.Id</code>)</td>
+      <td>Apply DB only; not shared with Services.User</td>
+      <td><code>nameidentifier</code> in the Apply cookie</td>
+    </tr>
+    <tr>
+      <td><strong>Local ID (Services.User)</strong></td>
+      <td>Internal representation in some upstream systems (Azure AD object ID vs UPN)</td>
+      <td>Services.User's <code>/convert</code> endpoint translates between these</td>
+      <td>n/a — conversion is explicit, not in a claim</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout warn">
+  <strong>Watch out — two "UserService" classes exist</strong>
+  <code>Equisoft.Apply.Services.Users.UserService</code> is Apply's <em>local</em> service for its own User table.
+  <code>UserService.Services.V2.Services.UserService</code> is the internal logic class inside Services.User.
+  They have the same name but live in different projects and serve completely different purposes.
+  When reading code, always check the namespace first.
+</div>
+
+<h2>6. Full Picture: Both Flows Together</h2>
+
+<div class="flow-diagram">
+  <div class="flow-row">
+    <div class="fn" style="min-width:90px"><span>Browser</span></div>
+    <div class="fa">①</div>
+    <div class="fn idg" style="min-width:90px"><span>IDG</span><span class="fsub">login + tokens</span></div>
+    <div class="fa">②</div>
+    <div class="fn apply" style="min-width:90px"><span>Apply MVC</span><span class="fsub">cookie issued</span></div>
+    <div class="fa">③</div>
+    <div class="fn db" style="min-width:90px"><span>Apply DB</span><span class="fsub">User upserted</span></div>
+  </div>
+  <div class="flow-row" style="margin-top:0.4rem">
+    <div class="fn" style="min-width:90px"><span>Browser</span></div>
+    <div class="fa">④</div>
+    <div class="fn apply" style="min-width:90px"><span>Apply MVC</span><span class="fsub">role check needed</span></div>
+    <div class="fa">⑤</div>
+    <div class="fn usvc" style="min-width:90px"><span>Services.User</span><span class="fsub">connector routes</span></div>
+    <div class="fa">⑥</div>
+    <div class="fn ext" style="min-width:90px"><span>Azure Graph</span><span class="fsub">or WebAPI</span></div>
+  </div>
+</div>
+
+<p>
+  ① Browser sends credentials → IDG issues tokens.<br>
+  ② Apply's OIDC handler receives the code, exchanges it, issues a cookie.<br>
+  ③ <code>OnSignedIn</code> hook upserts Apply's local User row from claims.<br>
+  ④ On a later request, Apply needs to check the user's role.<br>
+  ⑤ Apply calls Services.User with a service-account token and the user's <code>externalId</code>.<br>
+  ⑥ Services.User's connector routes the query to Azure Graph (or another configured source).
+</p>
+
+<h2>7. Knowledge Check</h2>
+
+<div class="quiz" data-quiz>
+  <h3>Quiz — User Service Architecture</h3>
+
+  <div class="quiz-question" data-question>
+    <p>Services.User has no User table. What does its database actually store?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q1" value="a"> User rows keyed by ExternalId from the Identity Gateway</label></li>
+      <li><label><input type="radio" name="q1" value="b"> Connector, handler, and configuration rows for routing queries</label></li>
+      <li><label><input type="radio" name="q1" value="c"> Cached role results and identity tokens per tenant</label></li>
+      <li><label><input type="radio" name="q1" value="d"> Refresh tokens shared between Apply and the Identity Gateway</label></li>
+    </ul>
+    <button class="quiz-btn" data-check>Check</button>
+    <div class="quiz-feedback" data-feedback data-answer="b">
+      ✓ Correct. The schema stores Connectors, Handlers, ConnectorHandler mappings, and their tenant-specific configurations.
+      These rows describe <em>how</em> to find user attributes — not the attributes themselves.
+    </div>
+  </div>
+
+  <div class="quiz-question" data-question>
+    <p>Which token does Apply use when it calls <code>GET /api/v2/user/identities/role/{id}</code>?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q2" value="a"> The end-user's access token from their OIDC session</label></li>
+      <li><label><input type="radio" name="q2" value="b"> The apply cookie serialized as a JWT</label></li>
+      <li><label><input type="radio" name="q2" value="c"> A service account token obtained from the Identity Gateway</label></li>
+      <li><label><input type="radio" name="q2" value="d"> A static API key configured in appsettings.json</label></li>
+    </ul>
+    <button class="quiz-btn" data-check>Check</button>
+    <div class="quiz-feedback" data-feedback data-answer="c">
+      ✓ Correct. <code>UserServiceClient</code> uses <code>IServiceAccountTokenRepository</code> to obtain a client-credentials
+      token for the Apply service account. The user's own token is not forwarded.
+    </div>
+  </div>
+
+  <div class="quiz-question" data-question>
+    <p>When does Apply's local <code>User</code> row get created for a first-time OIDC user?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q3" value="a"> On the first HTTP request after the browser lands on the site</label></li>
+      <li><label><input type="radio" name="q3" value="b"> In the <code>OnSignedIn</code> cookie event after the OIDC code exchange</label></li>
+      <li><label><input type="radio" name="q3" value="c"> When Services.User returns the user's role for the first time</label></li>
+      <li><label><input type="radio" name="q3" value="d"> Via a nightly sync job from the Identity Gateway user store</label></li>
+    </ul>
+    <button class="quiz-btn" data-check>Check</button>
+    <div class="quiz-feedback" data-feedback data-answer="b">
+      ✓ Correct. <code>CookieAuthenticationFunctions.OnSignedInFunction</code> is fired by ASP.NET Core right after the OIDC handler
+      issues the cookie. It extracts <code>externalobjectidentifier</code> and upserts the User row.
+    </div>
+  </div>
+
+  <div class="quiz-question" data-question>
+    <p>What does the <code>ServiceAccountAuthorizeFilter</code> in Services.User check?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q4" value="a"> That the caller's IP is in an allowed range</label></li>
+      <li><label><input type="radio" name="q4" value="b"> That the JWT audience claim equals "userapi" exactly</label></li>
+      <li><label><input type="radio" name="q4" value="c"> That the caller's <code>IdentityType</code> claim equals <code>Service</code></label></li>
+      <li><label><input type="radio" name="q4" value="d"> That the Bearer token was issued in the last 60 seconds</label></li>
+    </ul>
+    <button class="quiz-btn" data-check>Check</button>
+    <div class="quiz-feedback" data-feedback data-answer="c">
+      ✓ Correct. The filter reads <code>IIdentityContext.IdentityType</code> from the resolved token claims.
+      If the type is not <code>Service</code>, a 403 Forbidden is returned. Regular user tokens are rejected from management endpoints.
+    </div>
+  </div>
+
+  <div class="quiz-score" data-score></div>
+</div>
+
+<h2>8. Quick Reference — Files to Know</h2>
+
+<table>
+  <thead><tr><th>File</th><th>Project</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>Infrastructure/Authentication/Functions/<br>CookieAuthenticationFunctions.cs</code></td>
+      <td>Apply</td>
+      <td><code>OnSignedIn</code>: upserts User row from OIDC claims on first login</td>
+    </tr>
+    <tr>
+      <td><code>Data/Externals/Clients/UserServiceClient.cs</code></td>
+      <td>Apply</td>
+      <td>HTTP client; calls <code>/v2/user/identities/role/{id}</code> with service-account token</td>
+    </tr>
+    <tr>
+      <td><code>Services/Users/UserService.cs — UserHasRoleAsync</code></td>
+      <td>Apply</td>
+      <td>Delegates role check to <code>IUserServiceClient</code></td>
+    </tr>
+    <tr>
+      <td><code>V2/Controllers/UserController.cs</code></td>
+      <td>Services.User</td>
+      <td>Exposes <code>GET /role/{id}</code>, <code>GET /identities/email</code>, <code>POST /identities</code></td>
+    </tr>
+    <tr>
+      <td><code>V2/Services/UserService.cs</code></td>
+      <td>Services.User</td>
+      <td>Orchestrates connector handlers to resolve user attributes</td>
+    </tr>
+    <tr>
+      <td><code>Startup.cs</code></td>
+      <td>Services.User</td>
+      <td>Registers JWT Bearer auth; authority = IDG; audience = "userapi"</td>
+    </tr>
+    <tr>
+      <td><code>Infrastructure/Authentication/<br>ServiceAccountAuthorizeFilter.cs</code></td>
+      <td>Services.User</td>
+      <td>Guards management endpoints: rejects tokens where <code>IdentityType ≠ Service</code></td>
+    </tr>
+    <tr>
+      <td><code>Domain/External/IdentityGateway/<br>V1/IIdentityClientV1.cs</code></td>
+      <td>Services.User</td>
+      <td>Refit client to call IDG's <code>/user/convert</code> endpoint for ID conversion</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="ask-claude">
+  <strong>Questions for your teacher</strong>
+  Good follow-up questions to deepen understanding:
+  <ul style="margin-top:0.5rem">
+    <li>"How does the connector handler pick which connector to use for a given tenant?"</li>
+    <li>"What exactly is in the service-account token Apply sends to Services.User — how is it obtained?"</li>
+    <li>"Can you walk me through what happens if Services.User's connector call to Azure Graph fails?"</li>
+    <li>"How is <code>externalobjectidentifier</code> different from the standard OIDC <code>sub</code> claim?"</li>
+    <li>"Why does Services.User also call back to the IDG for ID conversion — what does Local vs External ID mean?"</li>
+  </ul>
+</div>
+
+<div class="lesson-nav">
+  <a href="../lessons/0008-apply-guest-auth.html">← Lesson 8: Apply Guest Auth</a>
+  <span class="next"></span>
+</div>
+
+<div class="lesson-footer">
+  Equisoft Identity Learning · Lesson 9 · Based on
+  <code>Services.User</code> and <code>Applications.Apply</code> source code ·
+  Ask your teacher agent for clarification on anything above.
+</div>
+
+</body>
+</html>

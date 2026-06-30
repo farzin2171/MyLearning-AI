@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lesson 11 — Single Sign-On in the DIT Ecosystem</title>
+  <link rel="stylesheet" href="../assets/styles.css" />
+  <style>
+    /* ── SSO-specific extras ─────────────────────────────────── */
+    .sso-diagram {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      padding: 1.4rem 1rem;
+      margin: 1.4rem 0;
+      overflow-x: auto;
+    }
+    .sso-diagram svg { display: block; margin: 0 auto; max-width: 100%; }
+
+    .step-list { list-style: none; margin: 0; padding: 0; counter-reset: step; }
+    .step-list li {
+      counter-increment: step;
+      display: flex;
+      gap: 0.9rem;
+      margin-bottom: 1.1rem;
+      align-items: flex-start;
+    }
+    .step-list li::before {
+      content: counter(step);
+      flex-shrink: 0;
+      width: 1.6rem;
+      height: 1.6rem;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #fff;
+      font-family: var(--font-ui);
+      font-size: 0.78rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 0.25rem;
+    }
+    .step-list li p { margin: 0; font-size: 0.93rem; }
+    .step-list li strong { display: block; font-family: var(--font-ui); font-size: 0.82rem; color: var(--accent); }
+
+    .compare-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin: 1.2rem 0;
+    }
+    @media (max-width: 560px) { .compare-grid { grid-template-columns: 1fr; } }
+    .compare-card {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.9rem 1rem;
+      background: var(--surface);
+    }
+    .compare-card h4 { font-family: var(--font-ui); font-size: 0.85rem; margin-bottom: 0.5rem; color: var(--text); text-transform: none; letter-spacing: 0; }
+    .compare-card ul { margin: 0 0 0 1.2rem; font-size: 0.85rem; }
+    .compare-card li { margin-bottom: 0.25rem; }
+
+    .logout-row {
+      display: flex;
+      gap: 1rem;
+      margin: 1rem 0;
+      flex-wrap: wrap;
+    }
+    .logout-card {
+      flex: 1 1 200px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.9rem 1rem;
+      background: var(--surface);
+    }
+    .logout-card h4 { font-family: var(--font-ui); font-size: 0.85rem; color: var(--text); text-transform: none; letter-spacing: 0; margin-bottom: 0.4rem; }
+    .logout-card p { font-size: 0.84rem; margin: 0; color: var(--muted); }
+
+    .tag-new  { background: #e6f5ec; color: var(--success); border: 1px solid var(--success); }
+    .tag-dit  { background: #e8f0ff; color: var(--accent); border: 1px solid var(--accent); }
+
+    .config-table td:first-child { font-family: var(--font-mono); font-size: 0.8em; white-space: nowrap; }
+    .config-table td:last-child  { color: var(--muted); font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ─────────────────────────────────────────────────── -->
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="0001-ecosystem-overview.html">Ecosystem</a> ›
+    <a href="0005-registering-clients.html">Registering Clients</a> ›
+    <a href="0007-external-providers.html">External Providers</a> ›
+    <a href="0010-tenant-setup.html">Tenant Setup</a> ›
+    Lesson 11
+  </div>
+  <h1>Single Sign-On in the DIT Ecosystem</h1>
+  <div class="meta">
+    <span>Lesson 11 of the Identity series</span>
+    <span>~25 min</span>
+    <span>SSO · Session Management · External Apps</span>
+  </div>
+</div>
+
+<!-- ── Mission tie-in ──────────────────────────────────────────── -->
+<div class="callout">
+  <strong>Mission tie-in</strong>
+  You can now register clients and configure external identity providers. This lesson answers the next natural question: once a user logs in, how does that session carry across Apply, Illustrate, and potentially apps we don't own?
+</div>
+
+<!-- ── 1. What SSO actually means here ───────────────────────── -->
+<h2>1. What SSO actually means in the Equisoft IDG</h2>
+
+<p>Single Sign-On (SSO) is not a feature you enable with a flag. It is a <em>consequence</em> of one central fact:</p>
+
+<div class="callout key">
+  <strong>The key insight</strong>
+  The Identity Gateway (IDG) creates a browser session cookie when a user first authenticates. Every OIDC client that redirects to the <em>same IDG</em> will hit that cookie, and the IDG can issue tokens <strong>without asking for credentials again</strong>.
+</div>
+
+<p>The IDG (Duende IdentityServer) writes a cookie — typically named <code>idsrv.session</code> — to the IDG's own domain (e.g. <code>identity.equisoft.com</code>). That cookie is the SSO session. Apply doesn't touch it, Illustrate doesn't touch it. It lives entirely at the IDG level.</p>
+
+<!-- ── The SSO bubble diagram ──────────────────────────────────── -->
+<h3>The SSO "bubble"</h3>
+
+<div class="sso-diagram">
+  <svg viewBox="0 0 680 320" xmlns="http://www.w3.org/2000/svg" font-family="system-ui,sans-serif">
+    <!-- Bubble outline -->
+    <ellipse cx="340" cy="160" rx="300" ry="130" fill="none" stroke="#0055cc" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <text x="340" y="32" text-anchor="middle" font-size="11" fill="#0055cc" font-weight="600">SSO Bubble — all apps share the IDG session</text>
+
+    <!-- IDG central node -->
+    <rect x="270" y="118" width="140" height="52" rx="8" fill="#e8f0ff" stroke="#0055cc" stroke-width="2"/>
+    <text x="340" y="140" text-anchor="middle" font-size="13" font-weight="700" fill="#003d99">Identity Gateway</text>
+    <text x="340" y="157" text-anchor="middle" font-size="10" fill="#555">(Duende IdentityServer)</text>
+    <text x="340" y="172" text-anchor="middle" font-size="10" fill="#0055cc">🍪 idsrv.session cookie</text>
+
+    <!-- Apply -->
+    <rect x="30" y="60" width="110" height="44" rx="6" fill="#e8faf0" stroke="#0a9e5c" stroke-width="1.5"/>
+    <text x="85" y="79" text-anchor="middle" font-size="12" font-weight="600" fill="#087040">Apply</text>
+    <text x="85" y="95" text-anchor="middle" font-size="9.5" fill="#555">client_id: apply.T</text>
+    <!-- Arrow Apply → IDG -->
+    <path d="M140 82 Q200 82 270 144" stroke="#0a9e5c" stroke-width="1.5" fill="none" marker-end="url(#arrowG)"/>
+    <text x="192" y="100" font-size="9" fill="#0a9e5c" transform="rotate(-25 192 100)">OIDC redirect →</text>
+
+    <!-- Illustrate -->
+    <rect x="30" y="180" width="110" height="44" rx="6" fill="#e8faf0" stroke="#0a9e5c" stroke-width="1.5"/>
+    <text x="85" y="199" text-anchor="middle" font-size="12" font-weight="600" fill="#087040">Illustrate</text>
+    <text x="85" y="215" text-anchor="middle" font-size="9.5" fill="#555">client_id: illustrate.T</text>
+    <!-- Arrow Illustrate → IDG -->
+    <path d="M140 202 Q200 202 270 160" stroke="#0a9e5c" stroke-width="1.5" fill="none" marker-end="url(#arrowG)"/>
+    <text x="192" y="210" font-size="9" fill="#0a9e5c" transform="rotate(22 192 210)">OIDC redirect →</text>
+
+    <!-- External App -->
+    <rect x="540" y="118" width="110" height="44" rx="6" fill="#fff8e8" stroke="#c07000" stroke-width="1.5" stroke-dasharray="5 3"/>
+    <text x="595" y="137" text-anchor="middle" font-size="12" font-weight="600" fill="#8a5000">External App</text>
+    <text x="595" y="153" text-anchor="middle" font-size="9.5" fill="#555">client_id: ext-app</text>
+    <!-- Arrow IDG → External -->
+    <path d="M410 144 Q475 144 540 140" stroke="#c07000" stroke-width="1.5" fill="none" stroke-dasharray="5 3" marker-end="url(#arrowO)"/>
+    <text x="475" y="132" font-size="9" fill="#c07000">← tokens issued</text>
+
+    <!-- Browser icon -->
+    <circle cx="340" cy="275" r="20" fill="none" stroke="#999" stroke-width="1.5"/>
+    <text x="340" y="280" text-anchor="middle" font-size="18">🌐</text>
+    <text x="340" y="303" text-anchor="middle" font-size="10" fill="#666">Browser (holds IDG cookie)</text>
+
+    <!-- Defs -->
+    <defs>
+      <marker id="arrowG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="#0a9e5c"/>
+      </marker>
+      <marker id="arrowO" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+        <path d="M10,0 L0,5 L10,10 z" fill="#c07000"/>
+      </marker>
+    </defs>
+  </svg>
+</div>
+
+<p>Apply and Illustrate are <strong>already inside the SSO bubble</strong> because they are both registered OIDC clients of the same IDG. SSO between them is not a feature request — it is already active. The question is only whether the applications are configured to <em>leverage</em> it.</p>
+
+<!-- ── 2. What happens under the hood ─────────────────────────── -->
+<h2>2. The SSO flow step by step</h2>
+
+<h3>Scenario: User logs into Apply, then navigates to Illustrate</h3>
+
+<ol class="step-list">
+  <li>
+    <div>
+      <strong>Apply: no token → OIDC challenge</strong>
+      <p>User hits Apply. No local auth cookie exists. Apply triggers <code>Challenge(OpenIdConnectDefaults.AuthenticationScheme)</code> and redirects the browser to the IDG's <code>/connect/authorize</code> endpoint with <code>client_id=apply.TENANT</code>.</p>
+    </div>
+  </li>
+  <li>
+    <div>
+      <strong>IDG: no session → show login page</strong>
+      <p>The IDG has no <code>idsrv.session</code> cookie yet. It redirects the browser to the external IdP (Azure B2C or Okta, depending on the tenant), where the user enters credentials.</p>
+    </div>
+  </li>
+  <li>
+    <div>
+      <strong>IDG: creates session, issues code to Apply</strong>
+      <p>After the external IdP authenticates the user, the IDG creates its own session (<code>idsrv.session</code> cookie on the <code>identity.equisoft.com</code> domain), then redirects back to Apply's <code>/signin-oidc</code> with an authorization code.</p>
+    </div>
+  </li>
+  <li>
+    <div>
+      <strong>Apply: exchanges code for tokens, writes its own auth cookie</strong>
+      <p>Apply calls the IDG's <code>/connect/token</code> endpoint with the code + PKCE verifier, receives <code>access_token</code> and <code>id_token</code>, and writes its own application auth cookie. The user is now logged into Apply.</p>
+    </div>
+  </li>
+  <li>
+    <div>
+      <strong>User navigates to Illustrate: OIDC challenge again</strong>
+      <p>Illustrate has no Apply cookie (different domain / different app cookie). It issues its own OIDC challenge, redirecting to the IDG's <code>/connect/authorize</code> with <code>client_id=illustrate.TENANT</code>.</p>
+    </div>
+  </li>
+  <li>
+    <div>
+      <strong>IDG: session found → no login required</strong>
+      <p>The IDG sees the <code>idsrv.session</code> cookie it wrote in step 3. The user is already known. The IDG immediately redirects back to Illustrate's callback with a new authorization code — <strong>no credentials prompt</strong>.</p>
+    </div>
+  </li>
+  <li>
+    <div>
+      <strong>Illustrate: gets its own tokens</strong>
+      <p>Illustrate exchanges the code for tokens scoped to <code>illustrate.TENANT</code>. The access token carries the same user claims, same <code>tenant</code> claim, same <code>identityRole</code>. User is seamlessly logged into Illustrate.</p>
+    </div>
+  </li>
+</ol>
+
+<div class="callout tip">
+  <strong>Takeaway</strong>
+  Each application gets <em>its own</em> access token scoped to its own client. The IDG session is the invisible bridge. Neither Apply nor Illustrate shares tokens with each other — they share the IDG session.
+</div>
+
+<!-- ── 3. What makes Apply "SSO-capable" ─────────────────────── -->
+<h2>3. What makes Apply and Illustrate SSO-capable</h2>
+
+<p>The OIDC client configuration governs whether SSO flows correctly. Here are the critical settings in the client entry (inside <code>dit-base-config-common</code>):</p>
+
+<table class="config-table">
+  <thead>
+    <tr><th>Config field</th><th>Typical value</th><th>Why it matters for SSO</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>AllowedGrantTypes</td>
+      <td><code>["authorization_code"]</code></td>
+      <td>Authorization Code + PKCE is the browser-side SSO-compatible grant. Never use implicit for SSO.</td>
+    </tr>
+    <tr>
+      <td>RequirePkce</td>
+      <td><code>true</code></td>
+      <td>Prevents code interception. Required for SSO security in public/browser clients.</td>
+    </tr>
+    <tr>
+      <td>RedirectUris</td>
+      <td><code>["https://apply.T.com/signin-oidc"]</code></td>
+      <td>IDG will only redirect back here. Must match exactly or SSO redirect fails.</td>
+    </tr>
+    <tr>
+      <td>PostLogoutRedirectUris</td>
+      <td><code>["https://apply.T.com/signout-callback-oidc"]</code></td>
+      <td>Required for coordinated logout (see §5).</td>
+    </tr>
+    <tr>
+      <td>FrontChannelLogoutUri</td>
+      <td><code>"https://apply.T.com/signout-oidc"</code></td>
+      <td>The IDG pings this URL via iframe when a logout happens in any other connected app.</td>
+    </tr>
+    <tr>
+      <td>AllowedScopes</td>
+      <td><code>["openid","profile","email","tenant_access"]</code></td>
+      <td>Scopes determine which claims appear in the access token. Must include <code>openid</code> for OIDC.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>On the <strong>application side</strong>, Apply's <code>AddOpenIdConnect</code> must <em>not</em> force re-authentication. The footgun here is setting <code>prompt = "login"</code> — that tells the IDG to always show the login page, breaking SSO completely.</p>
+
+<pre><code>// ✓ Correct — no prompt override, SSO works
+options.Events.OnRedirectToIdentityProvider = ctx => {
+    // Only set prompt when you deliberately want to force re-login
+    // e.g. for a "switch account" feature
+    return Task.CompletedTask;
+};
+
+// ✗ Breaks SSO for everyone
+options.Events.OnRedirectToIdentityProvider = ctx => {
+    ctx.ProtocolMessage.Prompt = "login";  // forces credentials every time
+    return Task.CompletedTask;
+};</code></pre>
+
+<div class="callout warn">
+  <strong>Common footgun</strong>
+  Some developers add <code>prompt=login</code> during debugging to avoid cached sessions. This accidentally disables SSO for all users in that environment. Remove it before merging.
+</div>
+
+<!-- ── 4. Enabling SSO for an external app ────────────────────── -->
+<h2>4. Enabling SSO for an application outside DIT</h2>
+
+<p>An external application becomes part of the SSO bubble by becoming an <strong>OIDC client of the IDG</strong>. It does not matter whether the app is Java, Python, Node.js, or .NET — the protocol is the same.</p>
+
+<div class="compare-grid">
+  <div class="compare-card">
+    <h4>What you do in the IDG (dit-base-config-common)</h4>
+    <ul>
+      <li>Add a new client entry to the clients config</li>
+      <li>Specify its redirect and logout URIs</li>
+      <li>Assign it allowed scopes</li>
+      <li>Generate and store a client secret (hashed)</li>
+    </ul>
+  </div>
+  <div class="compare-card">
+    <h4>What the external app must do</h4>
+    <ul>
+      <li>Configure the IDG as its OIDC Authority</li>
+      <li>Set the ClientId and ClientSecret</li>
+      <li>Handle the <code>/signin-oidc</code> callback</li>
+      <li>Optionally wire up logout to <code>/signout-oidc</code></li>
+    </ul>
+  </div>
+</div>
+
+<h3>Step 1 — Add the client in dit-base-config-common</h3>
+
+<p>Open the clients config file (the same one where Apply and Illustrate entries live). Add a new entry. The minimal structure for a browser-based SSO app:</p>
+
+<pre><code>{
+  "ClientId": "ext-myapp",
+  "ClientName": "My External Application",
+
+  "ClientSecrets": [
+    { "Value": "&lt;SHA256-hashed-secret&gt;" }
+  ],
+
+  "AllowedGrantTypes": ["authorization_code"],
+  "RequirePkce": true,
+
+  "RedirectUris": [
+    "https://myapp.external.com/signin-oidc"
+  ],
+  "PostLogoutRedirectUris": [
+    "https://myapp.external.com/signout-callback-oidc"
+  ],
+  "FrontChannelLogoutUri": "https://myapp.external.com/signout-oidc",
+
+  "AllowedScopes": ["openid", "profile", "email"],
+
+  "AllowOfflineAccess": false,
+
+  "Properties": {
+    "EcosystemTenant": "MYTENANT"
+  }
+}</code></pre>
+
+<div class="callout warn">
+  <strong>EcosystemTenant is required</strong>
+  Without the <code>EcosystemTenant</code> property, the IDG's token generation logic will not inject the <code>tenant</code> claim into tokens issued for this client. SSO will work, but downstream DIT services relying on the <code>tenant</code> claim will see nothing.
+</div>
+
+<h3>Step 2 — Configure the external app to use the IDG as its authority</h3>
+
+<p>For an ASP.NET Core application, the configuration mirrors exactly what Apply does:</p>
+
+<pre><code>// Program.cs (or Startup.cs)
+builder.Services.AddAuthentication(options => {
+    options.DefaultScheme = CookieAuthenticationDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = OpenIdConnectDefaults.AuthenticationScheme;
+})
+.AddCookie()
+.AddOpenIdConnect(options => {
+    // Point at the Equisoft IDG — this is the only authority
+    options.Authority = "https://identity.equisoft.com";
+
+    options.ClientId     = "ext-myapp";
+    options.ClientSecret = "&lt;plain-text secret from vault&gt;";
+    options.ResponseType = "code";   // Authorization Code
+    options.UsePkce      = true;
+
+    options.Scope.Clear();
+    options.Scope.Add("openid");
+    options.Scope.Add("profile");
+    options.Scope.Add("email");
+
+    options.SaveTokens = true;
+
+    // The IDG discovery doc is at:
+    // https://identity.equisoft.com/.well-known/openid-configuration
+    // — AddOpenIdConnect fetches this automatically on startup.
+});</code></pre>
+
+<p>For <strong>non-.NET apps</strong> (Node.js, Python, Java), use any OIDC-certified library. They all need the same three pieces of information:</p>
+
+<table>
+  <thead><tr><th>Parameter</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td><code>issuer</code> / <code>authority</code></td><td><code>https://identity.equisoft.com</code></td></tr>
+    <tr><td><code>client_id</code></td><td><code>ext-myapp</code></td></tr>
+    <tr><td><code>client_secret</code></td><td>(from secrets vault)</td></tr>
+  </tbody>
+</table>
+
+<h3>Step 3 — Verify SSO is working</h3>
+
+<p>A quick manual test:</p>
+
+<ol class="step-list">
+  <li><div><strong>Log into Apply</strong><p>Open the browser, log in normally. Confirm you are fully authenticated inside Apply.</p></div></li>
+  <li><div><strong>Open your external app in the same browser</strong><p>Navigate to the external app's protected route. It should redirect you to the IDG.</p></div></li>
+  <li><div><strong>Watch the address bar</strong><p>You should see the IDG URL appear briefly, then immediately redirect back to your external app — <strong>with no login prompt</strong>. If a login page appears, check: (a) same IDG authority? (b) <code>EcosystemTenant</code> matches the tenant you logged into Apply with? (c) no <code>prompt=login</code> on the OIDC redirect?</p></div></li>
+</ol>
+
+<!-- ── 5. Silent auth (prompt=none) ───────────────────────────── -->
+<h2>5. Silent authentication: <code>prompt=none</code></h2>
+
+<p>Sometimes an app wants to <strong>check</strong> whether the user has an active SSO session without visibly redirecting to the IDG (for example, in an iframe or during a background token refresh check). This is done by adding <code>prompt=none</code> to the authorize request.</p>
+
+<pre><code>// Sending a prompt=none request
+GET https://identity.equisoft.com/connect/authorize
+  ?response_type=code
+  &client_id=ext-myapp
+  &redirect_uri=https://myapp.external.com/signin-oidc
+  &scope=openid+profile
+  &prompt=none          // ← silent check
+  &nonce=abc123</code></pre>
+
+<p>Two possible outcomes:</p>
+
+<table>
+  <thead><tr><th>Situation</th><th>IDG response</th><th>Your app should</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Active SSO session exists</td>
+      <td>Redirect with <code>code=…</code> — success</td>
+      <td>Exchange code → get tokens silently</td>
+    </tr>
+    <tr>
+      <td>No session / session expired</td>
+      <td>Redirect with <code>error=login_required</code></td>
+      <td>Fall back to a visible OIDC challenge (normal login flow)</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout">
+  <strong>When is this used?</strong>
+  Primarily for single-page apps (SPAs) that use iframes to silently refresh tokens, and for apps that want to restore a session on page load without a visible redirect. DIT's MVC apps mostly rely on the standard Authorization Code flow with refresh tokens for this.
+</div>
+
+<!-- ── 6. Single Sign-Out ──────────────────────────────────────── -->
+<h2>6. Single Sign-Out (SLO)</h2>
+
+<p>SSO without coordinated logout is incomplete. If a user logs out of Apply but stays logged in at the IDG, navigating to Illustrate will silently re-authenticate them — which is usually not what "log out" means.</p>
+
+<div class="logout-row">
+  <div class="logout-card">
+    <h4>Front-Channel Logout (browser-based)</h4>
+    <p>The IDG renders a hidden page with <code>&lt;img&gt;</code> or <code>&lt;iframe&gt;</code> tags pointing to each connected client's <code>FrontChannelLogoutUri</code>. Each client clears its own session cookie when hit. Simple, no server-to-server auth needed. Unreliable if a browser blocks third-party cookies or iframes.</p>
+  </div>
+  <div class="logout-card">
+    <h4>Back-Channel Logout (server-to-server)</h4>
+    <p>The IDG sends a signed JWT (<em>logout token</em>) via HTTP POST to each registered client's back-channel endpoint. The client validates the token and clears the session. More reliable than front-channel but requires the client to expose an HTTPS endpoint reachable by the IDG.</p>
+  </div>
+</div>
+
+<h3>How to trigger SLO correctly</h3>
+
+<p>When a user clicks "Log Out" in Apply (or any DIT app), the application must:</p>
+
+<ol class="step-list">
+  <li><div><strong>Clear the local app cookie</strong><p>Call <code>HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme)</code>.</p></div></li>
+  <li><div><strong>Redirect to the IDG end-session endpoint</strong><p>Call <code>HttpContext.SignOutAsync(OpenIdConnectDefaults.AuthenticationScheme)</code>. ASP.NET Core's OIDC handler automatically redirects to <code>https://identity.equisoft.com/connect/endsession?id_token_hint=&lt;id_token&gt;&post_logout_redirect_uri=&lt;your-uri&gt;</code>.</p></div></li>
+  <li><div><strong>IDG destroys session + notifies all clients</strong><p>The IDG removes the <code>idsrv.session</code> cookie and fires logout notifications (front-channel or back-channel) to every other client that was active in that session.</p></div></li>
+</ol>
+
+<pre><code>// Apply's Logout action (simplified)
+public async Task&lt;IActionResult&gt; Logout()
+{
+    await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+
+    // This line triggers the redirect to IDG /connect/endsession
+    // and passes the id_token_hint automatically (if SaveTokens = true)
+    await HttpContext.SignOutAsync(OpenIdConnectDefaults.AuthenticationScheme);
+
+    return new EmptyResult(); // redirect is handled by OIDC middleware
+}</code></pre>
+
+<div class="callout tip">
+  <strong>The id_token_hint matters</strong>
+  Without <code>id_token_hint</code>, the IDG may show a "do you really want to log out?" confirmation page. Always include it. ASP.NET Core's OIDC handler handles this automatically when <code>SaveTokens = true</code> is set on the client.
+</div>
+
+<h3>External apps and SLO</h3>
+
+<p>An external app participates in SLO by registering its <code>FrontChannelLogoutUri</code> in the IDG client config (step 1 above). When any DIT app triggers end-session, the IDG's logout page will include an iframe pointing to the external app's logout URI, clearing the external app's session.</p>
+
+<!-- ── 7. Comparison table ─────────────────────────────────────── -->
+<h2>7. Summary: DIT app vs. external app SSO</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th></th>
+      <th><span class="tag tag-dit" style="font-size:0.75rem;border-radius:20px;padding:0.1rem 0.5rem;">DIT App (Apply, Illustrate)</span></th>
+      <th><span class="tag tag-new" style="font-size:0.75rem;border-radius:20px;padding:0.1rem 0.5rem;">External App</span></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Client already registered?</td>
+      <td>Yes — in dit-base-config-common</td>
+      <td>No — must be added</td>
+    </tr>
+    <tr>
+      <td>Authority URL</td>
+      <td>Same IDG per environment</td>
+      <td>Same IDG per environment</td>
+    </tr>
+    <tr>
+      <td>Tenant claim in tokens?</td>
+      <td>Yes — EcosystemTenant set</td>
+      <td>Only if EcosystemTenant is added to config</td>
+    </tr>
+    <tr>
+      <td>SSO participation</td>
+      <td>Automatic — already in the bubble</td>
+      <td>Automatic once registered as OIDC client</td>
+    </tr>
+    <tr>
+      <td>Logout participation</td>
+      <td>Yes — FrontChannelLogoutUri registered</td>
+      <td>Must add FrontChannelLogoutUri to client config</td>
+    </tr>
+    <tr>
+      <td>Code change needed?</td>
+      <td>None (already configured)</td>
+      <td>App must implement OIDC auth + callback handler</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ── 8. Debugging checklist ─────────────────────────────────── -->
+<h2>8. SSO debugging checklist</h2>
+
+<p>When SSO is not working (user gets a login prompt they shouldn't), work through these in order:</p>
+
+<table>
+  <thead><tr><th>Symptom</th><th>Most likely cause</th><th>Fix</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Login prompt appears on second app</td>
+      <td>Different IDG URL in the second app's config</td>
+      <td>Ensure <code>Authority</code> is identical across all apps (same host, no trailing slash differences)</td>
+    </tr>
+    <tr>
+      <td>Login prompt with <code>prompt=login</code> in URL</td>
+      <td>App is forcing it via <code>OnRedirectToIdentityProvider</code></td>
+      <td>Remove the <code>prompt=login</code> override</td>
+    </tr>
+    <tr>
+      <td><code>invalid_client</code> error</td>
+      <td>ClientId or ClientSecret mismatch</td>
+      <td>Verify client config in IDG matches what the app sends</td>
+    </tr>
+    <tr>
+      <td><code>unauthorized_client</code> error</td>
+      <td>Grant type not allowed for this client</td>
+      <td>Add <code>authorization_code</code> to <code>AllowedGrantTypes</code></td>
+    </tr>
+    <tr>
+      <td>SSO works but no <code>tenant</code> claim</td>
+      <td>Missing <code>EcosystemTenant</code> in client config</td>
+      <td>Add <code>Properties.EcosystemTenant</code> to the client entry</td>
+    </tr>
+    <tr>
+      <td>Logout from Apply, Illustrate still logged in</td>
+      <td>Illustrate's <code>FrontChannelLogoutUri</code> not registered / being blocked</td>
+      <td>Confirm URI is registered; test with browser dev tools network panel during logout</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ── Knowledge check ────────────────────────────────────────── -->
+<div class="quiz" data-quiz="sso">
+  <h3>Knowledge Check</h3>
+
+  <div class="quiz-question" data-correct="b">
+    <p>What is the primary mechanism that enables SSO between Apply and Illustrate?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="sso-q0" value="a"> Apply passes its access token to Illustrate via a shared API</label></li>
+      <li><label><input type="radio" name="sso-q0" value="b"> The IDG writes a browser session cookie that all OIDC clients share</label></li>
+      <li><label><input type="radio" name="sso-q0" value="c"> Both apps read from the same database session table</label></li>
+      <li><label><input type="radio" name="sso-q0" value="d"> Apply redirects the browser to Illustrate with embedded claims</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="c">
+    <p>An external app is registered as an OIDC client in the IDG but users see no <code>tenant</code> claim in their tokens. What is most likely missing?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="sso-q1" value="a"> The <code>AllowedScopes</code> list does not include <code>openid</code></label></li>
+      <li><label><input type="radio" name="sso-q1" value="b"> The app did not set <code>SaveTokens = true</code></label></li>
+      <li><label><input type="radio" name="sso-q1" value="c"> The <code>EcosystemTenant</code> property is missing from the client config</label></li>
+      <li><label><input type="radio" name="sso-q1" value="d"> The app must request an additional scope named <code>tenant</code></label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="a">
+    <p>A developer sets <code>prompt = "login"</code> in <code>OnRedirectToIdentityProvider</code> while debugging. What is the production consequence?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="sso-q2" value="a"> All users are forced to re-enter credentials on every visit, breaking SSO</label></li>
+      <li><label><input type="radio" name="sso-q2" value="b"> Only guest users are affected; regular users keep their SSO session</label></li>
+      <li><label><input type="radio" name="sso-q2" value="c"> The IDG ignores the prompt parameter if a valid session exists</label></li>
+      <li><label><input type="radio" name="sso-q2" value="d"> The app falls back to the Client Credentials grant instead</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="d">
+    <p>A user logs out of Apply. Illustrate's session is <em>not</em> cleared. What configuration is most likely missing?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="sso-q3" value="a"> Apply does not call <code>SignOutAsync</code> with the cookie scheme</label></li>
+      <li><label><input type="radio" name="sso-q3" value="b"> The IDG's end-session endpoint is not reachable from Apply's server</label></li>
+      <li><label><input type="radio" name="sso-q3" value="c"> The IDG client config for Apply is missing <code>AllowOfflineAccess</code></label></li>
+      <li><label><input type="radio" name="sso-q3" value="d"> Illustrate's <code>FrontChannelLogoutUri</code> is not registered in the IDG client config</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="b">
+    <p>What does sending <code>prompt=none</code> in an OIDC authorize request do?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="sso-q4" value="a"> Forces the IDG to skip MFA even if the tenant policy requires it</label></li>
+      <li><label><input type="radio" name="sso-q4" value="b"> Silently authenticates the user if a session exists or returns an error if not</label></li>
+      <li><label><input type="radio" name="sso-q4" value="c"> Prevents the IDG from issuing a refresh token with the response</label></li>
+      <li><label><input type="radio" name="sso-q4" value="d"> Suppresses consent screens for first-time users of the external app</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <button class="quiz-btn" data-quiz-submit="sso">Check Answers</button>
+  <div class="quiz-score"></div>
+</div>
+
+<script>
+window.quizExplanations = {
+  'sso-q0': 'Each app gets its own tokens — they never share them. The IDG browser session cookie is the single source of SSO truth.',
+  'sso-q1': 'The EcosystemTenant property in the IDG client entry is what tells the token generation pipeline which tenant key to inject.',
+  'sso-q2': 'prompt=login is an instruction to the IDG to always display the authentication UI, regardless of any existing session.',
+  'sso-q3': 'FrontChannelLogoutUri tells the IDG where to send the browser-based logout notification iframe for that client.',
+  'sso-q4': 'prompt=none is a silent check: succeed silently if session exists, or return login_required error if not.'
+};
+</script>
+
+<!-- ── Primary source ─────────────────────────────────────────── -->
+<hr />
+<h2>Primary source to read</h2>
+<p><strong><a href="https://docs.duendesoftware.com/identityserver/v7/ui/logout/" target="_blank">Duende IdentityServer — Logout documentation</a></strong> — covers end-session, front-channel, and back-channel logout in detail. The logout flow in the IDG is implemented exactly as described here. Also see the <a href="https://docs.duendesoftware.com/identityserver/v7/tokens/refresh/" target="_blank">session management</a> section for how IDG tracks user sessions per client.</p>
+
+<!-- ── Ask Claude ─────────────────────────────────────────────── -->
+<div class="ask-claude">
+  <strong>Questions? Ask your teacher.</strong>
+  This lesson covered the SSO session lifecycle and how to onboard external apps. Follow-up questions worth asking:
+  <ul style="margin: 0.4rem 0 0 1.2rem; font-size: 0.85rem;">
+    <li>How does Illustrate actually receive the <code>tenant</code> claim, given it's a separate client from Apply?</li>
+    <li>What happens if the IDG session expires while the user is inside Apply — does Apply auto-logout them?</li>
+    <li>How does back-channel logout differ from front-channel in terms of reliability and network requirements?</li>
+    <li>Can two tenants share an SSO session, or is the session strictly per-tenant?</li>
+  </ul>
+</div>
+
+<!-- ── Navigation ─────────────────────────────────────────────── -->
+<div class="lesson-nav">
+  <a href="0010-tenant-setup.html">← Lesson 10: Tenant Setup</a>
+  <a class="next" href="../reference/glossary.html">Reference: Glossary →</a>
+</div>
+
+<div class="lesson-footer">
+  Equisoft Identity Learning Series · Lesson 11 · Single Sign-On
+</div>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

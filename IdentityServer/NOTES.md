@@ -17,5 +17,11 @@
 - Lessons should be completable by a new developer on day 1-2 of onboarding
 
 ## Format Preferences
-- Grounded in real code and real service names
-- Exercises tied to the actual services they will work with
+- Grounded in real code and real service names (Equisoft track)
+- Generic track lessons must work with zero Equisoft codebase access
+- Mix approach: concepts first across multiple lessons, then one capstone coding module
+- Exercises in generic track use generic examples (calendar, contacts, banking) not Equisoft
+
+## Course Structure (as of 2026-06-29)
+- Generic track: Lessons 12–29 (OAuth foundations → OIDC → Duende IS → microservices → capstone)
+- Equisoft track: Lesson 30 + existing Lessons 1–11

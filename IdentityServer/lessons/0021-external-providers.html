@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 21 — External Providers: Federating Google & Azure AD</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    /* ── Sequence diagram ──────────────────────────────── */
+    .seq {
+      margin: 1.2rem 0;
+      font-family: var(--font-ui);
+      font-size: 0.8rem;
+    }
+    .seq-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .seq-actor {
+      min-width: 130px;
+      text-align: right;
+      font-weight: 700;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+    .seq-actor.ext { color: var(--accent); }
+    .seq-arrow { color: var(--accent); font-size: 1rem; flex-shrink: 0; }
+    .seq-label {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 0.18rem 0.7rem;
+      font-family: var(--font-mono);
+      font-size: 0.73rem;
+    }
+    .seq-note {
+      margin-left: 145px;
+      color: var(--muted);
+      font-size: 0.76rem;
+      font-style: italic;
+      margin-bottom: 0.5rem;
+    }
+    .seq-divider {
+      margin: 0.8rem 0 0.8rem 130px;
+      border-top: 1px dashed var(--border);
+    }
+
+    /* ── Code section ──────────────────────────────────── */
+    .code-section {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 1rem 0;
+    }
+    .code-section .code-title {
+      font-family: var(--font-ui);
+      font-size: 0.72rem;
+      padding: 0.4rem 0.9rem;
+      background: var(--border);
+      color: var(--muted);
+      letter-spacing: 0.04em;
+    }
+    .code-section pre {
+      margin: 0;
+      padding: 1rem 1.1rem;
+      background: transparent;
+      border: none;
+      font-size: 0.81rem;
+      line-height: 1.65;
+    }
+
+    /* ── Claims mapping table ──────────────────────────── */
+    .claim-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.83rem;
+      margin: 0.8rem 0 1.2rem;
+    }
+    .claim-table th {
+      font-family: var(--font-ui);
+      text-align: left;
+      border-bottom: 2px solid var(--border);
+      padding: 0.4rem 0.6rem;
+      font-size: 0.74rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+    }
+    .claim-table td {
+      padding: 0.42rem 0.6rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    .claim-table td code { font-size: 0.78rem; }
+    .claim-table tr:last-child td { border-bottom: none; }
+    .arrow-cell { text-align: center; color: var(--muted); }
+
+    /* ── Two-column layout ─────────────────────────────── */
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin: 1rem 0;
+    }
+    @media (max-width: 600px) { .two-col { grid-template-columns: 1fr; } }
+    .two-col .code-section { margin: 0; }
+
+    /* ── Annotation aside ──────────────────────────────── */
+    .annotated {
+      display: grid;
+      grid-template-columns: 1fr 0.55fr;
+      gap: 0 1.2rem;
+      align-items: start;
+      margin: 1rem 0;
+    }
+    @media (max-width: 600px) { .annotated { grid-template-columns: 1fr; } }
+    .annotation {
+      font-family: var(--font-ui);
+      font-size: 0.79rem;
+      color: var(--muted);
+      border-left: 3px solid var(--border);
+      padding-left: 0.8rem;
+    }
+    .annotation strong { color: var(--text); }
+    .annotation p { margin-bottom: 0.6rem; }
+  </style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="../MISSION.md">OAuth &amp; Identity Course</a> › Module 3: Building Duende IS ›
+    <a href="0020-login-ui.html">Lesson 20</a> › Lesson 21
+  </div>
+  <h1>External Providers — Federating Google &amp; Azure AD</h1>
+  <div class="meta">
+    <span>~25 minutes</span>
+    <span>Architecture + code walkthrough</span>
+    <span>Prerequisite: <a href="0020-login-ui.html">Lesson 20</a></span>
+  </div>
+</div>
+
+<p>
+  Your login page currently validates users against a local store.
+  An <strong>external provider</strong> lets a user prove their identity through a
+  third-party — Google, Microsoft Entra ID, GitHub — so your IS can issue tokens
+  without ever holding a password. This is the pattern behind every
+  "Log in with Google" button.
+</p>
+
+<div class="callout">
+  <strong>Key insight: Duende IS becomes the relying party</strong>
+  From the external provider's perspective, your Duende IS instance is just another
+  OAuth client. From your clients' perspective, nothing changes — they still get
+  tokens from your IS. You translate between the two.
+</div>
+
+<hr>
+
+<h2>The Full Federation Flow</h2>
+
+<div class="seq">
+
+  <div class="seq-row">
+    <span class="seq-actor">Browser</span>
+    <span class="seq-arrow">→</span>
+    <span class="seq-label">GET /Account/Login?returnUrl=…</span>
+  </div>
+  <div class="seq-note">User arrives at your IS login page</div>
+
+  <div class="seq-row">
+    <span class="seq-actor">Browser</span>
+    <span class="seq-arrow">→</span>
+    <span class="seq-label">GET /ExternalLogin?provider=Google&amp;returnUrl=…</span>
+  </div>
+  <div class="seq-note">User clicks "Log in with Google" — your page issues an OAuth Challenge</div>
+
+  <div class="seq-divider"></div>
+
+  <div class="seq-row">
+    <span class="seq-actor ext">Google</span>
+    <span class="seq-arrow">→</span>
+    <span class="seq-label">User authenticates at accounts.google.com</span>
+  </div>
+  <div class="seq-note">Browser redirected to Google's consent/login page</div>
+
+  <div class="seq-row">
+    <span class="seq-actor ext">Google</span>
+    <span class="seq-arrow">→</span>
+    <span class="seq-label">302 → /ExternalLogin/Callback?code=…&amp;state=…</span>
+  </div>
+  <div class="seq-note">Google sends the auth code back to your IS callback URL</div>
+
+  <div class="seq-divider"></div>
+
+  <div class="seq-row">
+    <span class="seq-actor">IS Callback</span>
+    <span class="seq-arrow">→</span>
+    <span class="seq-label">AuthenticateAsync("Google") → external claims</span>
+  </div>
+  <div class="seq-note">Your callback page exchanges the code and reads Google's claims</div>
+
+  <div class="seq-row">
+    <span class="seq-actor">IS Callback</span>
+    <span class="seq-arrow">→</span>
+    <span class="seq-label">Map claims → find/create local user → SignInAsync(isuser)</span>
+  </div>
+  <div class="seq-note">You translate Google's identity into your IdentityServerUser</div>
+
+  <div class="seq-row">
+    <span class="seq-actor">IS Callback</span>
+    <span class="seq-arrow">→</span>
+    <span class="seq-label">Redirect → returnUrl → auth code issued</span>
+  </div>
+  <div class="seq-note">Same ending as a local login — IS issues your tokens</div>
+
+</div>
+
+<p>
+  Steps 3–4 happen entirely between the user's browser and Google — your IS never
+  sees the password. Steps 5–7 are entirely your code.
+</p>
+
+<hr>
+
+<h2>Step 1 — Register the External Provider in Program.cs</h2>
+
+<p>
+  External providers plug in as ASP.NET Core authentication handlers alongside Duende IS.
+  Each provider has its own NuGet package.
+</p>
+
+<div class="two-col">
+  <div class="code-section">
+    <div class="code-title">Program.cs — Google</div>
+    <pre><code>builder.Services
+    .AddAuthentication()
+    .AddGoogle("Google", options =>
+    {
+        options.SignInScheme =
+            IdentityServerConstants
+            .ExternalCookieAuthenticationScheme;
+
+        // From Google Cloud Console
+        options.ClientId     = "…";
+        options.ClientSecret = "…";
+    });</code></pre>
+  </div>
+  <div class="code-section">
+    <div class="code-title">Program.cs — Azure AD / Entra ID</div>
+    <pre><code>builder.Services
+    .AddAuthentication()
+    .AddOpenIdConnect("aad", "Azure AD", options =>
+    {
+        options.SignInScheme =
+            IdentityServerConstants
+            .ExternalCookieAuthenticationScheme;
+
+        options.Authority  = "https://login.microsoftonline.com/{tenantId}/v2.0";
+        options.ClientId   = "…";
+        options.ClientSecret = "…";
+        options.ResponseType = "code";
+        options.Scope.Add("openid");
+        options.Scope.Add("profile");
+        options.Scope.Add("email");
+    });</code></pre>
+  </div>
+</div>
+
+<div class="callout callout-warn">
+  <strong><code>SignInScheme</code> must be <code>ExternalCookieAuthenticationScheme</code></strong>
+  This tells ASP.NET Core to store the external identity in a temporary cookie
+  (not the main IS session cookie) until your callback page processes it.
+  Forgetting this is the most common setup mistake.
+</div>
+
+<h3>The Login Page Button</h3>
+
+<p>
+  Each registered provider appears as a button on your login page. The button issues a
+  <em>challenge</em> — an HTTP 302 to the provider's authorize endpoint:
+</p>
+
+<div class="code-section">
+  <div class="code-title">Login.cshtml.cs — OnGetExternalLogin</div>
+  <pre><code>public IActionResult OnGetExternalLogin(string provider, string returnUrl)
+{
+    // Where the provider should send the auth code callback
+    var callbackUrl = Url.Page("/ExternalLogin",
+        pageHandler: "Callback",
+        values: new { returnUrl });
+
+    var props = new AuthenticationProperties
+    {
+        RedirectUri = callbackUrl
+    };
+
+    // Issues the redirect to Google / Azure AD / etc.
+    return Challenge(props, provider);
+}</code></pre>
+</div>
+
+<hr>
+
+<h2>Step 2 — Handle the Callback</h2>
+
+<p>
+  When Google redirects back, your <code>ExternalLogin</code> Callback page runs.
+  It has two jobs: read the external claims, then build your own
+  <code>IdentityServerUser</code>.
+</p>
+
+<div class="annotated">
+  <div class="code-section" style="margin:0;">
+    <div class="code-title">Pages/ExternalLogin.cshtml.cs — OnGetCallbackAsync</div>
+    <pre><code>public async Task&lt;IActionResult&gt; OnGetCallbackAsync(
+    string returnUrl = null)
+{
+    // 1. Exchange the external auth code → external claims
+    var result = await HttpContext.AuthenticateAsync(
+        IdentityServerConstants
+            .ExternalCookieAuthenticationScheme);
+
+    if (result?.Succeeded != true)
+        throw new Exception("External auth failed");
+
+    // 2. Extract claims from the external identity
+    var externalUser   = result.Principal;
+    var providerUserId = externalUser.FindFirstValue(ClaimTypes.NameIdentifier)
+                         ?? externalUser.FindFirstValue("sub");
+    var provider       = result.Properties.Items["scheme"];   // "Google"
+    var email          = externalUser.FindFirstValue(ClaimTypes.Email);
+    var name           = externalUser.FindFirstValue(ClaimTypes.Name);
+
+    // 3. Find or create a local user linked to this external identity
+    //    (your own DB logic — match by email or provider+userId pair)
+    var localUser = await _users
+        .FindByExternalProviderAsync(provider, providerUserId)
+        ?? await _users.AutoProvisionUserAsync(provider, providerUserId, email, name);
+
+    // 4. Build the IdentityServerUser for the session
+    var isuser = new IdentityServerUser(localUser.SubjectId)
+    {
+        DisplayName        = localUser.DisplayName,
+        IdentityProvider   = provider,           // records "Google" in the session
+        AdditionalClaims   = localUser.Claims
+    };
+
+    // 5. Sign in and delete the temporary external cookie
+    await HttpContext.SignInAsync(isuser);
+    await HttpContext.SignOutAsync(
+        IdentityServerConstants.ExternalCookieAuthenticationScheme);
+
+    return Redirect(returnUrl ?? "~/");
+}</code></pre>
+  </div>
+  <div class="annotation">
+    <p><strong>Step 1</strong><br>
+    <code>AuthenticateAsync</code> on the external scheme reads the temporary cookie Google wrote,
+    decodes the provider's tokens, and surfaces a <code>ClaimsPrincipal</code>.</p>
+
+    <p><strong>Step 2</strong><br>
+    External providers use different claim types. Google uses <code>ClaimTypes.NameIdentifier</code>
+    for the user ID; Azure AD may use <code>"sub"</code>. Always check both.</p>
+
+    <p><strong>Step 3</strong><br>
+    Your IS never stores Google passwords — it stores a link:
+    <em>"local user #42 = Google user abc123"</em>.
+    Auto-provisioning creates the local record on first login.</p>
+
+    <p><strong>Step 5</strong><br>
+    Deleting the external cookie is important — it prevents re-use of the
+    temporary credential after the session is established.</p>
+  </div>
+</div>
+
+<hr>
+
+<h2>Claims Mapping — External → Internal</h2>
+
+<p>
+  Each provider sends different claim names. You must translate them into the
+  stable, internal claims your tokens use.
+</p>
+
+<table class="claim-table">
+  <thead>
+    <tr>
+      <th>Google sends</th>
+      <th></th>
+      <th>Your internal claim</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>ClaimTypes.NameIdentifier</code></td>
+      <td class="arrow-cell">→</td>
+      <td><code>sub</code> (via SubjectId)</td>
+      <td>Your local user ID, not Google's</td>
+    </tr>
+    <tr>
+      <td><code>ClaimTypes.Email</code></td>
+      <td class="arrow-cell">→</td>
+      <td><code>email</code></td>
+      <td>Direct pass-through if verified</td>
+    </tr>
+    <tr>
+      <td><code>ClaimTypes.Name</code></td>
+      <td class="arrow-cell">→</td>
+      <td><code>name</code></td>
+      <td>Or split into given_name / family_name</td>
+    </tr>
+    <tr>
+      <td><em>(not sent)</em></td>
+      <td class="arrow-cell">→</td>
+      <td><code>tenant_id</code></td>
+      <td>You add this from your own DB at step 3</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout callout-info">
+  <strong>Never use Google's user ID as your <code>sub</code></strong>
+  If you change providers later, your user IDs break everywhere. Always generate a
+  stable local ID (a database primary key or GUID) and record the external ID as
+  a separate link table entry.
+</div>
+
+<hr>
+
+<h2>Knowledge Check</h2>
+
+<div class="quiz" data-quiz="q21">
+
+  <div class="quiz-question" data-correct="b">
+    <p><strong>1.</strong> From Google's perspective, what is your Duende IdentityServer?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q21-q0" value="a"> A resource server that Google issues access tokens to protect</label></li>
+      <li><label><input type="radio" name="q21-q0" value="b"> An OAuth client that redirects users to Google and receives an auth code</label></li>
+      <li><label><input type="radio" name="q21-q0" value="c"> A token introspection endpoint that Google calls to validate sessions</label></li>
+      <li><label><input type="radio" name="q21-q0" value="d"> An identity provider that Google trusts as a peer federation partner</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="c">
+    <p><strong>2.</strong> Why must <code>SignInScheme</code> be set to
+    <code>ExternalCookieAuthenticationScheme</code> when registering an external provider?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q21-q1" value="a"> It tells Google which scopes your IS is allowed to request on behalf of users</label></li>
+      <li><label><input type="radio" name="q21-q1" value="b"> It sets the callback URL that Google will use to redirect after authentication</label></li>
+      <li><label><input type="radio" name="q21-q1" value="c"> It stores the external identity in a temporary cookie until your callback processes it</label></li>
+      <li><label><input type="radio" name="q21-q1" value="d"> It registers the provider with the Duende IS discovery document for clients to see</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="d">
+    <p><strong>3.</strong> A user logs in via Google for the first time. Your IS has no record
+    of them. What should the callback page do?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q21-q2" value="a"> Reject the login and show an error page asking them to register first</label></li>
+      <li><label><input type="radio" name="q21-q2" value="b"> Use Google's user ID directly as the sub claim and skip creating a local record</label></li>
+      <li><label><input type="radio" name="q21-q2" value="c"> Issue a token with no sub claim and let the client handle registration</label></li>
+      <li><label><input type="radio" name="q21-q2" value="d"> Auto-provision a local user record linked to the external provider and user ID</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="a">
+    <p><strong>4.</strong> After calling <code>HttpContext.SignInAsync(isuser)</code> in the
+    callback, what should you do with the external authentication cookie?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q21-q3" value="a"> Delete it with <code>SignOutAsync(ExternalCookieAuthenticationScheme)</code></label></li>
+      <li><label><input type="radio" name="q21-q3" value="b"> Convert it to the main IS session cookie by calling <code>CookieManager.RenewAsync()</code></label></li>
+      <li><label><input type="radio" name="q21-q3" value="c"> Leave it — it expires automatically after the browser tab is closed</label></li>
+      <li><label><input type="radio" name="q21-q3" value="d"> Send it to the client app so it can use Google's API on the user's behalf</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+</div>
+
+<button class="quiz-btn" data-quiz-submit="q21">Check Answers</button>
+<div class="quiz-score"></div>
+
+<hr>
+
+<h2>Primary Source</h2>
+
+<p>
+  The official Duende quickstart covers external providers step by step with runnable code:
+  <a href="https://docs.duendesoftware.com/identityserver/v7/quickstarts/4_ef/" target="_blank">
+  Duende Quickstart 4 — Using EntityFramework Core</a> (includes external provider
+  auto-provisioning) and the
+  <a href="https://docs.duendesoftware.com/identityserver/v7/ui/login/external/" target="_blank">
+  External Provider UI docs</a>.
+</p>
+
+<hr>
+
+<h2>What's Next</h2>
+
+<p>
+  You can now federate any OIDC provider. The last piece of Module 3 is
+  <a href="0022-claims-enrichment.html">Lesson 22 — Claims Enrichment</a>:
+  how to inject custom claims (tenant ID, role, permissions) into tokens
+  <em>after</em> authentication — whether the user logged in locally or via an external provider.
+</p>
+
+<div class="callout">
+  <strong>Ask your teacher</strong>
+  Wondering how to handle MFA from an external provider? Not sure how to link
+  the same user who logs in with both Google and a local password?
+  Ask and I'll walk you through it.
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+  window.quizExplanations = {
+    'q21': {
+      0: {
+        a: "Duende IS never exposes APIs to Google — it acts as a client, not a resource server.",
+        b: "Correct. From Google's view, your IS is a confidential OAuth client registered in the Google Cloud Console.",
+        c: "Introspection is for validating tokens issued by your IS, not a mechanism Google calls.",
+        d: "Google and your IS are not peers — your IS subordinates itself to Google for authentication."
+      },
+      1: {
+        a: "Scopes requested from Google are configured in the handler options (e.g. Scope.Add), not SignInScheme.",
+        b: "The callback URL is set via RedirectUri in the challenge properties, not SignInScheme.",
+        c: "Correct. ExternalCookieAuthenticationScheme stores the external identity in a short-lived cookie until your callback page reads and processes it.",
+        d: "External providers are not published in the discovery document — they are a server-side implementation detail."
+      },
+      2: {
+        a: "Rejecting first-time users would break every new Google login. Auto-provisioning is the standard pattern.",
+        b: "Using Google's ID as sub creates a dangerous dependency — a provider change would break all existing tokens.",
+        c: "Tokens without a sub claim are invalid under OIDC spec. The IS would reject this.",
+        d: "Correct. Auto-provisioning creates a local user record on first login, storing the external provider+ID as a link. Subsequent logins find the existing record."
+      },
+      3: {
+        a: "Correct. The external cookie is only a temporary transport — once you have the main session, delete it to prevent credential re-use.",
+        b: "CookieManager.RenewAsync does not exist. The external and session cookies are separate schemes.",
+        c: "Leaving the external cookie is a security risk — it could be replayed before its expiry.",
+        d: "The external cookie contains your IS's session data with Google, not a credential the client app should hold."
+      }
+    }
+  };
+</script>
+
+</body>
+</html>

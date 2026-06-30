@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 25 — Policy-Based Authorization</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    /* ── Three-tier authorization ladder ──────────────── */
+    .tier-ladder {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      margin: 1.2rem 0;
+    }
+    .tier {
+      display: grid;
+      grid-template-columns: 9rem 1fr;
+      gap: 0 1rem;
+      padding: 0.7rem 0;
+      border-bottom: 1px solid var(--border);
+      align-items: start;
+      font-size: 0.84rem;
+    }
+    .tier:last-child { border-bottom: none; }
+    .tier-label {
+      font-family: var(--font-ui);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      padding-top: 0.15rem;
+    }
+    .tier-label.accent { color: var(--accent); font-weight: 700; }
+    .tier-desc code { font-size: 0.78rem; }
+
+    /* ── Code section ──────────────────────────────────── */
+    .code-section {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 1rem 0;
+    }
+    .code-section .code-title {
+      font-family: var(--font-ui);
+      font-size: 0.72rem;
+      padding: 0.4rem 0.9rem;
+      background: var(--border);
+      color: var(--muted);
+      letter-spacing: 0.04em;
+    }
+    .code-section pre {
+      margin: 0;
+      padding: 1rem 1.1rem;
+      font-size: 0.81rem;
+      line-height: 1.65;
+    }
+
+    /* ── Handler anatomy cards ─────────────────────────── */
+    .handler-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin: 1.2rem 0;
+    }
+    @media (max-width: 600px) { .handler-grid { grid-template-columns: 1fr; } }
+    .handler-card {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .handler-card .hcard-head {
+      font-family: var(--font-ui);
+      font-size: 0.74rem;
+      font-weight: 700;
+      padding: 0.4rem 0.85rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    .handler-card pre {
+      margin: 0;
+      padding: 0.85rem;
+      background: var(--code-bg);
+      font-size: 0.78rem;
+      line-height: 1.55;
+      overflow-x: auto;
+    }
+
+    /* ── Decision flow ─────────────────────────────────── */
+    .decision-flow {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+      margin: 1rem 0;
+      font-size: 0.81rem;
+    }
+    .df-box {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.3rem 0.7rem;
+      font-family: var(--font-ui);
+      font-size: 0.76rem;
+      text-align: center;
+    }
+    .df-box.success { border-color: var(--success); color: var(--success); background: var(--success-bg); }
+    .df-box.error   { border-color: var(--error);   color: var(--error);   background: var(--error-bg);   }
+    .df-arrow { color: var(--muted); flex-shrink: 0; }
+
+    /* ── Annotated code ───────────────────────────────── */
+    .annotated {
+      display: grid;
+      grid-template-columns: 1fr 0.5fr;
+      gap: 0 1.2rem;
+      align-items: start;
+      margin: 1rem 0;
+    }
+    @media (max-width: 600px) { .annotated { grid-template-columns: 1fr; } }
+    .annotation {
+      font-family: var(--font-ui);
+      font-size: 0.79rem;
+      color: var(--muted);
+      border-left: 3px solid var(--border);
+      padding-left: 0.8rem;
+    }
+    .annotation strong { color: var(--text); }
+    .annotation p { margin-bottom: 0.65rem; }
+  </style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="../MISSION.md">OAuth &amp; Identity Course</a> › Module 4: Microservices Auth ›
+    <a href="0024-client-credentials-flow.html">Lesson 24</a> › Lesson 25
+  </div>
+  <h1>Policy-Based Authorization</h1>
+  <div class="meta">
+    <span>~25 minutes</span>
+    <span>Fine-grained enforcement</span>
+    <span>Prerequisite: <a href="0023-jwt-bearer-api.html">Lesson 23</a></span>
+  </div>
+</div>
+
+<p>
+  <code>[Authorize]</code> alone only asks "is there a valid token?"
+  Real applications need more: "does this token allow <em>this specific action</em>?"
+  ASP.NET Core's authorization framework answers that question through
+  <strong>policies</strong> — named rules evaluated against the current user's claims.
+</p>
+
+<div class="callout">
+  <strong>Three tiers, one framework</strong>
+  Every authorization check in ASP.NET Core — from a simple <code>[Authorize(Roles="Admin")]</code>
+  to a multi-step business rule — goes through the same pipeline:
+  requirements → handlers → Succeed / Fail.
+</div>
+
+<hr>
+
+<h2>The Three Tiers</h2>
+
+<div class="tier-ladder">
+  <div class="tier">
+    <div class="tier-label">Simple</div>
+    <div class="tier-desc">
+      Built-in policy builder methods:
+      <code>RequireClaim</code>, <code>RequireRole</code>, <code>RequireAssertion</code>.
+      Zero boilerplate — good for scope checks, role checks.
+    </div>
+  </div>
+  <div class="tier">
+    <div class="tier-label accent">Custom requirement</div>
+    <div class="tier-desc">
+      Implement <code>IAuthorizationRequirement</code> + <code>AuthorizationHandler&lt;T&gt;</code>.
+      Reusable, testable, can inject services. Good for multi-claim rules and business logic.
+    </div>
+  </div>
+  <div class="tier">
+    <div class="tier-label">Imperative</div>
+    <div class="tier-desc">
+      Inject <code>IAuthorizationService</code> and call <code>AuthorizeAsync</code> anywhere —
+      inside a method body, a service class, or a Razor Page. Good when you need to check
+      authorization on a specific <em>resource object</em>.
+    </div>
+  </div>
+</div>
+
+<hr>
+
+<h2>Tier 1 — Simple Policies</h2>
+
+<div class="code-section">
+  <div class="code-title">Program.cs — simple policy declarations</div>
+  <pre><code>builder.Services.AddAuthorization(options =>
+{
+    // Must have the calendar.read scope claim
+    options.AddPolicy("CanReadCalendar", policy =>
+        policy.RequireClaim("scope", "calendar.read"));
+
+    // Must have any of these role claim values
+    options.AddPolicy("AdminOnly", policy =>
+        policy.RequireRole("admin", "superadmin"));
+
+    // Arbitrary lambda — full claim access
+    options.AddPolicy("ActiveTenant", policy =>
+        policy.RequireAssertion(ctx =>
+            ctx.User.HasClaim("tenant_status", "active")));
+
+    // Combine rules — all must pass
+    options.AddPolicy("TenantCalendarRead", policy =>
+    {
+        policy.RequireClaim("scope", "calendar.read");
+        policy.RequireAssertion(ctx =>
+            ctx.User.HasClaim(c => c.Type == "tenant_id"));
+    });
+});</code></pre>
+</div>
+
+<div class="code-section">
+  <div class="code-title">Controller — applying policies</div>
+  <pre><code>[ApiController]
+[Route("api/[controller]")]
+[Authorize(Policy = "CanReadCalendar")]   // applies to whole controller
+public class CalendarController : ControllerBase
+{
+    [HttpGet]
+    public IActionResult GetEvents() { … }
+
+    [HttpDelete("{id}")]
+    [Authorize(Policy = "AdminOnly")]      // stricter policy on one action
+    public IActionResult DeleteEvent(int id) { … }
+}</code></pre>
+</div>
+
+<hr>
+
+<h2>Tier 2 — Custom Requirements and Handlers</h2>
+
+<p>
+  For reusable, service-injected logic, implement the two-class pattern:
+  a <em>requirement</em> (data) and a <em>handler</em> (logic).
+</p>
+
+<div class="handler-grid">
+  <div class="handler-card">
+    <div class="hcard-head">Step 1 — The Requirement (data only)</div>
+    <pre><code>// A requirement is a data class — no logic.
+// It parameterises the rule.
+public class MinimumTenantTierRequirement
+    : IAuthorizationRequirement
+{
+    public string MinimumTier { get; }
+
+    public MinimumTenantTierRequirement(string tier)
+    {
+        MinimumTier = tier;
+    }
+}</code></pre>
+  </div>
+  <div class="handler-card">
+    <div class="hcard-head">Step 2 — The Handler (logic + DI)</div>
+    <pre><code>public class TenantTierHandler
+    : AuthorizationHandler&lt;
+        MinimumTenantTierRequirement&gt;
+{
+    private readonly ITenantService _tenants;
+
+    public TenantTierHandler(ITenantService t)
+        => _tenants = t;
+
+    protected override async Task
+        HandleRequirementAsync(
+          AuthorizationHandlerContext ctx,
+          MinimumTenantTierRequirement req)
+    {
+        var tenantId = ctx.User
+            .FindFirstValue("tenant_id");
+
+        var tier = await _tenants
+            .GetTierAsync(tenantId);
+
+        if (tier >= req.MinimumTier)
+            ctx.Succeed(req);
+        // Do not call ctx.Fail() unless you
+        // want to block other handlers too
+    }
+}</code></pre>
+  </div>
+</div>
+
+<div class="code-section">
+  <div class="code-title">Program.cs — register and use</div>
+  <pre><code>// Register the handler in DI
+builder.Services.AddSingleton&lt;
+    IAuthorizationHandler, TenantTierHandler&gt;();
+
+// Use the requirement in a policy
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("ProfessionalTier", policy =>
+        policy.AddRequirements(
+            new MinimumTenantTierRequirement("professional")));
+});</code></pre>
+</div>
+
+<h3>The handler decision pipeline</h3>
+
+<div class="decision-flow">
+  <div class="df-box">All handlers<br>run in parallel</div>
+  <div class="df-arrow">→</div>
+  <div class="df-box">Any handler<br>calls ctx.Fail()?</div>
+  <div class="df-arrow">→ yes →</div>
+  <div class="df-box error">403 Forbidden</div>
+</div>
+<div class="decision-flow">
+  <div class="df-box" style="visibility:hidden">placeholder</div>
+  <div class="df-arrow" style="visibility:hidden">→</div>
+  <div class="df-box">All requirements<br>have a Succeed?</div>
+  <div class="df-arrow">→ yes →</div>
+  <div class="df-box success">Access granted</div>
+  <div class="df-arrow">→ no →</div>
+  <div class="df-box error">403 Forbidden</div>
+</div>
+
+<p>
+  A handler that neither calls <code>Succeed</code> nor <code>Fail</code> is neutral —
+  it leaves the decision to other handlers. Call <code>Fail</code> only when you want
+  to hard-block access regardless of what other handlers decide.
+</p>
+
+<hr>
+
+<h2>Tier 3 — Imperative Authorization</h2>
+
+<p>
+  When the authorization decision depends on the specific <em>resource</em> being
+  accessed (not just the user's claims), inject <code>IAuthorizationService</code>
+  and check inside the action body:
+</p>
+
+<div class="annotated">
+  <div class="code-section" style="margin:0;">
+    <div class="code-title">Imperative check inside an action</div>
+    <pre><code>[ApiController]
+[Route("api/[controller]")]
+[Authorize]   // still require a valid token
+public class CalendarController : ControllerBase
+{
+    private readonly IAuthorizationService _authz;
+    private readonly ICalendarRepo _repo;
+
+    public CalendarController(
+        IAuthorizationService authz,
+        ICalendarRepo repo)
+    {
+        _authz = authz;
+        _repo  = repo;
+    }
+
+    [HttpDelete("{id}")]
+    public async Task&lt;IActionResult&gt; DeleteEvent(int id)
+    {
+        var calEvent = await _repo.GetAsync(id);
+        if (calEvent == null)
+            return NotFound();
+
+        // Check: does THIS user own THIS event?
+        var result = await _authz.AuthorizeAsync(
+            User, calEvent, "EventOwner");
+
+        if (!result.Succeeded)
+            return Forbid();
+
+        await _repo.DeleteAsync(id);
+        return NoContent();
+    }
+}</code></pre>
+  </div>
+  <div class="annotation">
+    <p><strong>Why imperative?</strong><br>
+    You cannot know at attribute-registration time which specific event a user
+    is deleting. You need the loaded resource object to check ownership.
+    Imperative authorization passes the resource as the second argument to
+    <code>AuthorizeAsync</code>.</p>
+
+    <p><strong>Resource-based handler</strong><br>
+    The "EventOwner" policy's handler receives both the
+    <code>ClaimsPrincipal</code> (the user) and the resource (the
+    <code>CalendarEvent</code> object). It can compare
+    <code>ctx.User.FindFirstValue("sub")</code>
+    against <code>resource.OwnerId</code>.</p>
+  </div>
+</div>
+
+<hr>
+
+<h2>Knowledge Check</h2>
+
+<div class="quiz" data-quiz="q25">
+
+  <div class="quiz-question" data-correct="c">
+    <p><strong>1.</strong> A handler calls neither <code>ctx.Succeed(req)</code>
+    nor <code>ctx.Fail(req)</code>. What effect does this have on the authorization
+    decision?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q25-q0" value="a"> Access is denied — a handler that does not succeed is treated as failure</label></li>
+      <li><label><input type="radio" name="q25-q0" value="b"> Access is granted — a non-failing handler is treated as implicit success</label></li>
+      <li><label><input type="radio" name="q25-q0" value="c"> The handler is neutral — the decision depends on results from other handlers</label></li>
+      <li><label><input type="radio" name="q25-q0" value="d"> An exception is thrown — handlers must call either Succeed or Fail</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="b">
+    <p><strong>2.</strong> An action is decorated with two policies:
+    <code>[Authorize(Policy = "CanRead")]</code> at the controller and
+    <code>[Authorize(Policy = "AdminOnly")]</code> at the action.
+    A user satisfies <code>CanRead</code> but not <code>AdminOnly</code>.
+    What is the response?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q25-q1" value="a"> 200 OK — the action-level policy overrides the controller-level one</label></li>
+      <li><label><input type="radio" name="q25-q1" value="b"> 403 Forbidden — both policies must be satisfied; failing one denies access</label></li>
+      <li><label><input type="radio" name="q25-q1" value="c"> 401 Unauthorized — the user was authenticated but the second check failed</label></li>
+      <li><label><input type="radio" name="q25-q1" value="d"> 400 Bad Request — conflicting policies on the same endpoint are not allowed</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="d">
+    <p><strong>3.</strong> When should you use imperative authorization
+    (<code>IAuthorizationService.AuthorizeAsync</code>) instead of
+    <code>[Authorize(Policy = "…")]</code>?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q25-q2" value="a"> When you want to avoid registering the policy in <code>AddAuthorization</code></label></li>
+      <li><label><input type="radio" name="q25-q2" value="b"> When the policy is too complex to express as an <code>IAuthorizationRequirement</code></label></li>
+      <li><label><input type="radio" name="q25-q2" value="c"> When the action method is <code>async</code> — attributes cannot handle async checks</label></li>
+      <li><label><input type="radio" name="q25-q2" value="d"> When the decision depends on the specific resource loaded from the database</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="a">
+    <p><strong>4.</strong> What is the role of the <code>IAuthorizationRequirement</code>
+    class in the custom handler pattern?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q25-q3" value="a"> It is a data object that parameterises the rule — the handler contains the actual logic</label></li>
+      <li><label><input type="radio" name="q25-q3" value="b"> It is the base class that contains the <code>HandleRequirementAsync</code> logic</label></li>
+      <li><label><input type="radio" name="q25-q3" value">c"> It is registered in DI and injected into the controller that enforces the policy</label></li>
+      <li><label><input type="radio" name="q25-q3" value="d"> It replaces the need for a policy name — requirements are applied directly via attributes</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+</div>
+
+<button class="quiz-btn" data-quiz-submit="q25">Check Answers</button>
+<div class="quiz-score"></div>
+
+<hr>
+
+<h2>Primary Source</h2>
+
+<p>
+  The official ASP.NET Core authorization docs are the canonical reference — they cover
+  all three tiers with examples:
+  <a href="https://learn.microsoft.com/en-us/aspnet/core/security/authorization/policies" target="_blank">
+  Policy-based authorization in ASP.NET Core</a> and
+  <a href="https://learn.microsoft.com/en-us/aspnet/core/security/authorization/resourcebased" target="_blank">
+  Resource-based authorization</a>.
+</p>
+
+<hr>
+
+<h2>Module 4 Complete</h2>
+
+<p>
+  You have now covered the full microservices auth stack:
+</p>
+
+<ul>
+  <li><a href="0023-jwt-bearer-api.html">Lesson 23</a> — Protect an API with JWT Bearer middleware</li>
+  <li><a href="0024-client-credentials-flow.html">Lesson 24</a> — Acquire and cache tokens from a service</li>
+  <li>Lesson 25 (this lesson) — Enforce fine-grained policies with requirements and handlers</li>
+</ul>
+
+<p>
+  <strong>Module 5 — Capstone</strong> begins with
+  <a href="0026-capstone-design.html">Lesson 26: Capstone Design</a> —
+  designing and wiring together a full system: Duende IS + two protected APIs +
+  a client web app.
+</p>
+
+<div class="callout">
+  <strong>Ask your teacher</strong>
+  Want to understand how to test authorization handlers in isolation?
+  Curious how to combine role-based and claims-based checks without writing
+  a handler for every combination? Ask and I'll walk you through it.
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+  window.quizExplanations = {
+    'q25': {
+      0: {
+        a: "A neutral handler does not trigger a denial. Only an explicit ctx.Fail() blocks access.",
+        b: "Not calling Succeed is not the same as implicitly succeeding. The requirement has not been met unless Succeed is called.",
+        c: "Correct. A handler that calls neither Succeed nor Fail is neutral — it does not affect the outcome. Other handlers for the same requirement can still Succeed.",
+        d: "No exception is thrown. The authorization framework tolerates neutral handlers by design."
+      },
+      1: {
+        a: "Multiple [Authorize] attributes are additive, not overriding. Both must pass.",
+        b: "Correct. When multiple [Authorize] attributes appear on an action (from controller + action level), all policies are evaluated and all must succeed. Failing any one returns 403.",
+        c: "401 means no valid token was presented. The user is authenticated (valid token exists) — the failure is in authorization, so it is 403.",
+        d: "Multiple [Authorize] attributes are valid and commonly used. They accumulate requirements."
+      },
+      2: {
+        a: "You can still register a policy and use IAuthorizationService. The motivation for imperative checks is resource access, not avoiding registration.",
+        b: "Custom IAuthorizationRequirement handles complex logic cleanly. Complexity alone is not the reason.",
+        c: "AuthorizationHandler is fully async. Async is not the distinguishing factor.",
+        d: "Correct. Imperative authorization passes a loaded resource object to the policy evaluation, so the handler can compare the user's identity against the specific item being accessed."
+      },
+      3: {
+        a: "Correct. IAuthorizationRequirement is a plain marker data class — it holds parameters (like MinimumTier) but no logic. The logic lives entirely in the AuthorizationHandler.",
+        b: "AuthorizationHandler<T> contains HandleRequirementAsync — the logic lives in the handler, not the requirement.",
+        c: "The requirement is not registered in DI and not injected into controllers. The handler is registered in DI.",
+        d: "Requirements are used inside AddPolicy() with AddRequirements() — they still need a named policy."
+      }
+    }
+  };
+</script>
+
+</body>
+</html>

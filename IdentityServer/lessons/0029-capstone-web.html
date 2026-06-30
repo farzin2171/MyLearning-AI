@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 29 — Capstone: Build WorkSpace Web & End-to-End Test</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    /* ── Numbered step ─────────────────────────────────── */
+    .steps { counter-reset: step; margin: 1.2rem 0; }
+    .step-block {
+      counter-increment: step;
+      display: grid;
+      grid-template-columns: 2.4rem 1fr;
+      gap: 0 0.85rem;
+      margin-bottom: 1.8rem;
+      align-items: start;
+    }
+    .step-num {
+      width: 2.4rem;
+      height: 2.4rem;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-ui);
+      font-weight: 700;
+      font-size: 0.9rem;
+      flex-shrink: 0;
+      margin-top: 0.05rem;
+    }
+    .step-content h3 { margin-top: 0.1rem; margin-bottom: 0.5rem; font-size: 1rem; }
+    .step-content p  { margin-bottom: 0.6rem; }
+
+    /* ── Code section ──────────────────────────────────── */
+    .code-section {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 0.7rem 0;
+    }
+    .code-section .code-title {
+      font-family: var(--font-ui);
+      font-size: 0.72rem;
+      padding: 0.35rem 0.9rem;
+      background: var(--border);
+      color: var(--muted);
+      letter-spacing: 0.04em;
+    }
+    .code-section pre {
+      margin: 0;
+      padding: 0.9rem 1.1rem;
+      font-size: 0.8rem;
+      line-height: 1.65;
+    }
+
+    /* ── Verify box ────────────────────────────────────── */
+    .verify-box {
+      border: 1px solid var(--success);
+      background: var(--success-bg);
+      border-radius: var(--radius);
+      padding: 0.75rem 1rem;
+      font-size: 0.83rem;
+      margin: 0.7rem 0;
+    }
+    .verify-box strong { color: var(--success); display: block; margin-bottom: 0.2rem; }
+
+    /* ── End-to-end flow ───────────────────────────────── */
+    .e2e-flow {
+      margin: 1.2rem 0;
+      font-family: var(--font-ui);
+      font-size: 0.8rem;
+    }
+    .e2e-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.7rem;
+      margin-bottom: 0.7rem;
+    }
+    .e2e-actor {
+      min-width: 110px;
+      text-align: right;
+      font-weight: 700;
+      color: var(--muted);
+      flex-shrink: 0;
+      padding-top: 0.15rem;
+    }
+    .e2e-arrow { color: var(--accent); flex-shrink: 0; padding-top: 0.15rem; }
+    .e2e-label {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 0.18rem 0.7rem;
+      font-family: var(--font-mono);
+      font-size: 0.73rem;
+    }
+    .e2e-note {
+      font-size: 0.74rem;
+      color: var(--muted);
+      font-style: italic;
+      margin-left: 0.3rem;
+      padding-top: 0.2rem;
+    }
+
+    /* ── Smoke test checklist ──────────────────────────── */
+    .smoke-list {
+      list-style: none;
+      margin: 0.8rem 0;
+      padding: 0;
+    }
+    .smoke-list li {
+      display: flex;
+      gap: 0.6rem;
+      align-items: baseline;
+      padding: 0.38rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.84rem;
+    }
+    .smoke-list li:last-child { border-bottom: none; }
+    .smoke-check {
+      font-family: var(--font-ui);
+      font-size: 0.7rem;
+      font-weight: 700;
+      color: var(--muted);
+      min-width: 3.2rem;
+      flex-shrink: 0;
+    }
+
+    /* ── Module complete banner ────────────────────────── */
+    .complete-banner {
+      background: linear-gradient(135deg, #eef3ff 0%, #f0fdf4 100%);
+      border: 2px solid var(--accent);
+      border-radius: var(--radius);
+      padding: 1.2rem 1.4rem;
+      margin: 2rem 0;
+      text-align: center;
+    }
+    .complete-banner h2 { border: none; margin-top: 0; font-size: 1.3rem; }
+    .complete-banner p  { color: var(--muted); margin: 0; }
+  </style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="../MISSION.md">OAuth &amp; Identity Course</a> › Module 5: Capstone ›
+    <a href="0028-capstone-apis.html">Lesson 28</a> › Lesson 29
+  </div>
+  <h1>Capstone — Build WorkSpace Web &amp; End-to-End Test</h1>
+  <div class="meta">
+    <span>~35 minutes</span>
+    <span>Final capstone lesson</span>
+    <span>Prerequisites: IS (5001) + Calendar API (5003) running</span>
+  </div>
+</div>
+
+<p>
+  This is the last piece: a user opens a browser, clicks "Log in", is redirected to WorkSpace IS,
+  enters their credentials, is sent back to the web app, and sees their calendar events — all
+  fetched from the Calendar API using their access token. Build it, run it, watch the full
+  flow complete.
+</p>
+
+<div class="callout">
+  <strong>Token flow recap</strong>
+  OIDC login → IS issues ID token + access token + refresh token → web app stores them in a
+  cookie (SaveTokens = true) → web app reads access token from cookie → sets Bearer header
+  → calls Calendar API → API validates token → returns tenant-filtered events.
+</div>
+
+<hr>
+
+<div class="steps">
+
+  <!-- STEP 1 -->
+  <div class="step-block">
+    <div class="step-num">1</div>
+    <div class="step-content">
+      <h3>Create the project and install packages</h3>
+      <div class="code-section">
+        <div class="code-title">Terminal — in solution root</div>
+        <pre><code>dotnet new mvc -n WorkSpaceWeb
+cd WorkSpaceWeb
+dotnet add package Microsoft.AspNetCore.Authentication.OpenIdConnect</code></pre>
+      </div>
+      <p>Set the port in <code>Properties/launchSettings.json</code>:</p>
+      <div class="code-section">
+        <div class="code-title">Properties/launchSettings.json</div>
+        <pre><code>{
+  "profiles": {
+    "WorkSpaceWeb": {
+      "commandName": "Project",
+      "applicationUrl": "https://localhost:5002",
+      "environmentVariables": { "ASPNETCORE_ENVIRONMENT": "Development" }
+    }
+  }
+}</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 2 -->
+  <div class="step-block">
+    <div class="step-num">2</div>
+    <div class="step-content">
+      <h3>Wire OIDC authentication in Program.cs</h3>
+      <p>
+        Two schemes: <strong>Cookie</strong> (stores the session after login) +
+        <strong>OpenIdConnect</strong> (talks to WorkSpace IS).
+        <code>SaveTokens = true</code> is the critical line — it stores the access
+        token inside the session cookie so controllers can retrieve it later.
+      </p>
+      <div class="code-section">
+        <div class="code-title">Program.cs</div>
+        <pre><code>using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddControllersWithViews();
+
+builder.Services
+    .AddAuthentication(options =>
+    {
+        options.DefaultScheme          = CookieAuthenticationDefaults.AuthenticationScheme;
+        options.DefaultChallengeScheme = OpenIdConnectDefaults.AuthenticationScheme;
+    })
+    .AddCookie(CookieAuthenticationDefaults.AuthenticationScheme)
+    .AddOpenIdConnect(OpenIdConnectDefaults.AuthenticationScheme, options =>
+    {
+        options.Authority    = "https://localhost:5001";
+        options.ClientId     = "workspace-web";
+        options.ResponseType = "code";      // Authorization Code flow
+
+        // Scopes to request
+        options.Scope.Clear();
+        options.Scope.Add("openid");
+        options.Scope.Add("profile");
+        options.Scope.Add("email");
+        options.Scope.Add("calendar.read");
+        options.Scope.Add("offline_access");    // request a refresh token
+
+        // Store access + refresh tokens in the session cookie
+        options.SaveTokens = true;
+
+        // Trust dev cert on IS (remove in production)
+        options.BackchannelHttpHandler = new HttpClientHandler
+        {
+            ServerCertificateCustomValidationCallback = (_, _, _, _) => true
+        };
+    });
+
+builder.Services.AddHttpClient("CalendarApi", client =>
+{
+    client.BaseAddress = new Uri("https://localhost:5003");
+    // Trust Calendar API dev cert
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+{
+    ServerCertificateCustomValidationCallback = (_, _, _, _) => true
+});
+
+var app = builder.Build();
+
+app.UseHttpsRedirection();
+app.UseStaticFiles();
+app.UseRouting();
+app.UseAuthentication();
+app.UseAuthorization();
+app.MapControllerRoute(name: "default",
+    pattern: "{controller=Home}/{action=Index}/{id?}");
+
+app.Run();</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 3 -->
+  <div class="step-block">
+    <div class="step-num">3</div>
+    <div class="step-content">
+      <h3>Create the CalendarController</h3>
+      <p>
+        Replace the default <code>HomeController</code> or create a new controller.
+        The key line is <code>GetTokenAsync("access_token")</code> — it reads the
+        token that <code>SaveTokens = true</code> stored in the cookie.
+      </p>
+      <div class="code-section">
+        <div class="code-title">Controllers/CalendarController.cs</div>
+        <pre><code>using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authorization;
+
+[Authorize]
+public class CalendarController : Controller
+{
+    private readonly IHttpClientFactory _factory;
+
+    public CalendarController(IHttpClientFactory factory) => _factory = factory;
+
+    public async Task&lt;IActionResult&gt; Index()
+    {
+        // Retrieve the access token saved in the session cookie
+        var accessToken = await HttpContext.GetTokenAsync("access_token");
+
+        var client = _factory.CreateClient("CalendarApi");
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+
+        var response = await client.GetAsync("/api/calendar");
+        response.EnsureSuccessStatusCode();
+
+        var events = await response.Content
+            .ReadFromJsonAsync&lt;List&lt;CalendarEventDto&gt;&gt;();
+
+        return View(events);
+    }
+}
+
+// Simple DTO matching the Calendar API's JSON shape
+public record CalendarEventDto(int Id, string Title, string TenantId, DateTime Start);</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 4 -->
+  <div class="step-block">
+    <div class="step-num">4</div>
+    <div class="step-content">
+      <h3>Create the Calendar view</h3>
+      <p>Create <code>Views/Calendar/Index.cshtml</code>:</p>
+      <div class="code-section">
+        <div class="code-title">Views/Calendar/Index.cshtml</div>
+        <pre><code>@model List&lt;CalendarEventDto&gt;
+@{
+    ViewData["Title"] = "My Calendar";
+}
+
+&lt;h1&gt;Welcome, @User.FindFirst("name")?.Value&lt;/h1&gt;
+&lt;p style="color:gray"&gt;Tenant: @User.FindFirst("tenant_id")?.Value&lt;/p&gt;
+
+&lt;h2&gt;Upcoming Events&lt;/h2&gt;
+@if (Model is { Count: 0 })
+{
+    &lt;p&gt;No events found.&lt;/p&gt;
+}
+else
+{
+    &lt;ul&gt;
+        @foreach (var e in Model!)
+        {
+            &lt;li&gt;&lt;strong&gt;@e.Title&lt;/strong&gt; — @e.Start.ToString("ddd dd MMM")&lt;/li&gt;
+        }
+    &lt;/ul&gt;
+}
+
+&lt;hr&gt;
+&lt;a href="/Account/Logout"&gt;Sign out&lt;/a&gt;</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 5 -->
+  <div class="step-block">
+    <div class="step-num">5</div>
+    <div class="step-content">
+      <h3>Add login and logout endpoints</h3>
+      <p>
+        Create <code>Controllers/AccountController.cs</code>. Logout must sign out of
+        both the local cookie <em>and</em> the IS session (RP-Initiated Logout):
+      </p>
+      <div class="code-section">
+        <div class="code-title">Controllers/AccountController.cs</div>
+        <pre><code>using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+
+public class AccountController : Controller
+{
+    // Trigger OIDC login — redirects to WorkSpace IS
+    public IActionResult Login(string returnUrl = "/")
+        => Challenge(new AuthenticationProperties { RedirectUri = returnUrl },
+                     OpenIdConnectDefaults.AuthenticationScheme);
+
+    // Sign out locally AND send the browser to IS logout (RP-Initiated Logout)
+    public IActionResult Logout()
+        => SignOut(new AuthenticationProperties { RedirectUri = "/" },
+                   CookieAuthenticationDefaults.AuthenticationScheme,
+                   OpenIdConnectDefaults.AuthenticationScheme);
+}</code></pre>
+      </div>
+      <div class="verify-box">
+        <strong>Verify →</strong> <code>dotnet build</code> succeeds. Start all three services
+        (IS on 5001, CalendarApi on 5003, WorkSpaceWeb on 5002) in three separate terminals,
+        then proceed to the smoke test.
+      </div>
+    </div>
+  </div>
+
+</div><!-- end steps -->
+
+<hr>
+
+<h2>The End-to-End Flow</h2>
+
+<p>What happens when Alice browses to <code>https://localhost:5002/Calendar</code>:</p>
+
+<div class="e2e-flow">
+  <div class="e2e-row">
+    <span class="e2e-actor">Browser</span>
+    <span class="e2e-arrow">→</span>
+    <span class="e2e-label">GET /Calendar</span>
+    <span class="e2e-note">No session → 302 to OIDC challenge</span>
+  </div>
+  <div class="e2e-row">
+    <span class="e2e-actor">Web App</span>
+    <span class="e2e-arrow">→</span>
+    <span class="e2e-label">302 → https://localhost:5001/connect/authorize?client_id=workspace-web&amp;…</span>
+  </div>
+  <div class="e2e-row">
+    <span class="e2e-actor">IS</span>
+    <span class="e2e-arrow">→</span>
+    <span class="e2e-label">302 → /Account/Login (no session on IS either)</span>
+  </div>
+  <div class="e2e-row">
+    <span class="e2e-actor">Alice</span>
+    <span class="e2e-arrow">→</span>
+    <span class="e2e-label">POST alice / alice</span>
+    <span class="e2e-note">IS validates, creates auth cookie</span>
+  </div>
+  <div class="e2e-row">
+    <span class="e2e-actor">IS</span>
+    <span class="e2e-arrow">→</span>
+    <span class="e2e-label">302 → https://localhost:5002/signin-oidc?code=abc&amp;state=…</span>
+  </div>
+  <div class="e2e-row">
+    <span class="e2e-actor">Web App</span>
+    <span class="e2e-arrow">→</span>
+    <span class="e2e-label">POST /connect/token (code exchange, back-channel)</span>
+    <span class="e2e-note">OIDC middleware exchanges code for tokens</span>
+  </div>
+  <div class="e2e-row">
+    <span class="e2e-actor">Web App</span>
+    <span class="e2e-arrow">→</span>
+    <span class="e2e-label">Stores access_token + refresh_token in session cookie</span>
+    <span class="e2e-note">SaveTokens = true does this</span>
+  </div>
+  <div class="e2e-row">
+    <span class="e2e-actor">Web App</span>
+    <span class="e2e-arrow">→</span>
+    <span class="e2e-label">GET /api/calendar  Authorization: Bearer eyJ…</span>
+    <span class="e2e-note">CalendarController reads token from cookie</span>
+  </div>
+  <div class="e2e-row">
+    <span class="e2e-actor">Calendar API</span>
+    <span class="e2e-arrow">→</span>
+    <span class="e2e-label">Validates JWT, filters by tenant-acme, returns 2 events</span>
+  </div>
+  <div class="e2e-row">
+    <span class="e2e-actor">Browser</span>
+    <span class="e2e-arrow">→</span>
+    <span class="e2e-label">Renders: "Welcome, Alice Smith — ACME All-Hands, ACME Sprint Review"</span>
+  </div>
+</div>
+
+<hr>
+
+<h2>Smoke Test Checklist</h2>
+
+<ul class="smoke-list">
+  <li>
+    <span class="smoke-check">✓ 1</span>
+    Browse to <code>https://localhost:5002/Calendar</code> — you are redirected to the IS login page
+  </li>
+  <li>
+    <span class="smoke-check">✓ 2</span>
+    Log in as <strong>alice / alice</strong> — you return to the web app and see "ACME All-Hands" and "ACME Sprint Review"
+  </li>
+  <li>
+    <span class="smoke-check">✓ 3</span>
+    The tenant label shows <strong>tenant-acme</strong> — the claim came through IProfileService
+  </li>
+  <li>
+    <span class="smoke-check">✓ 4</span>
+    Click "Sign out" — browser is redirected to IS for session termination, then back to <code>/</code>
+  </li>
+  <li>
+    <span class="smoke-check">✓ 5</span>
+    Log in as <strong>bob / bob</strong> — you see "Globex Kickoff" and tenant label <strong>tenant-globex</strong>
+  </li>
+  <li>
+    <span class="smoke-check">✓ 6</span>
+    Check the Reports Worker console — "Calendar data: []" (empty list, no tenant_id on machine token)
+  </li>
+</ul>
+
+<hr>
+
+<h2>Knowledge Check</h2>
+
+<div class="quiz" data-quiz="q29">
+
+  <div class="quiz-question" data-correct="b">
+    <p><strong>1.</strong> What does <code>SaveTokens = true</code> in the OIDC options do?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q29-q0" value="a"> It saves the client secret to the browser's localStorage for reuse across sessions</label></li>
+      <li><label><input type="radio" name="q29-q0" value="b"> It stores the access, ID, and refresh tokens inside the encrypted session cookie after login</label></li>
+      <li><label><input type="radio" name="q29-q0" value="c"> It instructs Duende IS to persist token metadata in the IS database for audit purposes</label></li>
+      <li><label><input type="radio" name="q29-q0" value="d"> It enables the OIDC middleware to automatically refresh the access token on each request</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="c">
+    <p><strong>2.</strong> The <code>Logout</code> action signs out of two schemes.
+    What would happen if it only signed out of the Cookie scheme?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q29-q1" value="a"> The access token would remain valid indefinitely — the API would still accept requests from the browser</label></li>
+      <li><label><input type="radio" name="q29-q1" value="b"> An exception is thrown — ASP.NET Core requires both schemes to be signed out together</label></li>
+      <li><label><input type="radio" name="q29-q1" value="c"> The IS session cookie would persist, so clicking Login again would silently log in without showing credentials</label></li>
+      <li><label><input type="radio" name="q29-q1" value="d"> The OIDC middleware would automatically re-issue a new cookie on the next request without user action</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="a">
+    <p><strong>3.</strong> Alice's access token is stored in an encrypted session cookie.
+    A network attacker intercepts the cookie. What stops them from using it indefinitely?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q29-q2" value="a"> The access token has a short <code>exp</code> claim; after expiry the Calendar API rejects it even if the cookie is valid</label></li>
+      <li><label><input type="radio" name="q29-q2" value="b"> The cookie is HttpOnly and Secure, making it impossible for any attacker to read its contents</label></li>
+      <li><label><input type="radio" name="q29-q2" value="c"> Duende IS binds the token to Alice's IP address and rejects requests from different origins</label></li>
+      <li><label><input type="radio" name="q29-q2" value="d"> The access token is one-time-use and invalidated by Duende IS after the first Calendar API call</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="d">
+    <p><strong>4.</strong> The OIDC middleware handles the code exchange back-channel
+    (web app → IS token endpoint). Why is this better than having the browser
+    exchange the code directly?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q29-q3" value="a"> The browser cannot parse JWT tokens, so a server-side exchange is technically required</label></li>
+      <li><label><input type="radio" name="q29-q3" value="b"> IS only accepts token requests over HTTP/2, which browsers do not support without server proxying</label></li>
+      <li><label><input type="radio" name="q29-q3" value="c"> The back-channel call is faster because it bypasses the browser's DNS resolution cache</label></li>
+      <li><label><input type="radio" name="q29-q3" value="d"> The access token never touches the browser — it travels server-to-server and is stored server-side in the cookie</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+</div>
+
+<button class="quiz-btn" data-quiz-submit="q29">Check Answers</button>
+<div class="quiz-score"></div>
+
+<hr>
+
+<h2>Primary Source</h2>
+
+<p>
+  The official Duende quickstart 3 covers exactly this — adding an MVC client with OIDC login:
+  <a href="https://docs.duendesoftware.com/identityserver/v7/quickstarts/3_api_access/" target="_blank">
+  Quickstart 3 — APIs with Access Control</a>.
+  The ASP.NET Core OIDC handler docs are at
+  <a href="https://learn.microsoft.com/en-us/aspnet/core/security/authentication/oidc" target="_blank">
+  OpenID Connect authentication in ASP.NET Core</a>.
+</p>
+
+<hr>
+
+<div class="complete-banner">
+  <h2>Module 5 — Capstone Complete</h2>
+  <p>
+    You have built a complete OAuth 2.0 / OIDC system from a blank folder:
+    an Identity Server, two protected APIs, a user-facing web client, and a background service.
+    Every lesson from Module 1 is running in production-pattern code right now.
+  </p>
+</div>
+
+<h2>What's Next</h2>
+
+<p>
+  <strong>Module 6 — Equisoft Applied</strong> is the final track.
+  It maps everything you built here onto the real Equisoft platform:
+  the Identity Gateway (IdG), Services.Authorization, and Services.AssistantManagement.
+  This is where generic knowledge becomes production code you can contribute to on day one.
+</p>
+
+<p>
+  The Equisoft track begins with
+  <a href="../lessons/0001-ecosystem-overview.html">Lesson 1 — Ecosystem Overview</a>
+  (already in your workspace) and continues through Lesson 11.
+  With Modules 1–5 complete, those lessons will read very differently than they did at the start.
+</p>
+
+<div class="callout">
+  <strong>Ask your teacher</strong>
+  Want to understand how to handle access token expiry gracefully in the web app
+  (instead of making the user log in again)? Ask about the user token management
+  extension from <code>Duende.AccessTokenManagement</code> — it handles silent refresh
+  automatically using the refresh token.
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+  window.quizExplanations = {
+    'q29': {
+      0: {
+        a: "localStorage is insecure for tokens — susceptible to XSS. The OIDC middleware never writes to localStorage.",
+        b: "Correct. SaveTokens = true instructs the OIDC middleware to serialize the access_token, id_token, and refresh_token into the encrypted session cookie after the code exchange succeeds.",
+        c: "Duende IS does not persist token metadata per-client by default (that requires reference tokens). SaveTokens is a client-side cookie setting.",
+        d: "Automatic refresh requires additional configuration (the Duende.AccessTokenManagement user token library). SaveTokens alone only stores — it does not refresh."
+      },
+      1: {
+        a: "The access token remains valid until its exp — that's true regardless of the cookie. But the UX problem is different: the user thinks they are logged out.",
+        b: "No exception is thrown. Signing out of only one scheme works — but leaves the other session active.",
+        c: "Correct. Signing out only from the Cookie scheme clears the local app session. The IS session cookie (idsrv) persists. The next time the user clicks Login, IS sees an active session and silently redirects back with a new code — the user never sees a login prompt.",
+        d: "The OIDC middleware only issues a new session after a successful authentication event — it does not auto-create sessions on arbitrary requests."
+      },
+      2: {
+        a: "Correct. The access token's exp claim is validated by the Calendar API on every request. Even if an attacker intercepts the cookie and extracts the token, it stops working when it expires (typically within 1 hour).",
+        b: "HttpOnly and Secure prevent JavaScript access and insecure transmission, but they do not stop a network attacker who already intercepted the cookie — the server sees the cookie as valid.",
+        c: "Standard OAuth tokens are not bound to IP addresses. That would break mobile clients and NATed networks.",
+        d: "Access tokens are not single-use in standard OAuth. They are multi-use until they expire."
+      },
+      3: {
+        a: "Browsers parse JWTs routinely (jwt.ms is a browser app). This is not the reason.",
+        b: "IS accepts token requests over HTTP/1.1 and HTTP/2 via standard HTTPS. Browsers support both.",
+        c: "DNS caching is not a relevant factor. Both browser and server resolve the same hostnames.",
+        d: "Correct. The back-channel exchange means the access token is never visible to the browser or any JavaScript running in it. It travels server (web app) ↔ server (IS token endpoint) and lands encrypted inside the session cookie. This eliminates token leakage via browser history, XSS, or JavaScript access."
+      }
+    }
+  };
+</script>
+
+</body>
+</html>

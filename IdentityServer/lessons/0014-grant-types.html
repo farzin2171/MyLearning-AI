@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 14 — Grant Types: Choosing the Right Flow</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    /* ── Grant type cards ───────────────────────────────── */
+    .grant-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem;
+      margin: 1.2rem 0;
+    }
+    .grant-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem 1.1rem;
+    }
+    .grant-card.deprecated {
+      border-color: #e0a000;
+      background: #fffaec;
+      opacity: 0.9;
+    }
+    .grant-card .grant-name {
+      font-family: var(--font-ui);
+      font-weight: 700;
+      font-size: 0.92rem;
+      margin-bottom: 0.25rem;
+    }
+    .grant-card .grant-tag {
+      display: inline-block;
+      font-family: var(--font-ui);
+      font-size: 0.68rem;
+      padding: 0.12rem 0.45rem;
+      border-radius: 20px;
+      background: var(--code-bg);
+      color: var(--muted);
+      margin-bottom: 0.5rem;
+    }
+    .grant-card .grant-tag.current { background: #e8faf0; color: #0a7a3a; }
+    .grant-card .grant-tag.avoid   { background: #fff0e0; color: #8a5000; }
+    .grant-card p { font-size: 0.86rem; margin: 0; color: var(--muted); }
+
+    /* ── Decision matrix ────────────────────────────────── */
+    .decision-table th:first-child { min-width: 200px; }
+    .decision-table td:nth-child(2) {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--accent);
+      white-space: nowrap;
+    }
+    .decision-table td { vertical-align: top; }
+
+    /* ── Flow mini-diagram ──────────────────────────────── */
+    .mini-flow {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.3rem;
+      font-family: var(--font-ui);
+      font-size: 0.8rem;
+      margin: 0.6rem 0 0.9rem;
+      padding: 0.7rem 0.9rem;
+      background: var(--code-bg);
+      border-radius: var(--radius);
+    }
+    .mini-flow .n {
+      border: 1px solid var(--border);
+      background: var(--surface);
+      border-radius: 4px;
+      padding: 0.2rem 0.5rem;
+    }
+    .mini-flow .n.as { border-color: var(--accent); background: #e8f0ff; font-weight: 600; }
+    .mini-flow .n.api { border-color: #0a9e5c; background: #e8faf0; }
+    .mini-flow .arr { color: var(--muted); }
+  </style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="../MISSION.md">OAuth &amp; Identity Course</a> › Module 1: OAuth Foundations ›
+    <a href="0013-authorization-code-flow.html">Lesson 13</a> › Lesson 14
+  </div>
+  <h1>Grant Types — Choosing the Right Flow</h1>
+  <div class="meta">
+    <span>~25 minutes</span>
+    <span>Conceptual + interactive</span>
+    <span>Prerequisite: <a href="0013-authorization-code-flow.html">Lesson 13</a></span>
+  </div>
+</div>
+
+<p>
+  Not every OAuth scenario involves a browser. A background service calling another service has no
+  user to redirect. A smart TV has no keyboard for typing a password. A long-running job needs to keep
+  working after an access token expires. Each situation has its own <strong>grant type</strong> — the
+  OAuth term for "the method a client uses to obtain a token."
+</p>
+
+<p>
+  This lesson maps every important grant type to the scenario it was designed for, so you can always
+  reach for the right one.
+</p>
+
+<hr>
+
+<h2>Confidential vs. Public Clients</h2>
+
+<p>
+  Before grant types make sense, you need one foundational distinction.
+  <a href="https://www.rfc-editor.org/rfc/rfc6749#section-2.1" target="_blank">RFC 6749 §2.1</a>
+  splits all OAuth clients into two categories based on a single question:
+  <strong>can the client keep a secret?</strong>
+</p>
+
+<table>
+  <thead>
+    <tr><th>Client type</th><th>Where it runs</th><th>Can keep a <code>client_secret</code>?</th><th>Examples</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Confidential</strong></td>
+      <td>Server side only</td>
+      <td>Yes — secret never leaves the server</td>
+      <td>ASP.NET Core web app, microservice, background worker</td>
+    </tr>
+    <tr>
+      <td><strong>Public</strong></td>
+      <td>On user's device</td>
+      <td>No — code is visible to anyone with the device</td>
+      <td>SPA (React/Angular), mobile app, CLI tool</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  This matters because some grant types require a <code>client_secret</code>. Public clients must use
+  PKCE instead. Confidential clients use both — PKCE defends against code interception, while
+  the <code>client_secret</code> authenticates the client itself to the token endpoint.
+</p>
+
+<hr>
+
+<h2>The Grant Types</h2>
+
+<div class="grant-grid">
+  <div class="grant-card">
+    <div class="grant-name">Authorization Code + PKCE</div>
+    <div class="grant-tag current">Use this</div>
+    <p>Interactive login for any app where a user is present. Covered in depth in <a href="0013-authorization-code-flow.html">Lesson 13</a>.</p>
+  </div>
+  <div class="grant-card">
+    <div class="grant-name">Client Credentials</div>
+    <div class="grant-tag current">Use this</div>
+    <p>Machine-to-machine. No user present. The client authenticates as itself to call another service.</p>
+  </div>
+  <div class="grant-card">
+    <div class="grant-name">Refresh Token</div>
+    <div class="grant-tag current">Use this</div>
+    <p>Not a standalone flow — used after Auth Code to silently renew an expired access token without re-authenticating the user.</p>
+  </div>
+  <div class="grant-card">
+    <div class="grant-name">Device Authorization</div>
+    <div class="grant-tag current">Use this</div>
+    <p>For devices with no browser or limited input (CLI tools, smart TVs). User approves on a secondary device.</p>
+  </div>
+  <div class="grant-card deprecated">
+    <div class="grant-name">Implicit</div>
+    <div class="grant-tag avoid">Deprecated</div>
+    <p>Returned tokens in the URL. Replaced by Auth Code + PKCE. Never use for new clients.</p>
+  </div>
+  <div class="grant-card deprecated">
+    <div class="grant-name">Resource Owner Password Credentials (ROPC)</div>
+    <div class="grant-tag avoid">Deprecated</div>
+    <p>App collects the user's raw password. Violates the OAuth contract. Never use for new clients.</p>
+  </div>
+</div>
+
+<hr>
+
+<h2>Client Credentials Grant</h2>
+
+<p>
+  The simplest grant type. Used when a service needs to act <em>as itself</em> — not on behalf of any
+  human user. There is no authorization redirect, no consent screen, no code exchange.
+  The client proves its identity with <code>client_id</code> + <code>client_secret</code> (or a
+  signed JWT assertion) and receives an access token directly.
+</p>
+
+<div class="mini-flow">
+  <span class="n">Service A</span>
+  <span class="arr">── POST /token (client_id + client_secret) ──▶</span>
+  <span class="n as">Auth Server</span>
+  <span class="arr">── access_token ──▶</span>
+  <span class="n">Service A</span>
+  <span class="arr">── Bearer token ──▶</span>
+  <span class="n api">Service B API</span>
+</div>
+
+<p>The token request:</p>
+<pre><code>POST /connect/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=client_credentials
+&amp;client_id=invoice-processor
+&amp;client_secret=s3cr3t
+&amp;scope=payments:read payments:write</code></pre>
+
+<p>The response — notice there is no <code>refresh_token</code> and no <code>id_token</code>:</p>
+<pre><code>{
+  "access_token": "eyJhbGciOiJSUzI1NiJ9...",
+  "token_type":   "Bearer",
+  "expires_in":   3600
+}</code></pre>
+
+<div class="callout tip">
+  <strong>Why no refresh token?</strong>
+  Confidential service clients can re-authenticate at any time with their credentials.
+  There's no UX cost — no human is waiting. When the token expires, just fetch a new one.
+  Issuing a refresh token to a service adds risk without benefit.
+</div>
+
+<hr>
+
+<h2>Refresh Token Grant</h2>
+
+<p>
+  Access tokens are intentionally short-lived (typically 15 minutes to 1 hour). When one expires,
+  the app has two options:
+</p>
+<ol>
+  <li>Ask the user to log in again — poor UX for a routine expiry.</li>
+  <li>Use the <strong>refresh token</strong> to silently get a new access token.</li>
+</ol>
+
+<div class="mini-flow">
+  <span class="n">Client</span>
+  <span class="arr">── POST /token (refresh_token) ──▶</span>
+  <span class="n as">Auth Server</span>
+  <span class="arr">── new access_token ──▶</span>
+  <span class="n">Client</span>
+</div>
+
+<pre><code>POST /connect/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=refresh_token
+&amp;refresh_token=8xLOxBtZp8
+&amp;client_id=my-web-app</code></pre>
+
+<p>
+  The Authorization Server validates the refresh token (it is long-lived but still finite and
+  revocable), then returns a fresh access token. Refresh tokens should be stored securely — they are
+  high-value, long-lived credentials.
+</p>
+
+<div class="callout">
+  <strong>Refresh token rotation</strong>
+  Modern Authorization Servers (including Duende IS) implement <em>refresh token rotation</em>: each
+  use of a refresh token invalidates it and returns a new one. If an old refresh token is ever
+  presented again, the server detects a theft and revokes the entire family. This is why you always
+  store the <em>latest</em> refresh token, not the original.
+</div>
+
+<hr>
+
+<h2>Device Authorization Grant</h2>
+
+<p>
+  Some devices cannot open a browser — a CLI tool, a smart TV, or an IoT device. The
+  <a href="https://www.rfc-editor.org/rfc/rfc8628" target="_blank">Device Authorization Grant (RFC 8628)</a>
+  handles this by splitting the interaction across two devices.
+</p>
+
+<div class="mini-flow" style="flex-direction: column; align-items: flex-start; gap: 0.4rem;">
+  <div>
+    <span class="n">CLI tool</span>
+    <span class="arr"> ── POST /connect/deviceauthorization ──▶ </span>
+    <span class="n as">Auth Server</span>
+  </div>
+  <div style="font-size:0.78rem; color:var(--muted); padding-left:1rem;">
+    ← receives: device_code, user_code="WDJB-MJHT", verification_uri="https://example.com/activate"
+  </div>
+  <div style="font-size:0.78rem; color:var(--muted); padding-left:1rem;">
+    CLI displays: "Visit https://example.com/activate and enter code: WDJB-MJHT"
+  </div>
+  <div>
+    <span class="n">User's phone</span>
+    <span class="arr"> ── enters code + logs in ──▶ </span>
+    <span class="n as">Auth Server</span>
+  </div>
+  <div>
+    <span class="n">CLI tool</span>
+    <span class="arr"> ── polls POST /connect/token (device_code) ──▶ </span>
+    <span class="n as">Auth Server</span>
+    <span class="arr"> ── access_token when approved ──▶ </span>
+    <span class="n">CLI tool</span>
+  </div>
+</div>
+
+<p>
+  You've seen this flow if you've ever authenticated the
+  <a href="https://cli.github.com/" target="_blank">GitHub CLI</a> or logged into YouTube on a TV.
+</p>
+
+<hr>
+
+<h2>Flows to Avoid</h2>
+
+<h3>Implicit Flow</h3>
+<p>
+  Returned tokens in the URL fragment (<code>#access_token=…</code>). Superseded by
+  Authorization Code + PKCE for all SPA and mobile use cases. Both the
+  <a href="https://datatracker.ietf.org/doc/html/draft-ietf-oauth-security-topics" target="_blank">OAuth Security BCP</a>
+  and the OAuth 2.1 draft prohibit it. Duende IS still supports it for legacy systems but disables
+  it for new clients by default.
+</p>
+
+<h3>Resource Owner Password Credentials (ROPC)</h3>
+<p>
+  The client collects the user's username and password and POSTs them to the token endpoint.
+  This <em>completely defeats the purpose of OAuth</em>: the user hands their credentials to an
+  untrusted third party (the client). It precludes MFA, federated login, and phishing resistance.
+  Even for "internal tools," avoid it — use Authorization Code + PKCE with the Authorization Server
+  as the login page.
+</p>
+
+<hr>
+
+<h2>Decision Matrix</h2>
+
+<table class="decision-table">
+  <thead>
+    <tr><th>Scenario</th><th>Grant type</th><th>Why</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>User logs into a web app</td>
+      <td>authorization_code + PKCE</td>
+      <td>User present, browser available, tokens stay out of URLs</td>
+    </tr>
+    <tr>
+      <td>Service A calls Service B (no user)</td>
+      <td>client_credentials</td>
+      <td>Machine identity, no user context needed</td>
+    </tr>
+    <tr>
+      <td>CLI tool, smart TV, IoT device</td>
+      <td>urn:ietf:params:oauth:grant-type:device_code</td>
+      <td>No browser on device; user approves elsewhere</td>
+    </tr>
+    <tr>
+      <td>Access token expired, user already authenticated</td>
+      <td>refresh_token</td>
+      <td>Silent renewal without re-prompting the user</td>
+    </tr>
+    <tr>
+      <td>SPA (React, Angular, Vue)</td>
+      <td>authorization_code + PKCE</td>
+      <td>Public client — PKCE replaces client_secret</td>
+    </tr>
+    <tr>
+      <td>Mobile app (iOS, Android)</td>
+      <td>authorization_code + PKCE</td>
+      <td>Public client — open system browser, PKCE for security</td>
+    </tr>
+    <tr>
+      <td>Legacy internal admin tool asks for password</td>
+      <td><em>Refactor to Auth Code + PKCE</em></td>
+      <td>ROPC is deprecated; no MFA, no federation, high phishing risk</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr>
+
+<!-- QUIZ -->
+<div class="quiz" data-quiz="quiz14">
+  <h3>Knowledge Check</h3>
+
+  <div class="quiz-question" data-correct="b">
+    <p>1. A background service needs to call another internal API with no user involved. Which grant type is correct?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz14-q0" value="a"> Authorization Code + PKCE, initiating a browser-based login flow</label></li>
+      <li><label><input type="radio" name="quiz14-q0" value="b"> Client Credentials, authenticating as the service itself directly</label></li>
+      <li><label><input type="radio" name="quiz14-q0" value="c"> Refresh Token, exchanging an existing session token for access</label></li>
+      <li><label><input type="radio" name="quiz14-q0" value="d"> Device Authorization, obtaining a code through a secondary device</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="b">
+    <p>2. What is the defining trait of a "confidential client" in OAuth 2.0?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz14-q1" value="a"> It only permits logins from users inside a corporate network</label></li>
+      <li><label><input type="radio" name="quiz14-q1" value="b"> It can securely store a client_secret on the server side</label></li>
+      <li><label><input type="radio" name="quiz14-q1" value="c"> It encrypts all communication using client-side certificates</label></li>
+      <li><label><input type="radio" name="quiz14-q1" value="d"> It supports only the Authorization Code grant type exclusively</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="b">
+    <p>3. What is the primary purpose of a refresh token?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz14-q2" value="a"> Proving the user's identity to the Resource Server on each call</label></li>
+      <li><label><input type="radio" name="quiz14-q2" value="b"> Getting a new access token when the current one expires silently</label></li>
+      <li><label><input type="radio" name="quiz14-q2" value="c"> Authorizing the client to request additional OAuth scopes later</label></li>
+      <li><label><input type="radio" name="quiz14-q2" value="d"> Authenticating the client application to the Authorization Server only</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="b">
+    <p>4. Why is the Resource Owner Password Credentials grant deprecated and dangerous?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz14-q3" value="a"> It grants tokens with longer lifetimes than Authorization Code tokens</label></li>
+      <li><label><input type="radio" name="quiz14-q3" value="b"> The client application directly handles the user's raw credentials</label></li>
+      <li><label><input type="radio" name="quiz14-q3" value="c"> It requires client_secret rotation on every single token request</label></li>
+      <li><label><input type="radio" name="quiz14-q3" value="d"> Tokens issued via ROPC cannot be validated by Resource Servers</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+</div>
+
+<script>
+window.quizExplanations = {
+  'quiz14-q0': 'Client Credentials is the machine-to-machine grant. No user redirect, no consent screen — the service authenticates with client_id + client_secret and gets a token directly.',
+  'quiz14-q1': 'Confidential clients run server-side and can store a client_secret securely. Public clients (SPAs, mobile apps, CLIs) run on user devices where secrets are accessible to anyone who inspects the app.',
+  'quiz14-q2': 'Refresh tokens silently renew expired access tokens without asking the user to log in again. The client presents the refresh_token to the Authorization Server\'s token endpoint, not to the Resource Server.',
+  'quiz14-q3': 'ROPC requires the client to collect and transmit the user\'s real password. This makes MFA impossible, prevents federation, creates phishing risk, and breaks the core OAuth principle of the user only entering credentials at the trusted Authorization Server.'
+};
+</script>
+
+<hr>
+
+<h2>Primary Source</h2>
+<ul>
+  <li>
+    <a href="https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1" target="_blank">
+      OAuth 2.1 draft
+    </a>
+    — the in-progress simplification of OAuth 2.0 that officially removes Implicit and ROPC and mandates PKCE
+  </li>
+  <li>
+    <a href="https://www.rfc-editor.org/rfc/rfc8628" target="_blank">
+      RFC 8628 — OAuth Device Authorization Grant
+    </a>
+    — the full Device flow specification
+  </li>
+</ul>
+
+<div class="ask-claude">
+  <strong>Questions? Ask your teacher.</strong>
+  Try: <em>"How does token rotation work, and what happens if a refresh token is stolen?"</em>
+  Or: <em>"In the Client Credentials flow, what goes in the token's 'sub' claim if there's no user?"</em>
+</div>
+
+<div class="lesson-nav">
+  <a class="prev" href="0013-authorization-code-flow.html">← Lesson 13: Authorization Code + PKCE</a>
+  <a class="next" href="0015-jwt-anatomy.html">Next → Lesson 15: JWT Anatomy — Inside the Token</a>
+</div>
+
+<div class="lesson-footer">
+  OAuth &amp; Identity Course · Module 1: OAuth Foundations · Lesson 14 ·
+  Specs: <a href="https://www.rfc-editor.org/rfc/rfc6749" target="_blank">RFC 6749</a>,
+  <a href="https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1" target="_blank">OAuth 2.1</a>,
+  <a href="https://www.rfc-editor.org/rfc/rfc8628" target="_blank">RFC 8628</a>
+</div>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

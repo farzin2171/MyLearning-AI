@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 20 — The Login UI: Razor Pages & the Auth Code Issuance</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    /* ── Step flow ─────────────────────────────────────── */
+    .step-flow {
+      counter-reset: step;
+      margin: 1.2rem 0;
+    }
+    .step {
+      display: grid;
+      grid-template-columns: 2.2rem 1fr;
+      gap: 0 0.9rem;
+      margin-bottom: 1rem;
+      align-items: start;
+    }
+    .step-num {
+      counter-increment: step;
+      width: 2.2rem;
+      height: 2.2rem;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-ui);
+      font-weight: 700;
+      font-size: 0.85rem;
+      flex-shrink: 0;
+      margin-top: 0.1rem;
+    }
+    .step-body { padding-top: 0.15rem; }
+    .step-body p { margin-bottom: 0.3rem; }
+    .step-body code { font-size: 0.8rem; }
+
+    /* ── Page map ──────────────────────────────────────── */
+    .page-map {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.9rem;
+      margin: 1.2rem 0;
+    }
+    @media (max-width: 600px) { .page-map { grid-template-columns: 1fr; } }
+    .page-card {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .page-card .page-head {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      padding: 0.35rem 0.75rem;
+      background: var(--code-bg);
+      border-bottom: 1px solid var(--border);
+      font-weight: 700;
+    }
+    .page-card .page-body {
+      padding: 0.65rem 0.75rem;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    /* ── Inline code section ───────────────────────────── */
+    .code-section {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 1rem 0;
+    }
+    .code-section .code-title {
+      font-family: var(--font-ui);
+      font-size: 0.72rem;
+      padding: 0.4rem 0.9rem;
+      background: var(--border);
+      color: var(--muted);
+      letter-spacing: 0.04em;
+    }
+    .code-section pre {
+      margin: 0;
+      padding: 1rem 1.1rem;
+      background: transparent;
+      border: none;
+      font-size: 0.81rem;
+      line-height: 1.65;
+    }
+
+    /* ── Annotation aside ──────────────────────────────── */
+    .annotated {
+      display: grid;
+      grid-template-columns: 1fr 0.6fr;
+      gap: 0 1.2rem;
+      align-items: start;
+      margin: 1rem 0;
+    }
+    @media (max-width: 600px) { .annotated { grid-template-columns: 1fr; } }
+    .annotation {
+      font-family: var(--font-ui);
+      font-size: 0.8rem;
+      color: var(--muted);
+      border-left: 3px solid var(--border);
+      padding-left: 0.8rem;
+      margin-top: 0.5rem;
+    }
+    .annotation strong { color: var(--text); }
+
+    /* ── Sequence diagram ──────────────────────────────── */
+    .seq {
+      margin: 1.2rem 0;
+      font-family: var(--font-ui);
+      font-size: 0.8rem;
+    }
+    .seq-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.55rem;
+    }
+    .seq-actor {
+      min-width: 120px;
+      text-align: right;
+      font-weight: 700;
+      color: var(--muted);
+    }
+    .seq-arrow {
+      color: var(--accent);
+      font-size: 1rem;
+      flex-shrink: 0;
+    }
+    .seq-label {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 0.2rem 0.7rem;
+      font-family: var(--font-mono);
+      font-size: 0.74rem;
+    }
+    .seq-note {
+      margin-left: 130px;
+      color: var(--muted);
+      font-size: 0.76rem;
+      font-style: italic;
+      margin-bottom: 0.55rem;
+    }
+  </style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="../MISSION.md">OAuth &amp; Identity Course</a> › Module 3: Building Duende IS ›
+    <a href="0019-clients-and-resources.html">Lesson 19</a> › Lesson 20
+  </div>
+  <h1>The Login UI — Razor Pages &amp; Auth Code Issuance</h1>
+  <div class="meta">
+    <span>~25 minutes</span>
+    <span>Architecture + code walkthrough</span>
+    <span>Prerequisite: <a href="0019-clients-and-resources.html">Lesson 19</a></span>
+  </div>
+</div>
+
+<p>
+  You have a running Duende IS instance and a registered client. A user hits your web app,
+  which redirects to <code>/connect/authorize</code>. Now what?
+  Duende IS validates the request — then hands control to <em>your</em> login page.
+  This lesson explains that handoff and what your Razor Pages must do.
+</p>
+
+<div class="callout">
+  <strong>Duende IS ships no built-in UI</strong>
+  This is intentional. Your login page may need your brand, your MFA flow, your employee
+  directory. Duende IS handles the protocol; you own the UX.
+  The <a href="https://github.com/DuendeSoftware/Samples" target="_blank">QuickStart UI</a>
+  is a scaffold you can copy into your project to get started immediately.
+</div>
+
+<hr>
+
+<h2>The Full Login Sequence</h2>
+
+<div class="seq">
+
+  <div class="seq-row">
+    <span class="seq-actor">Browser</span>
+    <span class="seq-arrow">→</span>
+    <span class="seq-label">GET /connect/authorize?client_id=…&amp;redirect_uri=…&amp;code_challenge=…</span>
+  </div>
+  <div class="seq-note">Client redirects the browser to Duende IS with the OIDC request</div>
+
+  <div class="seq-row">
+    <span class="seq-actor">Duende IS</span>
+    <span class="seq-arrow">→</span>
+    <span class="seq-label">302 → /Account/Login?returnUrl=…</span>
+  </div>
+  <div class="seq-note">IS validates params, sees no active session, redirects to your login page</div>
+
+  <div class="seq-row">
+    <span class="seq-actor">Browser</span>
+    <span class="seq-arrow">→</span>
+    <span class="seq-label">POST /Account/Login (username + password)</span>
+  </div>
+  <div class="seq-note">User fills in credentials; your Razor Page handles the POST</div>
+
+  <div class="seq-row">
+    <span class="seq-actor">Login Page</span>
+    <span class="seq-arrow">→</span>
+    <span class="seq-label">HttpContext.SignInAsync(principal)</span>
+  </div>
+  <div class="seq-note">You validate credentials, build a ClaimsPrincipal, create the auth cookie</div>
+
+  <div class="seq-row">
+    <span class="seq-actor">Login Page</span>
+    <span class="seq-arrow">→</span>
+    <span class="seq-label">302 → returnUrl (back to /connect/authorize)</span>
+  </div>
+  <div class="seq-note">Redirect back — now the session exists, IS issues the auth code</div>
+
+  <div class="seq-row">
+    <span class="seq-actor">Duende IS</span>
+    <span class="seq-arrow">→</span>
+    <span class="seq-label">302 → redirect_uri?code=abc123&amp;state=…</span>
+  </div>
+  <div class="seq-note">Auth code delivered to the client's callback URL</div>
+
+  <div class="seq-row">
+    <span class="seq-actor">Client</span>
+    <span class="seq-arrow">→</span>
+    <span class="seq-label">POST /connect/token (code + code_verifier)</span>
+  </div>
+  <div class="seq-note">Client exchanges code for access + ID token (back-channel, browser not involved)</div>
+
+</div>
+
+<p>
+  Your code only needs to implement steps 3–5. Everything else — validating the OIDC
+  request, generating the auth code, calling the token endpoint — is Duende IS.
+</p>
+
+<hr>
+
+<h2>The Three Pages You Must Provide</h2>
+
+<div class="page-map">
+  <div class="page-card">
+    <div class="page-head">Pages/Account/Login</div>
+    <div class="page-body">
+      Collect username &amp; password. Validate credentials. Call
+      <code>SignInAsync()</code>. Redirect back to <code>returnUrl</code>.
+    </div>
+  </div>
+  <div class="page-card">
+    <div class="page-head">Pages/Account/Logout</div>
+    <div class="page-body">
+      Call <code>SignOutAsync()</code>. Use the interaction service to
+      find the post-logout redirect URI and notify the client the session ended.
+    </div>
+  </div>
+  <div class="page-card">
+    <div class="page-head">Pages/Consent</div>
+    <div class="page-body">
+      Show the user which scopes the client wants. Only needed if
+      <code>RequireConsent = true</code> on the client (typically for third-party apps).
+    </div>
+  </div>
+</div>
+
+<p>
+  Internal line-of-business apps typically set <code>RequireConsent = false</code> —
+  the user trusts the app because it's owned by the same org. Public OAuth apps (think
+  "Login with GitHub") always show a consent page.
+</p>
+
+<hr>
+
+<h2>The Login PageModel in Detail</h2>
+
+<p>
+  Two Duende IS services do the heavy lifting in your PageModel:
+</p>
+
+<ul>
+  <li>
+    <code>IIdentityServerInteractionService</code> — reads the OIDC request embedded in
+    the <code>returnUrl</code> and records the login result.
+  </li>
+  <li>
+    <code>IEventService</code> — emits structured audit events (successful logins, failures).
+    Optional but strongly recommended.
+  </li>
+</ul>
+
+<div class="code-section">
+  <div class="code-title">Pages/Account/Login.cshtml.cs — OnPostAsync (simplified)</div>
+  <pre><code>public class LoginModel : PageModel
+{
+    private readonly IIdentityServerInteractionService _interaction;
+    private readonly IEventService _events;
+
+    // Injected from your own user store
+    private readonly IUserValidator _users;
+
+    public LoginModel(
+        IIdentityServerInteractionService interaction,
+        IEventService events,
+        IUserValidator users)
+    {
+        _interaction = interaction;
+        _events      = events;
+        _users       = users;
+    }
+
+    [BindProperty] public InputModel Input { get; set; }
+
+    public async Task&lt;IActionResult&gt; OnPostAsync()
+    {
+        // 1. Retrieve the OIDC context for this login attempt
+        var context = await _interaction
+            .GetAuthorizationContextAsync(Input.ReturnUrl);
+
+        if (!ModelState.IsValid) return Page();
+
+        // 2. Validate credentials against YOUR user store
+        var user = await _users.ValidateAsync(
+                       Input.Username, Input.Password);
+
+        if (user == null)
+        {
+            // Audit event: failed login
+            await _events.RaiseAsync(
+                new UserLoginFailureEvent(Input.Username,
+                    "invalid credentials", clientId: context?.Client.ClientId));
+
+            ModelState.AddModelError("", "Invalid username or password");
+            return Page();
+        }
+
+        // 3. Build the ClaimsPrincipal for the session
+        var isuser = new IdentityServerUser(user.SubjectId)
+        {
+            DisplayName = user.DisplayName
+        };
+
+        // 4. Issue the authentication cookie
+        await HttpContext.SignInAsync(isuser);
+
+        // 5. Audit: success
+        await _events.RaiseAsync(
+            new UserLoginSuccessEvent(user.Username, user.SubjectId,
+                user.DisplayName, clientId: context?.Client.ClientId));
+
+        // 6. Redirect back — IS will now issue the auth code
+        return Redirect(Input.ReturnUrl ?? "~/");
+    }
+}</code></pre>
+</div>
+
+<div class="callout callout-info">
+  <strong>You own the user store</strong>
+  Duende IS does not manage users. You provide the validation logic —
+  querying a database, calling an LDAP directory, delegating to an external IdP.
+  This is why Lesson 21 (External Providers) exists as its own topic.
+</div>
+
+<hr>
+
+<h2>What <code>IdentityServerUser</code> Is</h2>
+
+<p>
+  <code>IdentityServerUser</code> is a thin wrapper that sets a fixed
+  <code>AuthenticationScheme</code> (<code>"idsrv"</code>) and structures the claims
+  Duende IS needs to issue tokens. The only required field is <code>SubjectId</code> —
+  the stable, unique identifier for this user (the <code>sub</code> claim in every token).
+</p>
+
+<div class="annotated">
+  <div class="code-section" style="margin:0;">
+    <pre><code>var isuser = new IdentityServerUser(user.SubjectId)
+{
+    DisplayName        = user.DisplayName,
+    AdditionalClaims   = new[]
+    {
+        new Claim("tenant_id", user.TenantId),
+        new Claim("role",      user.Role)
+    }
+};</code></pre>
+  </div>
+  <div class="annotation">
+    <strong>SubjectId</strong> — becomes <code>sub</code> in every token. Use a stable DB key, not a username.<br><br>
+    <strong>DisplayName</strong> — shown on consent pages.<br><br>
+    <strong>AdditionalClaims</strong> — extra claims baked into the session. They flow into tokens only if the
+    relevant <code>IdentityResource</code> or <code>ApiScope</code> user-claim list includes them
+    (covered in Lesson 22 — Claims Enrichment).
+  </div>
+</div>
+
+<hr>
+
+<h2>Getting the QuickStart UI</h2>
+
+<p>
+  Rather than writing the Razor Pages from scratch, scaffold the
+  <a href="https://github.com/DuendeSoftware/Samples/tree/main/IdentityServer/v7/Quickstarts" target="_blank">
+  QuickStart UI</a> into your project using the Duende CLI:
+</p>
+
+<div class="code-section">
+  <div class="code-title">Terminal — scaffold QuickStart UI</div>
+  <pre><code># Install the template tool once
+dotnet tool install -g Duende.IdentityServer.Templates
+
+# Inside your IS project directory
+duende new ui
+
+# This adds:
+# Pages/Account/Login.cshtml + .cs
+# Pages/Account/Logout.cshtml + .cs
+# Pages/Consent.cshtml + .cs
+# Pages/Diagnostics.cshtml (dev helper)
+# Services/TestUserStore.cs (replace with your real store)</code></pre>
+</div>
+
+<p>
+  The QuickStart UI also includes a <code>TestUserStore</code> with hard-coded users — perfect
+  for development, easy to swap out for your real user repository in production.
+</p>
+
+<hr>
+
+<h2>Knowledge Check</h2>
+
+<div class="quiz" data-quiz="q20">
+
+  <div class="quiz-question" data-correct="c">
+    <p><strong>1.</strong> After your Login page calls <code>HttpContext.SignInAsync(isuser)</code>,
+    what should it do next?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q20-q0" value="a"> Call <code>_interaction.GrantConsentAsync()</code> to issue the auth code directly</label></li>
+      <li><label><input type="radio" name="q20-q0" value="b"> Write the access token to a cookie and return it to the browser</label></li>
+      <li><label><input type="radio" name="q20-q0" value="c"> Redirect back to the <code>returnUrl</code> so Duende IS can issue the auth code</label></li>
+      <li><label><input type="radio" name="q20-q0" value="d"> Call <code>_interaction.DenyAuthorizationAsync()</code> to close the request</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="b">
+    <p><strong>2.</strong> What is the <code>SubjectId</code> field on <code>IdentityServerUser</code>
+    used for?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q20-q1" value="a"> It is the display name shown on the login page and consent screen</label></li>
+      <li><label><input type="radio" name="q20-q1" value="b"> It becomes the <code>sub</code> claim in every token issued for this user</label></li>
+      <li><label><input type="radio" name="q20-q1" value="c"> It is the session cookie name that Duende IS uses to track the login</label></li>
+      <li><label><input type="radio" name="q20-q1" value="d"> It is the client ID that the user is logging in to access</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="a">
+    <p><strong>3.</strong> You set <code>RequireConsent = false</code> on a client.
+    When does the consent page appear for users of that client?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q20-q2" value="a"> Never — consent is skipped entirely for this client</label></li>
+      <li><label><input type="radio" name="q20-q2" value="b"> Only when the user logs in for the very first time ever</label></li>
+      <li><label><input type="radio" name="q20-q2" value="c"> Only when the client requests an offline_access scope</label></li>
+      <li><label><input type="radio" name="q20-q2" value="d"> Always — RequireConsent only affects third-party clients</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="d">
+    <p><strong>4.</strong> Which service gives your Login PageModel access to the OIDC
+    context (client ID, requested scopes) embedded in the <code>returnUrl</code>?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q20-q3" value="a"> <code>ITokenService</code> — the service that signs and issues tokens</label></li>
+      <li><label><input type="radio" name="q20-q3" value="b"> <code>IClientStore</code> — the in-memory registry of registered clients</label></li>
+      <li><label><input type="radio" name="q20-q3" value="c"> <code>IEventService</code> — the structured audit event emitter</label></li>
+      <li><label><input type="radio" name="q20-q3" value="d"> <code>IIdentityServerInteractionService</code> — decodes returnUrl into authorization context</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+</div>
+
+<button class="quiz-btn" data-quiz-submit="q20">Check Answers</button>
+<div class="quiz-score"></div>
+
+<hr>
+
+<h2>Primary Source</h2>
+
+<p>
+  The official Duende quickstart walkthrough (Quickstart 1 and 2) shows this exact code
+  running in a real project. Read it alongside this lesson:
+  <a href="https://docs.duendesoftware.com/identityserver/v7/quickstarts/1_client_credentials/" target="_blank">
+  Quickstart 1 — Client Credentials</a> and
+  <a href="https://docs.duendesoftware.com/identityserver/v7/quickstarts/2_interactive/" target="_blank">
+  Quickstart 2 — Interactive Applications (Login UI)</a>.
+</p>
+
+<hr>
+
+<h2>What's Next</h2>
+
+<p>
+  Your login page currently validates users against your own database.
+  <a href="0021-external-providers.html">Lesson 21</a> shows how to add
+  an external login button — "Log in with Google / Azure AD / GitHub" — so users
+  can authenticate through a third-party IdP and Duende IS federates their identity
+  into your token.
+</p>
+
+<div class="callout">
+  <strong>Ask your teacher</strong>
+  Not sure how the <code>returnUrl</code> is validated to prevent open redirects?
+  Want to know how to hook in ASP.NET Core Identity as the user store?
+  Drop your question and I'll explain it.
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+  window.quizExplanations = {
+    'q20': {
+      0: {
+        a: 'GrantConsentAsync is for the consent page, not the login page. The login page does not issue tokens.',
+        b: "The login page issues a session cookie, not an access token. Tokens are issued by Duende IS's token endpoint.",
+        c: 'Correct. Redirecting back to returnUrl re-enters the /connect/authorize endpoint, which now sees an active session and issues the auth code.',
+        d: 'DenyAuthorizationAsync cancels the request. After a successful login, you redirect forward, not deny.'
+      },
+      1: {
+        a: "DisplayName is a separate field used for UI purposes. SubjectId is the stable identity claim.",
+        b: "Correct. SubjectId maps directly to the 'sub' claim — the primary, stable identifier for the user in every token.",
+        c: "The session cookie is managed by ASP.NET Core authentication middleware, not by SubjectId.",
+        d: "The client ID is part of the OIDC authorization request, not the user's identity object."
+      },
+      2: {
+        a: "Correct. RequireConsent = false suppresses the consent page entirely for that client.",
+        b: "Duende IS does not track 'first login ever' to conditionally show consent — the setting is binary.",
+        c: "offline_access may require consent in some flows, but RequireConsent = false overrides that.",
+        d: "RequireConsent is per-client configuration, not a global setting that only applies to third-party clients."
+      },
+      3: {
+        a: "ITokenService is an internal Duende IS service for token creation — not injected into your login page.",
+        b: "IClientStore retrieves client registrations. It does not decode the authorization context from the URL.",
+        c: "IEventService emits audit events. It has no knowledge of the authorization context.",
+        d: "Correct. IIdentityServerInteractionService.GetAuthorizationContextAsync(returnUrl) decodes the OIDC request."
+      }
+    }
+  };
+</script>
+
+</body>
+</html>

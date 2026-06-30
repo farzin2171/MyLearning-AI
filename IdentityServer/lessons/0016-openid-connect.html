@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 16 — OpenID Connect: Adding Identity to OAuth</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    /* ── Comparison table highlight ─────────────────────── */
+    .compare-table th:nth-child(2) { background: #fff8e8; }
+    .compare-table th:nth-child(3) { background: #e8f4ff; }
+    .compare-table td:nth-child(2) { background: #fffdf5; font-size: 0.84rem; }
+    .compare-table td:nth-child(3) { background: #f5f9ff; font-size: 0.84rem; }
+
+    /* ── OIDC scope cards ───────────────────────────────── */
+    .scope-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+      padding: 0.65rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.9rem;
+    }
+    .scope-row:last-child { border-bottom: none; }
+    .scope-name {
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      color: var(--accent);
+      min-width: 9rem;
+      margin-top: 0.05rem;
+      flex-shrink: 0;
+    }
+    .scope-req {
+      display: inline-block;
+      font-family: var(--font-ui);
+      font-size: 0.65rem;
+      padding: 0.1rem 0.4rem;
+      border-radius: 20px;
+      background: #fdecea;
+      color: #c0392b;
+      margin-left: 0.4rem;
+      vertical-align: middle;
+    }
+    .scope-claims {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--muted);
+      display: block;
+      margin-top: 0.2rem;
+    }
+
+    /* ── Token response box ─────────────────────────────── */
+    .token-response {
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      background: #1e1e2e;
+      color: #cdd6f4;
+      border-radius: var(--radius);
+      padding: 1.1rem 1.3rem;
+      margin: 0.8rem 0;
+      line-height: 1.7;
+    }
+    .tr-key    { color: #cba6f7; }
+    .tr-string { color: #a6e3a1; }
+    .tr-number { color: #fab387; }
+    .tr-new    { color: #f9e2af; font-weight: 700; }
+    .tr-new-key { color: #f9e2af; font-weight: 700; }
+  </style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="../MISSION.md">OAuth &amp; Identity Course</a> › Module 2: OpenID Connect ›
+    Lesson 16
+  </div>
+  <h1>OpenID Connect — Adding Identity to OAuth</h1>
+  <div class="meta">
+    <span>~25 minutes</span>
+    <span>Conceptual + interactive</span>
+    <span>Prerequisite: <a href="0015-jwt-anatomy.html">Lessons 12–15</a></span>
+  </div>
+</div>
+
+<p>
+  Module 1 gave you the full OAuth 2.0 toolkit: grant types, tokens, flows. Now a counterintuitive
+  question: <em>can you use an OAuth access token to find out who a user is?</em>
+</p>
+<p>
+  The answer is no — and understanding exactly why leads directly to OpenID Connect.
+</p>
+
+<hr>
+
+<h2>The Authentication Gap in OAuth 2.0</h2>
+
+<p>
+  OAuth 2.0 was designed for <strong>authorization</strong> — delegating access to resources.
+  It was explicitly <em>not</em> designed for <strong>authentication</strong> — proving who someone is.
+  This distinction matters in practice.
+</p>
+
+<p>Consider what an access token actually proves:</p>
+
+<div class="callout warn">
+  <strong>What an access token proves</strong>
+  "The user who owns this account granted this client permission to access these scopes at this time."
+  <br><br>
+  It does NOT prove: "The person making this request is the user."
+</div>
+
+<p>
+  Three concrete problems arise when developers try to use OAuth alone for authentication:
+</p>
+
+<ol>
+  <li>
+    <strong>Access tokens may be opaque.</strong> The Authorization Server can issue a random string
+    as an access token (for efficiency). The client gets a token it literally cannot decode to extract
+    user identity. OAuth says nothing about what's inside an access token.
+  </li>
+  <li>
+    <strong>Audience mismatch.</strong> An access token's <code>aud</code> targets the Resource Server
+    (API). If you send the token to your own app to "prove identity," that's a misuse — your app is
+    not the intended audience.
+  </li>
+  <li>
+    <strong>No standard for identity claims.</strong> OAuth doesn't define which claims identify the
+    user. Two Authorization Servers solving the same problem would put the user ID in different places
+    under different names — there's no interoperability.
+  </li>
+</ol>
+
+<p>
+  <a href="https://openid.net/specs/openid-connect-core-1_0.html" target="_blank">OpenID Connect</a>
+  (OIDC) solves all three problems with one clean addition: a standardized identity layer built
+  directly on top of OAuth 2.0.
+</p>
+
+<hr>
+
+<h2>What OpenID Connect Adds</h2>
+
+<div class="callout key">
+  <strong>The one-sentence definition</strong>
+  OpenID Connect = OAuth 2.0 + <code>scope=openid</code> + an <strong>ID token</strong>
+  in the token response.
+</div>
+
+<p>
+  That's really it. OIDC doesn't replace OAuth — it extends it. The Authorization Code flow is
+  identical to what you learned in Lesson 13. The only additions are:
+</p>
+
+<ul>
+  <li>A new required scope: <code>openid</code></li>
+  <li>A new token in the response: the <strong>ID token</strong></li>
+  <li>An optional <strong>UserInfo endpoint</strong> for fetching additional claims</li>
+  <li>A standard <strong>discovery document</strong> at <code>/.well-known/openid-configuration</code></li>
+</ul>
+
+<h3>The token response with OIDC</h3>
+
+<p>
+  Before OIDC (standard OAuth token response):
+</p>
+<div class="token-response">{<br>
+  &nbsp;&nbsp;<span class="tr-key">"access_token"</span>: <span class="tr-string">"eyJhbGciOiJSUzI1NiJ9..."</span>,<br>
+  &nbsp;&nbsp;<span class="tr-key">"token_type"</span>:   <span class="tr-string">"Bearer"</span>,<br>
+  &nbsp;&nbsp;<span class="tr-key">"expires_in"</span>:   <span class="tr-number">3600</span>,<br>
+  &nbsp;&nbsp;<span class="tr-key">"refresh_token"</span>: <span class="tr-string">"8xLOxBtZp8"</span><br>
+}</div>
+
+<p>
+  With OIDC (add <code>scope=openid</code> to the authorization request):
+</p>
+<div class="token-response">{<br>
+  &nbsp;&nbsp;<span class="tr-key">"access_token"</span>:  <span class="tr-string">"eyJhbGciOiJSUzI1NiJ9..."</span>,<br>
+  &nbsp;&nbsp;<span class="tr-key">"token_type"</span>:    <span class="tr-string">"Bearer"</span>,<br>
+  &nbsp;&nbsp;<span class="tr-key">"expires_in"</span>:    <span class="tr-number">3600</span>,<br>
+  &nbsp;&nbsp;<span class="tr-key">"refresh_token"</span>: <span class="tr-string">"8xLOxBtZp8"</span>,<br>
+  &nbsp;&nbsp;<span class="tr-new-key">"id_token"</span>:      <span class="tr-new">"eyJhbGciOiJSUzI1NiJ9..."</span>  <span style="color:#6c7086;">// ← OIDC addition</span><br>
+}</div>
+
+<hr>
+
+<h2>The ID Token</h2>
+
+<p>
+  The ID token is a JWT whose sole purpose is to convey the user's <em>identity</em> to the
+  <em>client application</em>. It answers: "Who just logged in?"
+</p>
+
+<p>Decoded ID token payload:</p>
+<pre><code>{
+  "iss":       "https://auth.example.com",
+  "sub":       "usr-42",
+  "aud":       "my-web-app",        // ← the CLIENT, not an API
+  "exp":       1717170000,
+  "iat":       1717166400,
+  "auth_time": 1717166390,          // when the user actually authenticated
+  "nonce":     "n-0S6_WzA2Mj",     // replay-attack prevention
+  "name":      "Alice Example",
+  "email":     "alice@example.com"
+}</code></pre>
+
+<p>
+  Notice the <code>aud</code>: it contains the <strong>client ID</strong>, not a Resource Server URL.
+  The ID token is for the client to read — it is never sent to APIs.
+</p>
+
+<div class="callout">
+  <strong>sub is the stable user identifier</strong>
+  The <code>sub</code> (subject) claim is the durable, unique identifier for this user at this
+  Authorization Server. It never changes even if the user updates their name or email. Use <code>sub</code>
+  as the primary key when storing user records locally — not email or name.
+</div>
+
+<hr>
+
+<h2>OIDC Scopes — Requesting Identity Claims</h2>
+
+<p>
+  OIDC defines standard scopes that control which identity claims appear in the ID token and at
+  the UserInfo endpoint. These are defined in the
+  <a href="https://openid.net/specs/openid-connect-core-1_0.html#ScopeClaims" target="_blank">OIDC Core spec §5.4</a>.
+</p>
+
+<div style="margin: 1rem 0;">
+  <div class="scope-row">
+    <div>
+      <span class="scope-name">openid <span class="scope-req">required</span></span>
+      <span class="scope-claims">Returns: sub</span>
+    </div>
+    <span style="color: var(--muted); font-size: 0.88rem;">
+      The one mandatory OIDC scope. Without it you're making a plain OAuth request, not an OIDC request.
+    </span>
+  </div>
+  <div class="scope-row">
+    <div>
+      <span class="scope-name">profile</span>
+      <span class="scope-claims">Returns: name, given_name, family_name, middle_name, nickname, picture, website, gender, birthdate, zoneinfo, locale, updated_at</span>
+    </div>
+    <span style="color: var(--muted); font-size: 0.88rem;">
+      The user's profile information. Most apps use this to show the user's name.
+    </span>
+  </div>
+  <div class="scope-row">
+    <div>
+      <span class="scope-name">email</span>
+      <span class="scope-claims">Returns: email, email_verified</span>
+    </div>
+    <span style="color: var(--muted); font-size: 0.88rem;">
+      <code>email_verified</code> is important — don't trust an email address for access control unless it's verified.
+    </span>
+  </div>
+  <div class="scope-row">
+    <div>
+      <span class="scope-name">phone</span>
+      <span class="scope-claims">Returns: phone_number, phone_number_verified</span>
+    </div>
+    <span style="color: var(--muted); font-size: 0.88rem;">
+      Phone number in E.164 format.
+    </span>
+  </div>
+  <div class="scope-row">
+    <div>
+      <span class="scope-name">address</span>
+      <span class="scope-claims">Returns: address (structured)</span>
+    </div>
+    <span style="color: var(--muted); font-size: 0.88rem;">
+      Postal address. Rarely used in web apps; more common in financial/government contexts.
+    </span>
+  </div>
+  <div class="scope-row">
+    <div>
+      <span class="scope-name">offline_access</span>
+      <span class="scope-claims">Returns: (enables refresh_token)</span>
+    </div>
+    <span style="color: var(--muted); font-size: 0.88rem;">
+      Not an identity scope, but defined by OIDC. Requests a refresh token so the client can access resources when the user is offline.
+    </span>
+  </div>
+</div>
+
+<hr>
+
+<h2>ID Token vs. Access Token — Side by Side</h2>
+
+<p>
+  Many developers confuse these. They look the same (both JWTs) but serve completely different
+  purposes.
+</p>
+
+<table class="compare-table">
+  <thead>
+    <tr>
+      <th>Property</th>
+      <th>ID Token</th>
+      <th>Access Token</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Purpose</strong></td>
+      <td>Prove who the user is</td>
+      <td>Authorize access to a resource</td>
+    </tr>
+    <tr>
+      <td><strong>Audience (<code>aud</code>)</strong></td>
+      <td>The <em>client</em> (<code>client_id</code>)</td>
+      <td>The <em>Resource Server</em> (API URL)</td>
+    </tr>
+    <tr>
+      <td><strong>Who reads it</strong></td>
+      <td>The client application</td>
+      <td>The Resource Server (API)</td>
+    </tr>
+    <tr>
+      <td><strong>Sent to APIs?</strong></td>
+      <td>Never — keep it client-side</td>
+      <td>Yes — in the Bearer header</td>
+    </tr>
+    <tr>
+      <td><strong>Key claims</strong></td>
+      <td><code>sub</code>, <code>name</code>, <code>email</code>, <code>nonce</code></td>
+      <td><code>scope</code>, <code>aud</code>, <code>client_id</code></td>
+    </tr>
+    <tr>
+      <td><strong>Lifetime</strong></td>
+      <td>Short (used once at login time)</td>
+      <td>Short (15 min – 1 hr; refreshed)</td>
+    </tr>
+    <tr>
+      <td><strong>Defined by</strong></td>
+      <td>OpenID Connect Core</td>
+      <td>OAuth 2.0 / RFC 9068</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout warn">
+  <strong>The most common mistake</strong>
+  Sending the ID token to an API. The API expects an access token with <code>aud=api-url</code>.
+  The ID token's <code>aud</code> is the client_id — the API will (correctly) reject it.
+</div>
+
+<hr>
+
+<h2>The nonce — Replay Attack Prevention</h2>
+
+<p>
+  Add <code>nonce</code> to the OIDC authorization request alongside <code>state</code>:
+</p>
+
+<pre><code>GET /connect/authorize?
+  ...
+  &amp;scope=openid profile email
+  &amp;state=csrf-protection-value
+  &amp;nonce=anti-replay-value</code></pre>
+
+<p>
+  The Authorization Server binds the nonce to the ID token. When the client receives the ID token,
+  it verifies the nonce matches what it generated. This prevents an attacker from capturing an ID token
+  from one session and replaying it in another.
+</p>
+<ul>
+  <li><code>state</code> = CSRF protection for the <em>redirect</em></li>
+  <li><code>nonce</code> = replay protection for the <em>ID token</em></li>
+</ul>
+
+<hr>
+
+<!-- QUIZ -->
+<div class="quiz" data-quiz="quiz16">
+  <h3>Knowledge Check</h3>
+
+  <div class="quiz-question" data-correct="b">
+    <p>1. Why is an OAuth 2.0 access token unreliable for authenticating a user?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz16-q0" value="a"> Access tokens are always opaque strings that expire within seconds</label></li>
+      <li><label><input type="radio" name="quiz16-q0" value="b"> Access tokens prove the client was authorized, not who the user is</label></li>
+      <li><label><input type="radio" name="quiz16-q0" value="c"> OAuth explicitly prohibits clients from reading user identity claims</label></li>
+      <li><label><input type="radio" name="quiz16-q0" value="d"> Access tokens never contain a subject claim identifying the user</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="b">
+    <p>2. How does the ID token's <code>aud</code> differ from an access token's <code>aud</code>?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz16-q1" value="a"> The ID token has no audience; it is valid for any receiving party</label></li>
+      <li><label><input type="radio" name="quiz16-q1" value="b"> The ID token targets the client app; the access token targets the API</label></li>
+      <li><label><input type="radio" name="quiz16-q1" value="c"> Both tokens share the same audience — the Authorization Server itself</label></li>
+      <li><label><input type="radio" name="quiz16-q1" value="d"> The access token has no audience claim and is valid for any resource</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="b">
+    <p>3. Which OIDC scope is mandatory in every OpenID Connect authorization request?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz16-q2" value="a"> profile — to get the user's name, picture, and profile details</label></li>
+      <li><label><input type="radio" name="quiz16-q2" value="b"> openid — to signal that this is an authentication request</label></li>
+      <li><label><input type="radio" name="quiz16-q2" value="c"> email — to receive the user's verified email address only</label></li>
+      <li><label><input type="radio" name="quiz16-q2" value="d"> offline_access — to receive a refresh token alongside access tokens</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="b">
+    <p>4. What does the <code>nonce</code> parameter in an OIDC request protect against?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz16-q3" value="a"> Cross-site request forgery targeting the authorization callback endpoint</label></li>
+      <li><label><input type="radio" name="quiz16-q3" value="b"> Replay attacks using a previously captured valid ID token</label></li>
+      <li><label><input type="radio" name="quiz16-q3" value="c"> Brute-force enumeration of valid authorization codes remotely</label></li>
+      <li><label><input type="radio" name="quiz16-q3" value="d"> Man-in-the-middle token interception on the network connection</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+</div>
+
+<script>
+window.quizExplanations = {
+  'quiz16-q0': "OAuth 2.0 was designed for authorization (delegating access), not authentication (proving identity). An access token proves a user authorized a client — not their identity. OAuth says nothing about user identity; that's OIDC's job.",
+  'quiz16-q1': "The ID token's audience is the client_id — it was issued for the client to read user identity. The access token's audience is the Resource Server's identifier. Sending an ID token to an API will fail its audience validation.",
+  'quiz16-q2': "The 'openid' scope is the signal that transforms an OAuth 2.0 request into an OIDC request. Without it, no ID token is issued. All other OIDC scopes (profile, email, etc.) are optional additions on top of 'openid'.",
+  'quiz16-q3': "'state' prevents CSRF on the redirect. 'nonce' prevents ID token replay — an attacker capturing an ID token from one session cannot use it in another, because the nonce only matches the session that generated it."
+};
+</script>
+
+<hr>
+
+<h2>Primary Source</h2>
+<ul>
+  <li>
+    <a href="https://openid.net/specs/openid-connect-core-1_0.html" target="_blank">
+      OpenID Connect Core 1.0 Specification
+    </a>
+    — §1 introduces the motivation clearly; §3.1 is the Auth Code flow; §5 covers claims and scopes
+  </li>
+  <li>
+    <a href="https://oauth.net/articles/authentication/" target="_blank">
+      "OAuth is Not Authentication" — oauth.net
+    </a>
+    — the canonical explanation of the authentication gap
+  </li>
+</ul>
+
+<div class="ask-claude">
+  <strong>Questions? Ask your teacher.</strong>
+  Try: <em>"What's the difference between the ID token and the UserInfo endpoint? When would I use each?"</em>
+  (That's Lesson 17.)
+</div>
+
+<div class="lesson-nav">
+  <a class="prev" href="0015-jwt-anatomy.html">← Lesson 15: JWT Anatomy</a>
+  <a class="next" href="0017-oidc-userinfo-discovery.html">Next → Lesson 17: UserInfo, Discovery &amp; OIDC in Practice</a>
+</div>
+
+<div class="lesson-footer">
+  OAuth &amp; Identity Course · Module 2: OpenID Connect · Lesson 16 ·
+  Spec: <a href="https://openid.net/specs/openid-connect-core-1_0.html" target="_blank">OIDC Core 1.0</a>
+</div>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

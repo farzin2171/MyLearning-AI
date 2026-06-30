@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 19 — Clients & Resources: Config.cs</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    /* ── Three-column config grid ──────────────────────── */
+    .config-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+      margin: 1.2rem 0;
+    }
+    @media (max-width: 640px) { .config-grid { grid-template-columns: 1fr; } }
+
+    .config-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem 1.1rem;
+    }
+    .config-card .card-label {
+      font-family: var(--font-ui);
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--muted);
+      margin-bottom: 0.25rem;
+    }
+    .config-card .card-type {
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 0.85rem;
+      color: var(--accent);
+      margin-bottom: 0.4rem;
+    }
+    .config-card p { font-size: 0.83rem; color: var(--muted); margin: 0; }
+
+    /* ── Property breakdown table ──────────────────────── */
+    .prop-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.84rem;
+      margin: 0.8rem 0 1.2rem;
+    }
+    .prop-table th {
+      font-family: var(--font-ui);
+      text-align: left;
+      border-bottom: 2px solid var(--border);
+      padding: 0.4rem 0.6rem;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+    }
+    .prop-table td {
+      padding: 0.45rem 0.6rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    .prop-table td code { font-size: 0.8rem; }
+    .prop-table tr:last-child td { border-bottom: none; }
+
+    /* ── Grant-type badge ──────────────────────────────── */
+    .grant-badge {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      padding: 0.15rem 0.55rem;
+      border-radius: 12px;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      margin-right: 0.3rem;
+    }
+
+    /* ── Diff-style code block ─────────────────────────── */
+    .code-section {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 1rem 0;
+    }
+    .code-section .code-title {
+      font-family: var(--font-ui);
+      font-size: 0.72rem;
+      padding: 0.4rem 0.9rem;
+      background: var(--border);
+      color: var(--muted);
+      letter-spacing: 0.04em;
+    }
+    .code-section pre {
+      margin: 0;
+      padding: 1rem 1.1rem;
+      background: transparent;
+      border: none;
+      font-size: 0.82rem;
+      line-height: 1.6;
+    }
+
+    /* ── Client comparison panel ───────────────────────── */
+    .client-compare {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin: 1.2rem 0;
+    }
+    @media (max-width: 640px) { .client-compare { grid-template-columns: 1fr; } }
+
+    .client-panel {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .client-panel .panel-head {
+      font-family: var(--font-ui);
+      font-size: 0.78rem;
+      font-weight: 700;
+      padding: 0.5rem 0.9rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    .client-panel pre {
+      margin: 0;
+      padding: 0.85rem 0.9rem;
+      background: var(--code-bg);
+      font-size: 0.78rem;
+      line-height: 1.6;
+      overflow-x: auto;
+    }
+
+    /* flow reuse */
+    .flow { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin: 1rem 0; }
+    .flow-node {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.5rem 0.9rem;
+      font-family: var(--font-ui);
+      font-size: 0.82rem;
+      text-align: center;
+    }
+    .flow-node.highlight { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+    .flow-arrow { color: var(--muted); font-size: 1.1rem; }
+  </style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="../MISSION.md">OAuth &amp; Identity Course</a> › Module 3: Building Duende IS ›
+    <a href="0018-duende-is-setup.html">Lesson 18</a> › Lesson 19
+  </div>
+  <h1>Clients &amp; Resources — <code>Config.cs</code></h1>
+  <div class="meta">
+    <span>~25 minutes</span>
+    <span>Concepts → configuration code</span>
+    <span>Prerequisite: <a href="0018-duende-is-setup.html">Lesson 18</a></span>
+  </div>
+</div>
+
+<p>
+  Every OAuth concept you know has a direct C# representation in Duende IS.
+  They all live in a single static class — <code>Config.cs</code> — that you wire
+  up once during startup. This lesson is about reading and writing that file.
+</p>
+
+<div class="callout">
+  <strong>The three things <code>Config.cs</code> must declare</strong>
+  What <em>scopes</em> exist (your API surface) · What <em>clients</em> exist (who can ask for tokens) ·
+  What <em>identity resources</em> exist (what claims go in the ID token)
+</div>
+
+<hr>
+
+<h2>The Three Configuration Objects</h2>
+
+<div class="config-grid">
+  <div class="config-card">
+    <div class="card-label">API surface</div>
+    <div class="card-type">ApiScope</div>
+    <p>A named permission your API enforces.
+       e.g. <code>calendar.read</code>, <code>contacts.write</code>.
+       Clients request scopes; APIs validate them.</p>
+  </div>
+  <div class="config-card">
+    <div class="card-label">ID token claims</div>
+    <div class="card-type">IdentityResource</div>
+    <p>Governs which user claims appear in the ID token.
+       <code>openid</code> is mandatory.
+       <code>profile</code> adds name/picture. Custom ones add anything.</p>
+  </div>
+  <div class="config-card">
+    <div class="card-label">Token requesters</div>
+    <div class="card-type">Client</div>
+    <p>A registered application that can ask for tokens:
+       a web app, SPA, mobile app, or background service.
+       Each has an ID, secret (if confidential), and allowed grant types.</p>
+  </div>
+</div>
+
+<p>
+  There is also <code>ApiResource</code>, which groups related scopes under one logical API
+  with a shared <code>audience</code> (<code>aud</code>) claim. You can skip it for simple setups
+  — scopes alone are enough to get started. The distinction matters when you have
+  multiple microservices and need each one to accept only its own tokens.
+</p>
+
+<hr>
+
+<h2>Identity Resources — What Claims Go in the ID Token</h2>
+
+<p>
+  Identity resources map an OIDC scope to a set of claims. When a client requests the
+  <code>profile</code> scope, Duende IS knows to include <code>name</code>, <code>given_name</code>,
+  <code>family_name</code>, etc. in the ID token.
+</p>
+
+<div class="code-section">
+  <div class="code-title">Config.cs — IdentityResources</div>
+  <pre><code>public static IEnumerable&lt;IdentityResource&gt; IdentityResources =&gt;
+    new IdentityResource[]
+    {
+        new IdentityResources.OpenId(),   // "sub" claim — mandatory
+        new IdentityResources.Profile(),  // name, given_name, family_name, picture, …
+        new IdentityResources.Email(),    // email, email_verified
+
+        // Custom identity resource: your own scope → your own claims
+        new IdentityResource(
+            name:         "tenant",
+            displayName:  "Tenant membership",
+            userClaims:   new[] { "tenant_id", "tenant_role" }
+        )
+    };</code></pre>
+</div>
+
+<p>
+  The built-in shorthand classes (<code>IdentityResources.OpenId()</code> etc.) are just
+  convenience wrappers — they expand to the same <code>new IdentityResource(…)</code> form.
+  A custom identity resource lets you bundle any set of user claims under one scope name
+  that clients must explicitly request.
+</p>
+
+<hr>
+
+<h2>API Scopes — Your API's Permissions</h2>
+
+<p>
+  API scopes are the permissions your APIs enforce. A client that requests
+  <code>calendar.read</code> gets an access token containing that scope.
+  Your API middleware checks the token carries the right scope before serving the request.
+</p>
+
+<div class="code-section">
+  <div class="code-title">Config.cs — ApiScopes</div>
+  <pre><code>public static IEnumerable&lt;ApiScope&gt; ApiScopes =&gt;
+    new ApiScope[]
+    {
+        new ApiScope("calendar.read",   "Read calendar events"),
+        new ApiScope("calendar.write",  "Create and edit calendar events"),
+        new ApiScope("contacts.read",   "Read contacts"),
+        new ApiScope("contacts.write",  "Create and edit contacts"),
+    };</code></pre>
+</div>
+
+<div class="callout callout-info">
+  <strong>Naming convention</strong>
+  Use <code>resource.action</code> — noun first, then verb. It reads naturally in
+  consent screens ("This app wants to: Read calendar events") and is easy to grep in code.
+</div>
+
+<hr>
+
+<h2>Clients — Who Can Request Tokens</h2>
+
+<p>
+  A <code>Client</code> is a registered entry for each application in your system.
+  Two client types dominate real-world usage:
+</p>
+
+<ul>
+  <li><strong>Client Credentials</strong> — background service, daemon, API-to-API. No user involved.</li>
+  <li><strong>Authorization Code + PKCE</strong> — web app, SPA, or mobile app acting on behalf of a user.</li>
+</ul>
+
+<h3>Key Client Properties</h3>
+
+<table class="prop-table">
+  <thead>
+    <tr>
+      <th>Property</th>
+      <th>What it controls</th>
+      <th>Example</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>ClientId</code></td>
+      <td>Unique identifier for this application</td>
+      <td><code>"calendar-web"</code></td>
+    </tr>
+    <tr>
+      <td><code>ClientSecrets</code></td>
+      <td>Shared secret (confidential clients only). Store hashed.</td>
+      <td><code>new Secret("secret".Sha256())</code></td>
+    </tr>
+    <tr>
+      <td><code>AllowedGrantTypes</code></td>
+      <td>Which OAuth flows this client may use</td>
+      <td><code>GrantTypes.Code</code></td>
+    </tr>
+    <tr>
+      <td><code>AllowedScopes</code></td>
+      <td>Which API scopes this client may request</td>
+      <td><code>{ "calendar.read", "openid" }</code></td>
+    </tr>
+    <tr>
+      <td><code>RedirectUris</code></td>
+      <td>Allowed callback URLs after login (auth code flow only)</td>
+      <td><code>"https://app/callback"</code></td>
+    </tr>
+    <tr>
+      <td><code>RequirePkce</code></td>
+      <td>Enforce PKCE (always <code>true</code> for public clients)</td>
+      <td><code>true</code></td>
+    </tr>
+    <tr>
+      <td><code>AllowOfflineAccess</code></td>
+      <td>Permit refresh tokens (requires <code>offline_access</code> scope)</td>
+      <td><code>true</code></td>
+    </tr>
+    <tr>
+      <td><code>RequireClientSecret</code></td>
+      <td>Set to <code>false</code> for public clients (SPAs, mobile)</td>
+      <td><code>false</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Side-by-Side: Two Client Patterns</h3>
+
+<div class="client-compare">
+  <div class="client-panel">
+    <div class="panel-head">Client Credentials — machine-to-machine</div>
+    <pre><code>new Client
+{
+    ClientId   = "reports-service",
+    ClientName = "Reports Microservice",
+
+    AllowedGrantTypes =
+        GrantTypes.ClientCredentials,
+
+    ClientSecrets =
+    {
+        new Secret(
+          "s3cr3t!".Sha256())
+    },
+
+    AllowedScopes =
+    {
+        "calendar.read",
+        "contacts.read"
+    }
+}</code></pre>
+  </div>
+  <div class="client-panel">
+    <div class="panel-head">Auth Code + PKCE — user-facing web app</div>
+    <pre><code>new Client
+{
+    ClientId   = "calendar-web",
+    ClientName = "Calendar Web App",
+
+    AllowedGrantTypes =
+        GrantTypes.Code,
+    RequirePkce = true,
+    RequireClientSecret = false,
+
+    RedirectUris =
+    {
+        "https://app/callback"
+    },
+    PostLogoutRedirectUris =
+    {
+        "https://app/signout"
+    },
+    AllowedScopes =
+    {
+        IdentityServerConstants
+          .StandardScopes.OpenId,
+        IdentityServerConstants
+          .StandardScopes.Profile,
+        "calendar.read",
+        "calendar.write"
+    },
+    AllowOfflineAccess = true
+}</code></pre>
+  </div>
+</div>
+
+<div class="callout callout-warn">
+  <strong>Never store secrets in plain text in production.</strong>
+  The <code>.Sha256()</code> extension hashes the secret before storage.
+  In production, pull secrets from environment variables or a secrets manager and hash them on the fly.
+</div>
+
+<hr>
+
+<h2>Wiring Config.cs into Program.cs</h2>
+
+<p>
+  All three collections plug into the <code>AddIdentityServer()</code> builder.
+  You saw this skeleton in Lesson 18 — now you know what each method receives:
+</p>
+
+<div class="code-section">
+  <div class="code-title">Program.cs — connecting Config.cs</div>
+  <pre><code>builder.Services.AddIdentityServer()
+    .AddInMemoryIdentityResources(Config.IdentityResources)
+    .AddInMemoryApiScopes(Config.ApiScopes)
+    .AddInMemoryApiResources(Config.ApiResources)   // optional
+    .AddInMemoryClients(Config.Clients)
+    .AddDeveloperSigningCredential();               // dev only — replace in prod</code></pre>
+</div>
+
+<p>
+  <code>AddDeveloperSigningCredential()</code> generates a throwaway RSA key on every startup.
+  It is intentionally unsuitable for production — tokens signed on one run become invalid
+  on the next. In production you provide a real certificate via
+  <code>AddSigningCredential(cert)</code>.
+</p>
+
+<div class="flow" style="justify-content: center;">
+  <div class="flow-node">Config.cs<br><small>Static definitions</small></div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-node highlight">AddIdentityServer()<br><small>DI registration</small></div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-node">Runtime<br><small>Endpoints auto-generated</small></div>
+</div>
+
+<p>
+  Once registered, Duende IS auto-generates the discovery document, JWKS endpoint,
+  authorize endpoint, token endpoint — all from your config. No extra routing code needed.
+</p>
+
+<hr>
+
+<h2>The Full Config.cs — Putting It Together</h2>
+
+<div class="code-section">
+  <div class="code-title">Config.cs — complete example</div>
+  <pre><code>using Duende.IdentityServer.Models;
+
+public static class Config
+{
+    public static IEnumerable&lt;IdentityResource&gt; IdentityResources =&gt;
+        new IdentityResource[]
+        {
+            new IdentityResources.OpenId(),
+            new IdentityResources.Profile(),
+            new IdentityResources.Email(),
+        };
+
+    public static IEnumerable&lt;ApiScope&gt; ApiScopes =&gt;
+        new ApiScope[]
+        {
+            new ApiScope("calendar.read",  "Read calendar events"),
+            new ApiScope("calendar.write", "Create and edit calendar events"),
+        };
+
+    public static IEnumerable&lt;Client&gt; Clients =&gt;
+        new Client[]
+        {
+            // Machine-to-machine: reports service reads calendar data
+            new Client
+            {
+                ClientId          = "reports-service",
+                AllowedGrantTypes = GrantTypes.ClientCredentials,
+                ClientSecrets     = { new Secret("s3cr3t!".Sha256()) },
+                AllowedScopes     = { "calendar.read" }
+            },
+
+            // Interactive: user-facing web application
+            new Client
+            {
+                ClientId              = "calendar-web",
+                AllowedGrantTypes     = GrantTypes.Code,
+                RequirePkce           = true,
+                RequireClientSecret   = false,
+                RedirectUris          = { "https://localhost:5002/signin-oidc" },
+                PostLogoutRedirectUris = { "https://localhost:5002/signout-callback-oidc" },
+                AllowOfflineAccess    = true,
+                AllowedScopes         =
+                {
+                    IdentityServerConstants.StandardScopes.OpenId,
+                    IdentityServerConstants.StandardScopes.Profile,
+                    "calendar.read",
+                    "calendar.write"
+                }
+            }
+        };
+}</code></pre>
+</div>
+
+<hr>
+
+<h2>Knowledge Check</h2>
+
+<div class="quiz" data-quiz="q19">
+
+  <div class="quiz-question" data-correct="b">
+    <p><strong>1.</strong> A nightly reporting service needs to call your calendar API with no user present.
+    Which grant type should its client use?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q19-q0" value="a"> Authorization Code + PKCE</label></li>
+      <li><label><input type="radio" name="q19-q0" value="b"> Client Credentials</label></li>
+      <li><label><input type="radio" name="q19-q0" value="c"> Implicit (legacy)</label></li>
+      <li><label><input type="radio" name="q19-q0" value="d"> Resource Owner Password</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="c">
+    <p><strong>2.</strong> You add <code>calendar.read</code> to <code>ApiScopes</code> in <code>Config.cs</code>
+    but forget to add it to the client's <code>AllowedScopes</code>. What happens when the client
+    requests a token with that scope?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q19-q1" value="a"> The scope is silently ignored and the token is issued without it</label></li>
+      <li><label><input type="radio" name="q19-q1" value="b"> Duende IS adds it automatically since it exists globally</label></li>
+      <li><label><input type="radio" name="q19-q1" value="c"> The token request is rejected with an <code>invalid_scope</code> error</label></li>
+      <li><label><input type="radio" name="q19-q1" value="d"> The token is issued but the scope is stripped from the payload</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="a">
+    <p><strong>3.</strong> What is the difference between an <code>ApiScope</code> and an <code>IdentityResource</code>?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q19-q2" value="a"> ApiScope controls access to APIs (access token); IdentityResource controls claims in the ID token</label></li>
+      <li><label><input type="radio" name="q19-q2" value="b"> IdentityResource controls access to APIs; ApiScope controls claims in the ID token</label></li>
+      <li><label><input type="radio" name="q19-q2" value="c"> They are interchangeable — both end up in the same token</label></li>
+      <li><label><input type="radio" name="q19-q2" value="d"> ApiScope is for OIDC flows; IdentityResource is for OAuth-only flows</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="d">
+    <p><strong>4.</strong> Why is <code>RequirePkce = true</code> set on the web-app client but not the machine-to-machine client?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q19-q3" value="a"> PKCE only works with Client Credentials grant — not auth code flows</label></li>
+      <li><label><input type="radio" name="q19-q3" value="b"> Machine clients have longer-lived tokens so they need PKCE more than web apps</label></li>
+      <li><label><input type="radio" name="q19-q3" value="c"> PKCE is required by GDPR for any flow involving user data</label></li>
+      <li><label><input type="radio" name="q19-q3" value="d"> PKCE protects the auth code redirect, which only exists in Authorization Code flows — Client Credentials has no redirect</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <button class="quiz-btn" data-quiz-submit="q19">Check Answers</button>
+  <div class="quiz-score"></div>
+</div>
+
+<hr>
+
+<h2>Quick Reference</h2>
+
+<table class="prop-table">
+  <thead>
+    <tr>
+      <th>I want to…</th>
+      <th>I configure…</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Define a permission my API enforces</td>
+      <td><code>ApiScope</code> in <code>ApiScopes</code></td>
+    </tr>
+    <tr>
+      <td>Add user claims to the ID token via a scope</td>
+      <td><code>IdentityResource</code> in <code>IdentityResources</code></td>
+    </tr>
+    <tr>
+      <td>Register a background service that calls APIs</td>
+      <td><code>Client</code> with <code>GrantTypes.ClientCredentials</code></td>
+    </tr>
+    <tr>
+      <td>Register a web app that logs users in</td>
+      <td><code>Client</code> with <code>GrantTypes.Code</code> + <code>RequirePkce = true</code></td>
+    </tr>
+    <tr>
+      <td>Allow refresh tokens (stay logged in)</td>
+      <td><code>AllowOfflineAccess = true</code> + <code>offline_access</code> in <code>AllowedScopes</code></td>
+    </tr>
+    <tr>
+      <td>Group related scopes under one API audience</td>
+      <td><code>ApiResource</code> in <code>ApiResources</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<hr>
+
+<h2>Primary Source</h2>
+
+<p>
+  Read the official Duende documentation on defining resources and clients —
+  it is concise, accurate, and directly reinforces this lesson:
+  <a href="https://docs.duendesoftware.com/identityserver/v7/fundamentals/resources/" target="_blank">
+  docs.duendesoftware.com → Fundamentals → Resources</a> and
+  <a href="https://docs.duendesoftware.com/identityserver/v7/fundamentals/clients/" target="_blank">
+  Fundamentals → Clients</a>.
+</p>
+
+<hr>
+
+<h2>What's Next</h2>
+
+<p>
+  You now know how to declare the configuration. The next question is: where do users actually
+  log in? <a href="0020-login-ui.html">Lesson 20</a> covers the Login UI — the Razor Pages
+  (or QuickStart UI) that Duende IS uses to collect credentials and issue the auth code.
+</p>
+
+<div class="callout">
+  <strong>Ask your teacher</strong>
+  Confused about when to use <code>ApiResource</code> vs just <code>ApiScope</code>?
+  Unsure how secrets should be stored in production?
+  Post your question and I'll walk you through it.
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+  window.quizExplanations = {
+    'q19': {
+      0: {
+        a: 'Auth Code is for flows where a user is present and must authenticate. No user = no auth code.',
+        b: 'Correct. Client Credentials is purpose-built for service-to-service calls with no user context.',
+        c: 'Implicit is deprecated and was never suited for server-side services.',
+        d: 'ROPC requires collecting user credentials — the client does not act on its own behalf.'
+      },
+      1: {
+        a: 'Duende IS does not silently ignore missing scope permissions — it enforces the allowlist.',
+        b: "AllowedScopes is per-client. Global registration in ApiScopes doesn't grant client access.",
+        c: "Correct. Duende IS enforces AllowedScopes strictly. The client's requested scope must appear in AllowedScopes.",
+        d: 'Duende IS rejects the request entirely rather than stripping scopes silently.'
+      },
+      2: {
+        a: 'Correct. ApiScopes define what APIs expose (access token payload). IdentityResources define what user claims appear in the ID token.',
+        b: 'These are swapped. IdentityResource is for identity/OIDC claims; ApiScope is for API permissions.',
+        c: 'They serve different token types — ID token vs. access token — and cannot be used interchangeably.',
+        d: 'Both ApiScopes and IdentityResources are used in OIDC flows; the distinction is which token carries the data.'
+      },
+      3: {
+        a: "PKCE works with Auth Code flows, not Client Credentials. The statement is backwards.",
+        b: "Machine clients use Client Credentials — there is no auth code redirect, so PKCE is irrelevant.",
+        c: "PKCE is an OAuth security spec, not a GDPR requirement.",
+        d: "Correct. PKCE binds the authorization request to the token exchange to prevent code interception. No redirect → no PKCE needed."
+      }
+    }
+  };
+</script>
+
+</body>
+</html>

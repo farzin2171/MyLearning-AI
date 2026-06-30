@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 8 — Apply: MVC Configuration & Guest Authentication</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <script src="../assets/quiz.js" defer></script>
+  <style>
+    .step-list { counter-reset: steps; list-style: none; margin: 0.5rem 0 1.4rem 0; padding: 0; }
+    .step-list li {
+      counter-increment: steps;
+      display: grid;
+      grid-template-columns: 2.2rem 1fr;
+      gap: 0.7rem;
+      margin-bottom: 1rem;
+      align-items: start;
+    }
+    .step-list li::before {
+      content: counter(steps);
+      background: var(--accent);
+      color: #fff;
+      border-radius: 50%;
+      width: 2rem; height: 2rem;
+      display: flex; align-items: center; justify-content: center;
+      font-family: var(--font-ui);
+      font-size: 0.82rem;
+      font-weight: 700;
+      flex-shrink: 0;
+      margin-top: 0.15rem;
+    }
+    .arch-row {
+      display: flex;
+      align-items: stretch;
+      gap: 0;
+      margin: 1.4rem 0;
+      font-family: var(--font-ui);
+      font-size: 0.82rem;
+      overflow-x: auto;
+    }
+    .arch-box {
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.7rem 1rem;
+      text-align: center;
+      min-width: 110px;
+      background: var(--surface);
+    }
+    .arch-box.guest   { border-color: #0a9e5c; background: #e8faf0; }
+    .arch-box.ctrl    { border-color: var(--accent); background: #e8f0ff; }
+    .arch-box.helper  { border-color: #7700cc; background: #f7efff; }
+    .arch-box.cookie  { border-color: #8a6000; background: var(--warn-bg); }
+    .arch-box.db      { border-color: #c0392b; background: #fdecea; }
+    .arch-box .label  { font-weight: 700; display: block; margin-bottom: 0.2rem; }
+    .arch-box .sub    { font-size: 0.72rem; color: var(--muted); }
+    .arch-arrow { display: flex; align-items: center; padding: 0 0.3rem; color: var(--muted); font-size: 1.4rem; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin: 1rem 0; }
+    @media (max-width: 600px) { .two-col { grid-template-columns: 1fr; } .arch-row { flex-direction: column; } .arch-arrow { transform: rotate(90deg); } }
+    .file-ref { font-family: var(--font-mono); font-size: 0.78rem; color: var(--muted); display: block; margin-bottom: 0.5rem; }
+    .badge { display: inline-block; font-family: var(--font-ui); font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 20px; margin-left: 0.3rem; vertical-align: middle; }
+    .badge.anon  { background: #fdecea; color: #c0392b; }
+    .badge.auth  { background: var(--success-bg); color: var(--success); }
+    .badge.guest { background: #f7efff; color: #7700cc; }
+  </style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="../lessons/0007-external-providers.html">← Lesson 7: External Providers</a>
+    &nbsp;/&nbsp; Equisoft Identity Learning
+  </div>
+  <h1>Apply: MVC Configuration &amp; Guest Authentication</h1>
+  <div class="meta">
+    <span>Lesson 8 of 8</span>
+    <span>~25 min</span>
+    <span>Authentication · ASP.NET Core MVC · Cookie Auth</span>
+  </div>
+</div>
+
+<p>
+  The <strong>Apply</strong> application is Equisoft's insurance application-filling product. Unlike internal services
+  that always talk to the Identity Gateway, Apply must handle a special case: <em>guests</em> — unauthenticated visitors
+  who fill in a form without ever creating an account. This lesson shows you how the MVC app wires up its authentication
+  stack, and traces the complete guest flow from the first HTTP request to a cookie-authenticated session.
+</p>
+
+<h2>1. How the MVC App Is Configured</h2>
+
+<p>Apply is an ASP.NET Core 6+ MVC application. Authentication is set up in two places: <code>Startup.cs</code> delegates to a separate
+extension method, and the actual scheme registration lives in the authentication infrastructure folder.</p>
+
+<h3>The call chain</h3>
+<span class="file-ref">src/Equisoft.Apply/Startup.cs → ConfigureServices()</span>
+<pre><code>// Startup.cs — two delegation calls
+services.ConfigureAuthentication(Configuration, Environment);
+services.ConfigureAuthorization();</code></pre>
+
+<span class="file-ref">src/Equisoft.Apply/Infrastructure/Authentication/Extensions/IServiceCollectionExtensions.cs</span>
+
+<p>Inside <code>ConfigureAuthentication()</code>, three schemes are registered:</p>
+
+<div class="two-col">
+  <div class="service-card">
+    <h4>Cookie <span class="badge auth">default</span></h4>
+    <div class="tag">CookieAuthenticationDefaults</div>
+    <p>Used for browser sessions. Both regular (OIDC) users and guest users end up with a cookie.
+    The cookie name is <code>Apply.{tenantKey}</code>.</p>
+  </div>
+  <div class="service-card">
+    <h4>OpenID Connect <span class="badge auth">challenge</span></h4>
+    <div class="tag">OpenIdConnectDefaults</div>
+    <p>Used as the default challenge scheme — any unauthorised browser request triggers a redirect
+    to the Identity Gateway at <code>https://api.dev.equisoft.com/identity</code>.</p>
+  </div>
+</div>
+<div class="service-card" style="margin-bottom:1rem">
+  <h4>JWT Bearer</h4>
+  <div class="tag">JwtBearerDefaults</div>
+  <p>Used for machine-to-machine API calls (service accounts). Authority is the same Identity Gateway.</p>
+</div>
+
+<h3>Key OIDC settings</h3>
+<table>
+  <thead><tr><th>Setting</th><th>Value (dev)</th><th>Why it matters</th></tr></thead>
+  <tbody>
+    <tr><td><code>Authority</code></td><td><code>https://api.dev.equisoft.com/identity</code></td><td>Discovery document endpoint</td></tr>
+    <tr><td><code>ClientId</code></td><td><code>apply</code></td><td>Registered client in the Identity Gateway</td></tr>
+    <tr><td><code>ResponseType</code></td><td><code>code id_token</code></td><td>Hybrid flow — code for access token, id_token for immediate identity</td></tr>
+    <tr><td><code>Scopes</code></td><td><code>offline_access apply authzapi assistmgntapi…</code></td><td>Requests a refresh token and access to downstream APIs</td></tr>
+    <tr><td><code>SaveTokens</code></td><td><code>true</code></td><td>Persists access/refresh tokens in the auth properties (then saved to DB)</td></tr>
+    <tr><td><code>GetClaimsFromUserInfoEndpoint</code></td><td><code>true</code></td><td>Fetches full user profile from IDG after login</td></tr>
+  </tbody>
+</table>
+
+<div class="callout warn">
+  <strong>Custom OIDC Handler</strong>
+  The default <code>OpenIdConnectHandler</code> is replaced with <code>IframeAwareOpenIdConnectHandler</code>.
+  When a request comes from inside an iframe (detected via query param <code>popupAuth=true</code>), it redirects to
+  <code>/account/IframeLogin</code> instead of the standard OIDC redirect, opening a popup window for login.
+  This prevents the login page from being trapped inside an iframe.
+</div>
+
+<h3>Cookie authentication events</h3>
+<span class="file-ref">src/Equisoft.Apply/Infrastructure/Authentication/Functions/CookieAuthenticationFunctions.cs</span>
+<table>
+  <thead><tr><th>Event</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>OnSignedIn</code></td><td>Upserts user record in DB from claims (creates if not exists, updates name/email if changed)</td></tr>
+    <tr><td><code>OnSigningOut</code></td><td>Deletes stored refresh tokens; for AJAX returns 401 instead of redirect</td></tr>
+    <tr><td><code>OnValidatePrincipal</code></td><td>On every request: checks if access token is expired and refreshes it — <strong>skipped entirely for guest users</strong></td></tr>
+  </tbody>
+</table>
+
+<div class="callout key">
+  <strong>Key insight — guests skip token validation</strong>
+  Inside <code>OnValidatePrincipal</code> the very first check is <code>if (isGuest) return;</code>.
+  Guest sessions have no access token at all — they are pure cookie sessions, never touching the Identity Gateway.
+</div>
+
+<h2>2. The Guest Flow — End to End</h2>
+
+<p>
+  A guest user is someone who fills in a form without logging in. The flow creates a local-only "user" record in Apply's
+  database, signs the browser in with a cookie, and never involves the Identity Gateway.
+</p>
+
+<div class="arch-row">
+  <div class="arch-box guest"><span class="label">Browser</span><span class="sub">no session</span></div>
+  <div class="arch-arrow">→</div>
+  <div class="arch-box ctrl"><span class="label">GuestController</span><span class="sub">POST /guest/forms</span></div>
+  <div class="arch-arrow">→</div>
+  <div class="arch-box helper"><span class="label">GuestAuthenticationHelper</span><span class="sub">GetOrCreate…</span></div>
+  <div class="arch-arrow">→</div>
+  <div class="arch-box db"><span class="label">UserService</span><span class="sub">CreateGuestUserAsync</span></div>
+  <div class="arch-arrow">→</div>
+  <div class="arch-box cookie"><span class="label">Cookie</span><span class="sub">HttpContext.SignInAsync</span></div>
+</div>
+
+<h3>Step-by-step</h3>
+<ol class="step-list">
+  <li>
+    <div>
+      <strong>Request arrives at <code>POST /guest/forms</code></strong> with a <code>formCode</code> body parameter.
+      The action is decorated <code>[AllowAnonymous]</code> — the <code>[Authorize]</code> on the class is overridden.
+      No cookie or token is required to reach this endpoint.
+    </div>
+  </li>
+  <li>
+    <div>
+      <strong>GuestController calls <code>_guestAuthenticationHelper.GetOrCreateAndSignInGuestAsync()</code></strong>.
+      If the user is already authenticated (e.g. revisiting after 30 days), the existing user is returned immediately —
+      no duplicate user is created.
+    </div>
+  </li>
+  <li>
+    <div>
+      <strong>GuestAuthenticationHelper creates a new User row</strong> via <code>IUserService.CreateGuestUserAsync()</code>:
+      <pre><code>var guestUser = new User {
+    ExternalId = Guid.NewGuid().ToString(), // random GUID, no IDG involved
+    IsGuest    = true,
+    TenantId   = _tenantContext.Tenant.Id,
+    CreatedOn  = DateTime.UtcNow
+};</code></pre>
+      Note: <code>ExternalId</code> is normally required to be non-null for regular users.
+      A special validation branch allows null/empty only when <code>IsGuest = true</code>.
+    </div>
+  </li>
+  <li>
+    <div>
+      <strong>Claims are assembled locally</strong> — no round-trip to IDG:
+      <pre><code>new Claim(ClaimTypes.NameIdentifier,      guestUser.Id.ToString())
+new Claim("externalobjectidentifier",     guestUser.ExternalId)
+new Claim("isGuest",                      "true")         // ← the sentinel
+new Claim("tenant",                       tenant.Key)
+// Optional if available:
+new Claim(ClaimTypes.GivenName,           guestUser.FirstName)
+new Claim(ClaimTypes.Surname,             guestUser.LastName)
+new Claim(ClaimTypes.Email,               guestUser.Email)</code></pre>
+    </div>
+  </li>
+  <li>
+    <div>
+      <strong>Cookie sign-in</strong> via <code>HttpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal)</code>
+      with <code>IsPersistent = true</code> and an expiry of <strong>30 days</strong>.
+      The browser receives a Set-Cookie header: <code>Apply.{tenantKey}</code>, HttpOnly, SameSite=None, Secure.
+    </div>
+  </li>
+  <li>
+    <div>
+      <strong>Form is created</strong> in Apply's database via <code>IApplicationService.CreateApplicationAsync()</code>
+      with the guest as both owner and creator. The controller then redirects to <code>/Form/{id}</code>.
+    </div>
+  </li>
+</ol>
+
+<div class="callout tip">
+  <strong>GET shortcut: <code>/guest/start?formCode=…</code></strong>
+  The <code>[HttpGet] Start()</code> action simply delegates to the same <code>CreateForm()</code> logic.
+  This allows shareable links instead of requiring a form POST.
+</div>
+
+<h2>3. Guest User Lifecycle</h2>
+
+<p>Guest users are ephemeral by design. Three things limit their lifespan:</p>
+
+<div class="two-col">
+  <div class="service-card">
+    <h4>Cookie expiry — 30 days</h4>
+    <div class="tag">Persistent cookie</div>
+    <p>After 30 days of inactivity the browser cookie expires and the guest can no longer access their form without
+    re-entering via a <code>/guest/start</code> link.</p>
+  </div>
+  <div class="service-card">
+    <h4>CleanupGuestRecordsHostedService — 90 days</h4>
+    <div class="tag">Background service · daily</div>
+    <p>Runs once a day. Deletes guest <code>User</code> rows (and their forms) that haven't been accessed in 90+ days.
+    This prevents unbounded DB growth from abandoned guest sessions.</p>
+  </div>
+</div>
+
+<h2>4. Hosted Services Registered at Startup</h2>
+
+<p>Beyond guest cleanup, several other background services run in Apply:</p>
+
+<table>
+  <thead><tr><th>Service</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>RefreshTokenRequestHostedService</code></td><td>Proactively refreshes expiring access tokens for active users</td></tr>
+    <tr><td><code>CleanUpExpiredTokensHostedService</code></td><td>Removes stale token rows from the DB</td></tr>
+    <tr><td><code>DeleteApplicationsHostedService</code></td><td>Purges expired application forms</td></tr>
+    <tr><td><code>CleanupGuestRecordsHostedService</code></td><td>Purges guest users inactive 90+ days</td></tr>
+    <tr><td><code>ExpiringGrantsNotificationHostedService</code></td><td>Sends notifications before grants expire</td></tr>
+  </tbody>
+</table>
+
+<h2>5. Configuration: Dev vs Production</h2>
+
+<table>
+  <thead><tr><th>Setting</th><th>Dev (<code>appsettings.Development.json</code>)</th><th>Production</th></tr></thead>
+  <tbody>
+    <tr><td>DB connection</td><td><code>(LocalDb)\MSSQLLocalDB</code></td><td>Injected via environment / secret store</td></tr>
+    <tr><td>Redis</td><td><code>localhost:6379</code></td><td>Managed Redis cluster</td></tr>
+    <tr><td>IDG URL</td><td><code>https://api.dev.equisoft.com/identity</code></td><td><code>https://api.equisoft.com/identity</code></td></tr>
+    <tr><td>ClientSecret</td><td><code>service.secret</code></td><td>Vault-managed secret</td></tr>
+    <tr><td>MessageQueue</td><td><code>InMemory</code></td><td><code>AzureServiceBus</code></td></tr>
+    <tr><td>HTTPS</td><td>Redirect enforced unless <code>AllowHttp=true</code></td><td>Always enforced</td></tr>
+  </tbody>
+</table>
+
+<h2>6. How It All Fits Together</h2>
+
+<div class="arch-row">
+  <div class="arch-box guest"><span class="label">Guest Browser</span><span class="sub">/guest/start</span></div>
+  <div class="arch-arrow">→</div>
+  <div class="arch-box ctrl"><span class="label">Apply MVC</span><span class="sub">cookie auth only</span></div>
+  <div class="arch-arrow">↔</div>
+  <div class="arch-box db"><span class="label">Apply DB</span><span class="sub">User (IsGuest=true)</span></div>
+</div>
+
+<div class="arch-row" style="margin-top:0.5rem">
+  <div class="arch-box" style="background:#fff4e8; border-color:#d07000"><span class="label">Regular Browser</span><span class="sub">/account/login</span></div>
+  <div class="arch-arrow">→</div>
+  <div class="arch-box ctrl"><span class="label">Apply MVC</span><span class="sub">OIDC + cookie</span></div>
+  <div class="arch-arrow">↔</div>
+  <div class="arch-box" style="background:#e8f0ff; border-color:var(--accent)"><span class="label">Identity Gateway</span><span class="sub">IDG / Duende IS</span></div>
+</div>
+
+<p style="margin-top:0.8rem">
+  The critical distinction: a regular user's cookie wraps an <em>OIDC session</em> backed by access/refresh tokens stored in DB,
+  while a guest's cookie wraps a <em>local-only session</em> with no tokens at all.
+  The <code>isGuest</code> claim is the sentinel that lets all downstream code — cookie validation, authorization handlers, services — know which path to take.
+</p>
+
+<h2>7. Knowledge Check</h2>
+
+<div class="quiz" data-quiz>
+  <h3>Quiz — Apply Guest Auth</h3>
+
+  <div class="quiz-question" data-question>
+    <p>Which claim tells Apply code that the current user is a guest (no IDG session)?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q1" value="a"> <code>sub</code> — standard OIDC subject claim</label></li>
+      <li><label><input type="radio" name="q1" value="b"> <code>isGuest = "true"</code> — custom Apply claim</label></li>
+      <li><label><input type="radio" name="q1" value="c"> <code>role = "guest"</code> — standard role claim</label></li>
+      <li><label><input type="radio" name="q1" value="d"> <code>amr = "guest"</code> — auth method reference</label></li>
+    </ul>
+    <button class="quiz-btn" data-check>Check</button>
+    <div class="quiz-feedback" data-feedback data-answer="b">
+      ✓ Correct. The custom claim <code>isGuest</code> is set to <code>"true"</code> and is checked in
+      <code>CookieAuthenticationFunctions.OnValidatePrincipal</code> to skip token refresh logic.
+    </div>
+  </div>
+
+  <div class="quiz-question" data-question>
+    <p>What happens during <code>OnValidatePrincipal</code> when <code>isGuest = "true"</code>?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q2" value="a"> Guest is redirected to the Identity Gateway to get a token</label></li>
+      <li><label><input type="radio" name="q2" value="b"> The method returns immediately, skipping all token validation</label></li>
+      <li><label><input type="radio" name="q2" value="c"> A new guest user record is created in the database</label></li>
+      <li><label><input type="radio" name="q2" value="d"> The cookie is rejected and the user is signed out</label></li>
+    </ul>
+    <button class="quiz-btn" data-check>Check</button>
+    <div class="quiz-feedback" data-feedback data-answer="b">
+      ✓ Correct. The code short-circuits with <code>return;</code> for guest users — there is no access token to validate or refresh.
+    </div>
+  </div>
+
+  <div class="quiz-question" data-question>
+    <p>What is the <em>default challenge scheme</em> in Apply and what triggers it?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q3" value="a"> Cookie auth — triggered on every request automatically</label></li>
+      <li><label><input type="radio" name="q3" value="b"> JWT Bearer — triggered when an API receives a Bearer token</label></li>
+      <li><label><input type="radio" name="q3" value="c"> OpenID Connect — triggered when an unauthenticated browser hits an [Authorize] endpoint</label></li>
+      <li><label><input type="radio" name="q3" value="d"> Guest auth — triggered when no formCode query param is provided</label></li>
+    </ul>
+    <button class="quiz-btn" data-check>Check</button>
+    <div class="quiz-feedback" data-feedback data-answer="c">
+      ✓ Correct. The default challenge scheme is OpenID Connect. When an unauthenticated request hits an <code>[Authorize]</code>
+      endpoint, ASP.NET Core challenges with OIDC, redirecting the browser to the Identity Gateway.
+    </div>
+  </div>
+
+  <div class="quiz-question" data-question>
+    <p>After how many days of inactivity does <code>CleanupGuestRecordsHostedService</code> delete a guest user's record?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q4" value="a"> 7 days — matches session timeout default</label></li>
+      <li><label><input type="radio" name="q4" value="b"> 30 days — matches cookie persistence duration</label></li>
+      <li><label><input type="radio" name="q4" value="c"> 60 days — matches quarterly billing cycle</label></li>
+      <li><label><input type="radio" name="q4" value="d"> 90 days — configured retention period</label></li>
+    </ul>
+    <button class="quiz-btn" data-check>Check</button>
+    <div class="quiz-feedback" data-feedback data-answer="d">
+      ✓ Correct. 90 days. Note that the cookie itself expires in 30 days, so a guest whose cookie expired can still have their
+      DB record persist for another 60 days before cleanup.
+    </div>
+  </div>
+
+  <div class="quiz-score" data-score></div>
+</div>
+
+<h2>8. Quick Reference — Files to Know</h2>
+
+<table>
+  <thead><tr><th>File</th><th>What's in it</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>Startup.cs</code></td>
+      <td>Delegates to <code>ConfigureAuthentication()</code> and <code>ConfigureAuthorization()</code></td>
+    </tr>
+    <tr>
+      <td><code>Infrastructure/Authentication/Extensions/<br>IServiceCollectionExtensions.cs</code></td>
+      <td>Registers Cookie + OIDC + JWT Bearer schemes; wires <code>IframeAwareOpenIdConnectHandler</code></td>
+    </tr>
+    <tr>
+      <td><code>Infrastructure/Authentication/Functions/<br>CookieAuthenticationFunctions.cs</code></td>
+      <td>OnSignedIn, OnSigningOut, OnValidatePrincipal (token refresh logic; guest short-circuit)</td>
+    </tr>
+    <tr>
+      <td><code>Infrastructure/Authentication/Handlers/<br>IframeAwareOpenIdConnectHandler.cs</code></td>
+      <td>Detects iframe context and redirects to popup login instead of inline OIDC redirect</td>
+    </tr>
+    <tr>
+      <td><code>Controllers/GuestController.cs</code></td>
+      <td><code>POST /guest/forms</code> and <code>GET /guest/start</code> — entry points for guest flow</td>
+    </tr>
+    <tr>
+      <td><code>Infrastructure/Authentication/Helpers/<br>GuestAuthenticationHelper.cs</code></td>
+      <td>Creates guest user + claims + signs in via cookie</td>
+    </tr>
+    <tr>
+      <td><code>Services/Users/UserService.cs</code></td>
+      <td><code>CreateGuestUserAsync()</code> — creates <code>User</code> row with <code>IsGuest=true</code></td>
+    </tr>
+    <tr>
+      <td><code>HostedServices/CleanupGuestRecordsHostedService.cs</code></td>
+      <td>Daily job — purges guest users inactive 90+ days</td>
+    </tr>
+    <tr>
+      <td><code>Domain/Identity/ClaimTypes.cs</code></td>
+      <td>Custom claim name constants including <code>IsGuest = "isGuest"</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="ask-claude">
+  <strong>Questions for your teacher</strong>
+  Stuck on something? Some good follow-up questions to ask:
+  <ul style="margin-top:0.5rem">
+    <li>"How does the <code>FormOperationAuthorizationHandler</code> behave differently for guest users?"</li>
+    <li>"What happens when a guest tries to access a form they don't own?"</li>
+    <li>"Walk me through the OIDC hybrid flow step-by-step for a <em>regular</em> Apply user."</li>
+    <li>"Why does Apply use SameSite=None on its cookie?"</li>
+    <li>"How does the <code>IframeAwareOpenIdConnectHandler</code> actually detect it's inside an iframe?"</li>
+  </ul>
+</div>
+
+<div class="lesson-nav">
+  <a href="../lessons/0007-external-providers.html">← Lesson 7: External Providers</a>
+  <span class="next"></span>
+</div>
+
+<div class="lesson-footer">
+  Equisoft Identity Learning · Lesson 8 · Based on
+  <code>Applications.Apply</code> source code ·
+  Ask your teacher agent for clarification on anything above.
+</div>
+
+</body>
+</html>

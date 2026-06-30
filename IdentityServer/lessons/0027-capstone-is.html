@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 27 — Capstone: Build WorkSpace IS</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    /* ── Numbered step ─────────────────────────────────── */
+    .steps { counter-reset: step; margin: 1.2rem 0; }
+    .step-block {
+      counter-increment: step;
+      display: grid;
+      grid-template-columns: 2.4rem 1fr;
+      gap: 0 0.85rem;
+      margin-bottom: 1.8rem;
+      align-items: start;
+    }
+    .step-num {
+      width: 2.4rem;
+      height: 2.4rem;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-ui);
+      font-weight: 700;
+      font-size: 0.9rem;
+      flex-shrink: 0;
+      margin-top: 0.05rem;
+    }
+    .step-content h3 {
+      margin-top: 0.1rem;
+      margin-bottom: 0.5rem;
+      font-size: 1rem;
+    }
+    .step-content p { margin-bottom: 0.6rem; }
+
+    /* ── Code section ──────────────────────────────────── */
+    .code-section {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 0.7rem 0;
+    }
+    .code-section .code-title {
+      font-family: var(--font-ui);
+      font-size: 0.72rem;
+      padding: 0.35rem 0.9rem;
+      background: var(--border);
+      color: var(--muted);
+      letter-spacing: 0.04em;
+    }
+    .code-section pre {
+      margin: 0;
+      padding: 0.9rem 1.1rem;
+      font-size: 0.8rem;
+      line-height: 1.65;
+    }
+
+    /* ── Verify box ────────────────────────────────────── */
+    .verify-box {
+      border: 1px solid var(--success);
+      background: var(--success-bg);
+      border-radius: var(--radius);
+      padding: 0.75rem 1rem;
+      font-size: 0.83rem;
+      margin: 0.7rem 0;
+    }
+    .verify-box strong { color: var(--success); display: block; margin-bottom: 0.2rem; }
+
+    /* ── File tree ─────────────────────────────────────── */
+    .file-tree {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.85rem 1.1rem;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      line-height: 1.8;
+      margin: 0.7rem 0;
+    }
+    .file-tree .new { color: var(--accent); font-weight: 700; }
+    .file-tree .gen { color: var(--muted); }
+  </style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="../MISSION.md">OAuth &amp; Identity Course</a> › Module 5: Capstone ›
+    <a href="0026-capstone-design.html">Lesson 26</a> › Lesson 27
+  </div>
+  <h1>Capstone — Build WorkSpace IS</h1>
+  <div class="meta">
+    <span>~35 minutes</span>
+    <span>Hands-on build</span>
+    <span>Prerequisites: <a href="0026-capstone-design.html">Lesson 26 design</a>, .NET 8 SDK, Duende IS templates</span>
+  </div>
+</div>
+
+<p>
+  Design complete. Scaffold starts now. By the end of this lesson you will have a running
+  Duende IS instance at <code>https://localhost:5001</code> that issues tokens for the
+  WorkSpace system — discoverable, loginable, and enriching tokens with tenant claims.
+</p>
+
+<div class="callout">
+  <strong>Build order</strong>
+  Follow the steps in sequence. Each builds on the previous.
+  Run the verify check after each step before moving on.
+</div>
+
+<hr>
+
+<div class="steps">
+
+  <!-- STEP 1 -->
+  <div class="step-block">
+    <div class="step-num">1</div>
+    <div class="step-content">
+      <h3>Create the project and install packages</h3>
+      <div class="code-section">
+        <div class="code-title">Terminal</div>
+        <pre><code># Create a minimal ASP.NET Core project
+dotnet new web -n WorkSpaceIS
+cd WorkSpaceIS
+
+# Core IS package
+dotnet add package Duende.IdentityServer
+
+# Install the template tool to scaffold the QuickStart UI
+dotnet tool install -g Duende.IdentityServer.Templates
+
+# Scaffold login / logout / consent Razor Pages into the project
+duende new ui</code></pre>
+      </div>
+      <p>The <code>duende new ui</code> command adds:</p>
+      <div class="file-tree">
+        <span class="gen">WorkSpaceIS/</span><br>
+        <span class="new">├── Pages/Account/Login.cshtml + .cs</span><br>
+        <span class="new">├── Pages/Account/Logout.cshtml + .cs</span><br>
+        <span class="new">├── Pages/Consent.cshtml + .cs</span><br>
+        <span class="new">├── Pages/Diagnostics.cshtml (dev helper)</span><br>
+        <span class="new">└── Services/TestUserStore.cs</span>
+      </div>
+      <div class="verify-box">
+        <strong>Verify →</strong>
+        <code>ls Pages/Account/Login.cshtml</code> exists. The project should build with
+        <code>dotnet build</code> before continuing.
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 2 -->
+  <div class="step-block">
+    <div class="step-num">2</div>
+    <div class="step-content">
+      <h3>Write Config.cs</h3>
+      <p>
+        Create <code>Config.cs</code> at the project root. This is the exact configuration
+        from the <a href="0026-capstone-design.html">Lesson 26 design</a> — nothing new here,
+        just typed out in full.
+      </p>
+      <div class="code-section">
+        <div class="code-title">Config.cs</div>
+        <pre><code>using Duende.IdentityServer.Models;
+
+public static class Config
+{
+    public static IEnumerable&lt;IdentityResource&gt; IdentityResources =&gt; new[]
+    {
+        new IdentityResources.OpenId(),
+        new IdentityResources.Profile(),
+        new IdentityResources.Email(),
+    };
+
+    public static IEnumerable&lt;ApiScope&gt; ApiScopes =&gt; new[]
+    {
+        new ApiScope("calendar.read",
+                     displayName: "Read calendar events",
+                     userClaims:  new[] { "tenant_id", "role" }),
+        new ApiScope("calendar.write",
+                     displayName: "Write calendar events",
+                     userClaims:  new[] { "tenant_id", "role" }),
+        new ApiScope("contacts.read",
+                     displayName: "Read contacts",
+                     userClaims:  new[] { "tenant_id" }),
+        new ApiScope("contacts.write",
+                     displayName: "Write contacts",
+                     userClaims:  new[] { "tenant_id" }),
+    };
+
+    public static IEnumerable&lt;Client&gt; Clients =&gt; new[]
+    {
+        // Interactive web client
+        new Client
+        {
+            ClientId              = "workspace-web",
+            ClientName            = "WorkSpace Web App",
+            AllowedGrantTypes     = GrantTypes.Code,
+            RequirePkce           = true,
+            RequireClientSecret   = false,
+            RedirectUris          = { "https://localhost:5002/signin-oidc" },
+            PostLogoutRedirectUris = { "https://localhost:5002/signout-callback-oidc" },
+            AllowOfflineAccess    = true,
+            AllowedScopes         =
+            {
+                "openid", "profile", "email",
+                "calendar.read", "calendar.write",
+                "contacts.read"
+            }
+        },
+
+        // Background reporting worker
+        new Client
+        {
+            ClientId          = "reports-worker",
+            ClientName        = "WorkSpace Reports Worker",
+            AllowedGrantTypes = GrantTypes.ClientCredentials,
+            ClientSecrets     = { new Secret("worker-secret".Sha256()) },
+            AllowedScopes     = { "calendar.read", "contacts.read" }
+        }
+    };
+}</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 3 -->
+  <div class="step-block">
+    <div class="step-num">3</div>
+    <div class="step-content">
+      <h3>Add test users with tenant claims</h3>
+      <p>
+        Open <code>Services/TestUserStore.cs</code> — it already has a static user list.
+        Replace the default users with two WorkSpace users, each in a different tenant:
+      </p>
+      <div class="code-section">
+        <div class="code-title">Services/TestUserStore.cs — user list (replace existing list)</div>
+        <pre><code>public static class TestUsers
+{
+    public static List&lt;TestUser&gt; Users =&gt; new()
+    {
+        new TestUser
+        {
+            SubjectId = "sub-alice-001",
+            Username  = "alice",
+            Password  = "alice",
+            Claims    =
+            {
+                new Claim("name",      "Alice Smith"),
+                new Claim("email",     "alice@acme.example"),
+                new Claim("tenant_id", "tenant-acme"),
+                new Claim("role",      "admin")
+            }
+        },
+        new TestUser
+        {
+            SubjectId = "sub-bob-002",
+            Username  = "bob",
+            Password  = "bob",
+            Claims    =
+            {
+                new Claim("name",      "Bob Jones"),
+                new Claim("email",     "bob@globex.example"),
+                new Claim("tenant_id", "tenant-globex"),
+                new Claim("role",      "user")
+            }
+        }
+    };
+}</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 4 -->
+  <div class="step-block">
+    <div class="step-num">4</div>
+    <div class="step-content">
+      <h3>Implement IProfileService</h3>
+      <p>
+        Create <code>Services/WorkSpaceProfileService.cs</code>. This reads the session's
+        <code>sub</code>, finds the user in <code>TestUsers</code>, and adds their
+        <code>tenant_id</code> and <code>role</code> when those claim types are requested.
+      </p>
+      <div class="code-section">
+        <div class="code-title">Services/WorkSpaceProfileService.cs</div>
+        <pre><code>using Duende.IdentityServer.Extensions;
+using Duende.IdentityServer.Models;
+using Duende.IdentityServer.Services;
+
+public class WorkSpaceProfileService : IProfileService
+{
+    public Task GetProfileDataAsync(ProfileDataRequestContext context)
+    {
+        var sub  = context.Subject.GetSubjectId();
+        var user = TestUsers.Users.FirstOrDefault(u => u.SubjectId == sub);
+
+        if (user == null) return Task.CompletedTask;
+
+        var claims = new List&lt;Claim&gt;();
+
+        if (context.RequestedClaimTypes.Contains("tenant_id"))
+        {
+            var tenantClaim = user.Claims.FirstOrDefault(c => c.Type == "tenant_id");
+            if (tenantClaim != null) claims.Add(tenantClaim);
+        }
+
+        if (context.RequestedClaimTypes.Contains("role"))
+        {
+            var roleClaim = user.Claims.FirstOrDefault(c => c.Type == "role");
+            if (roleClaim != null) claims.Add(roleClaim);
+        }
+
+        if (context.RequestedClaimTypes.Contains("email"))
+        {
+            var emailClaim = user.Claims.FirstOrDefault(c => c.Type == "email");
+            if (emailClaim != null) claims.Add(emailClaim);
+        }
+
+        context.IssuedClaims.AddRange(claims);
+        return Task.CompletedTask;
+    }
+
+    public Task IsActiveAsync(IsActiveContext context)
+    {
+        var sub  = context.Subject.GetSubjectId();
+        context.IsActive = TestUsers.Users.Any(u => u.SubjectId == sub);
+        return Task.CompletedTask;
+    }
+}</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 5 -->
+  <div class="step-block">
+    <div class="step-num">5</div>
+    <div class="step-content">
+      <h3>Wire everything in Program.cs</h3>
+      <div class="code-section">
+        <div class="code-title">Program.cs</div>
+        <pre><code>var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddRazorPages();
+
+builder.Services
+    .AddIdentityServer(options =>
+    {
+        options.Events.RaiseErrorEvents       = true;
+        options.Events.RaiseInformationEvents = true;
+        options.Events.RaiseFailureEvents     = true;
+        options.Events.RaiseSuccessEvents     = true;
+    })
+    .AddInMemoryIdentityResources(Config.IdentityResources)
+    .AddInMemoryApiScopes(Config.ApiScopes)
+    .AddInMemoryClients(Config.Clients)
+    .AddTestUsers(TestUsers.Users)          // wires the QuickStart user store
+    .AddProfileService&lt;WorkSpaceProfileService&gt;()
+    .AddDeveloperSigningCredential();
+
+var app = builder.Build();
+
+app.UseStaticFiles();
+app.UseRouting();
+app.UseIdentityServer();    // includes UseAuthentication
+app.UseAuthorization();
+app.MapRazorPages().RequireAuthorization();
+
+app.Run();</code></pre>
+      </div>
+      <div class="verify-box">
+        <strong>Verify →</strong>
+        <code>dotnet build</code> must succeed with zero errors before the next step.
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 6 -->
+  <div class="step-block">
+    <div class="step-num">6</div>
+    <div class="step-content">
+      <h3>Configure HTTPS port and run</h3>
+      <div class="code-section">
+        <div class="code-title">Properties/launchSettings.json — set port 5001</div>
+        <pre><code>{
+  "profiles": {
+    "WorkSpaceIS": {
+      "commandName": "Project",
+      "applicationUrl": "https://localhost:5001",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      }
+    }
+  }
+}</code></pre>
+      </div>
+      <div class="code-section">
+        <div class="code-title">Terminal</div>
+        <pre><code>dotnet run</code></pre>
+      </div>
+    </div>
+  </div>
+
+</div><!-- end .steps -->
+
+<hr>
+
+<h2>Three Verification Checks</h2>
+
+<p>With IS running, open these URLs in a browser:</p>
+
+<div class="verify-box">
+  <strong>Check 1 — Discovery document</strong>
+  <code>https://localhost:5001/.well-known/openid-configuration</code><br>
+  You should see JSON with <code>issuer</code>, <code>authorization_endpoint</code>,
+  <code>token_endpoint</code>, <code>jwks_uri</code>.
+</div>
+
+<div class="verify-box">
+  <strong>Check 2 — JWKS</strong>
+  <code>https://localhost:5001/.well-known/openid-configuration/jwks</code><br>
+  You should see the public key JSON. This is what the Calendar API will fetch
+  to validate token signatures.
+</div>
+
+<div class="verify-box">
+  <strong>Check 3 — Login page</strong>
+  <code>https://localhost:5001/Account/Login</code><br>
+  You should see the QuickStart login form. Log in as <strong>alice / alice</strong>.
+  After login, the diagnostics page at <code>/Diagnostics</code> shows the active session claims.
+</div>
+
+<hr>
+
+<h2>Knowledge Check</h2>
+
+<div class="quiz" data-quiz="q27">
+
+  <div class="quiz-question" data-correct="b">
+    <p><strong>1.</strong> The <code>.AddTestUsers(TestUsers.Users)</code> call in
+    <code>Program.cs</code> does two things. Which pair is correct?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q27-q0" value="a"> Registers the discovery document and populates the JWKS endpoint</label></li>
+      <li><label><input type="radio" name="q27-q0" value="b"> Wires the QuickStart login page's credential validator and seeds the test user list</label></li>
+      <li><label><input type="radio" name="q27-q0" value="c"> Creates the signing certificate and registers the token endpoint route</label></li>
+      <li><label><input type="radio" name="q27-q0" value="d"> Enables refresh tokens and adds the offline_access scope automatically</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="c">
+    <p><strong>2.</strong> Alice logs in and requests <code>scope=calendar.read</code>.
+    Which claim will appear in her access token that would <em>not</em> appear
+    if Bob (a different tenant) requested the same scope?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q27-q1" value="a"> The <code>iss</code> claim — it is set per-user by the profile service</label></li>
+      <li><label><input type="radio" name="q27-q1" value="b"> The <code>scope</code> claim — it is unique to each user session</label></li>
+      <li><label><input type="radio" name="q27-q1" value="c"> The <code>tenant_id</code> claim — its <em>value</em> differs (tenant-acme vs tenant-globex)</label></li>
+      <li><label><input type="radio" name="q27-q1" value="d"> The <code>exp</code> claim — it is calculated from the user's last-login timestamp</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="d">
+    <p><strong>3.</strong> Why does <code>WorkSpaceProfileService</code> filter by
+    <code>context.RequestedClaimTypes</code> before adding claims?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q27-q2" value="a"> To prevent the IS from throwing a duplicate-claim exception on the token</label></li>
+      <li><label><input type="radio" name="q27-q2" value="b"> Because <code>context.IssuedClaims</code> is read-only and rejects unregistered claim types</label></li>
+      <li><label><input type="radio" name="q27-q2" value="c"> To reduce database round-trips by only loading what the client has requested</label></li>
+      <li><label><input type="radio" name="q27-q2" value="d"> To avoid adding claims to tokens that didn't declare them in scope config — emitting only what was requested</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+</div>
+
+<button class="quiz-btn" data-quiz-submit="q27">Check Answers</button>
+<div class="quiz-score"></div>
+
+<hr>
+
+<h2>Primary Source</h2>
+
+<p>
+  Follow along with the official Duende quickstart — the project structure you just built
+  mirrors Quickstart 2:
+  <a href="https://docs.duendesoftware.com/identityserver/v7/quickstarts/2_interactive/" target="_blank">
+  Interactive Applications with ASP.NET Core</a>.
+</p>
+
+<hr>
+
+<h2>What's Next</h2>
+
+<p>
+  WorkSpace IS is running and issuing tokens. Next is
+  <a href="0028-capstone-apis.html">Lesson 28 — Build the Calendar API and Reports Worker</a>:
+  a JWT Bearer API that validates those tokens and enforces scope and ownership policies,
+  plus the background service that acquires its own token to read data.
+</p>
+
+<div class="callout">
+  <strong>Ask your teacher</strong>
+  Build step failed? Token claims not appearing as expected?
+  Paste the error or the decoded token from
+  <a href="https://jwt.ms" target="_blank">jwt.ms</a>
+  and I'll diagnose it with you.
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+  window.quizExplanations = {
+    'q27': {
+      0: {
+        a: "The discovery document and JWKS are auto-generated by Duende IS from Config.cs — AddTestUsers has no role in that.",
+        b: "Correct. AddTestUsers wires the IResourceOwnerPasswordValidator and IProfileService shim that the QuickStart login page uses to validate credentials and look up the user list.",
+        c: "AddDeveloperSigningCredential() handles the signing key. AddTestUsers is about users only.",
+        d: "Offline access is controlled by AllowOfflineAccess on the Client config. AddTestUsers does not affect token lifetimes or scopes."
+      },
+      1: {
+        a: "iss (issuer) is set to the IS URL — the same for all tokens, regardless of user.",
+        b: "scope reflects what was requested — Alice and Bob request the same scope, so scope values would match.",
+        c: "Correct. Both tokens contain a tenant_id claim (declared in calendar.read's userClaims), but the value differs: tenant-acme for Alice and tenant-globex for Bob. This is what APIs use for row-level isolation.",
+        d: "exp is calculated from the token issuance time + configured lifetime. It has nothing to do with last-login."
+      },
+      2: {
+        a: "Duende IS does not throw on duplicate claims — they are simply both included in the token.",
+        b: "context.IssuedClaims is a writable List<Claim>. There is no restriction on unregistered types at that layer.",
+        c: "This is a valid performance reason but not the primary one — the scope config declares which claims are relevant, and the filter enforces that contract.",
+        d: "Correct. RequestedClaimTypes is derived from the scope declarations in Config.cs. Only filtering to that set ensures you don't accidentally emit claims that the scope config didn't advertise — keeping tokens predictable and minimal."
+      }
+    }
+  };
+</script>
+
+</body>
+</html>

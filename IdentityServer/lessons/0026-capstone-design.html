@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 26 — Capstone Design: The Full System</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    /* ── System architecture map ───────────────────────── */
+    .arch-map {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: auto auto auto;
+      gap: 0.7rem;
+      margin: 1.3rem 0;
+    }
+    @media (max-width: 640px) { .arch-map { grid-template-columns: 1fr; } }
+
+    .arch-node {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.7rem 0.85rem;
+      background: var(--surface);
+    }
+    .arch-node.is-node  { border-color: var(--accent); grid-column: 2; }
+    .arch-node.web-node { grid-column: 1; }
+    .arch-node.cal-node { grid-column: 2; }
+    .arch-node.con-node { grid-column: 3; }
+    .arch-node.rep-node { grid-column: 1; grid-row: 3; }
+
+    .arch-node .node-type {
+      font-family: var(--font-ui);
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--muted);
+      margin-bottom: 0.2rem;
+    }
+    .arch-node .node-name {
+      font-weight: 700;
+      font-size: 0.95rem;
+      margin-bottom: 0.2rem;
+    }
+    .arch-node .node-name.accent { color: var(--accent); }
+    .arch-node .node-port {
+      font-family: var(--font-mono);
+      font-size: 0.74rem;
+      color: var(--muted);
+    }
+    .arch-node ul {
+      margin: 0.4rem 0 0 1.2rem;
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+    .arch-node li { margin-bottom: 0.18rem; }
+
+    /* ── Arrow row between rows ────────────────────────── */
+    .arch-arrows {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.7rem;
+      text-align: center;
+      font-size: 1.1rem;
+      color: var(--muted);
+      margin: -0.3rem 0;
+    }
+
+    /* ── Decision table ────────────────────────────────── */
+    .decision-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.83rem;
+      margin: 0.8rem 0 1.3rem;
+    }
+    .decision-table th {
+      font-family: var(--font-ui);
+      text-align: left;
+      border-bottom: 2px solid var(--border);
+      padding: 0.4rem 0.6rem;
+      font-size: 0.73rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+    }
+    .decision-table td {
+      padding: 0.42rem 0.6rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    .decision-table td code { font-size: 0.78rem; }
+    .decision-table tr:last-child td { border-bottom: none; }
+    .decision-table .section-head td {
+      background: var(--code-bg);
+      font-family: var(--font-ui);
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      padding: 0.3rem 0.6rem;
+    }
+
+    /* ── Code section ──────────────────────────────────── */
+    .code-section {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 1rem 0;
+    }
+    .code-section .code-title {
+      font-family: var(--font-ui);
+      font-size: 0.72rem;
+      padding: 0.4rem 0.9rem;
+      background: var(--border);
+      color: var(--muted);
+      letter-spacing: 0.04em;
+    }
+    .code-section pre {
+      margin: 0;
+      padding: 1rem 1.1rem;
+      font-size: 0.81rem;
+      line-height: 1.65;
+    }
+
+    /* ── Checklist ─────────────────────────────────────── */
+    .build-checklist {
+      list-style: none;
+      margin: 0.8rem 0;
+      padding: 0;
+    }
+    .build-checklist li {
+      display: flex;
+      gap: 0.7rem;
+      align-items: baseline;
+      padding: 0.38rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.84rem;
+    }
+    .build-checklist li:last-child { border-bottom: none; }
+    .build-checklist .step-tag {
+      font-family: var(--font-ui);
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      min-width: 3.5rem;
+      flex-shrink: 0;
+    }
+    .build-checklist .step-tag.l27 { color: #7b5ea7; }
+    .build-checklist .step-tag.l28 { color: #1a7a3a; }
+    .build-checklist .step-tag.l29 { color: #0055cc; }
+  </style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="../MISSION.md">OAuth &amp; Identity Course</a> › Module 5: Capstone ›
+    <a href="0025-policy-based-authz.html">Lesson 25</a> › Lesson 26
+  </div>
+  <h1>Capstone Design — The Full System</h1>
+  <div class="meta">
+    <span>~20 minutes</span>
+    <span>Architecture + planning</span>
+    <span>No code this lesson — design first</span>
+  </div>
+</div>
+
+<p>
+  Modules 1–4 taught you every piece in isolation: OAuth flows, token anatomy, Duende IS
+  configuration, login UI, external providers, claims enrichment, JWT Bearer APIs,
+  client credentials, and policy enforcement.
+  The capstone assembles them into a working system from a blank folder.
+</p>
+
+<div class="callout">
+  <strong>Design before you build</strong>
+  This lesson is the blueprint. Read it carefully — every decision here
+  is one you'll execute in Lessons 27–29. No tooling or code yet.
+</div>
+
+<hr>
+
+<h2>What We're Building — "WorkSpace"</h2>
+
+<p>
+  WorkSpace is a fictional productivity platform: a web app for users,
+  two protected backend APIs, a reporting service that calls the APIs
+  without a user, and one Duende IS instance that secures all of it.
+</p>
+
+<div class="arch-map">
+  <!-- Row 1: IS in center -->
+  <div></div>
+  <div class="arch-node is-node">
+    <div class="node-type">Authorization Server</div>
+    <div class="node-name accent">WorkSpace IS</div>
+    <div class="node-port">https://localhost:5001</div>
+    <ul>
+      <li>Issues all tokens</li>
+      <li>Duende IS 7.x</li>
+      <li>QuickStart login UI</li>
+    </ul>
+  </div>
+  <div></div>
+
+  <!-- Row 2: arrows down -->
+  <div class="arch-arrows" style="grid-column: 1 / -1;">
+    <span>↕</span>
+    <span>↕</span>
+    <span>↕</span>
+  </div>
+
+  <!-- Row 3: three clients/APIs -->
+  <div class="arch-node web-node">
+    <div class="node-type">Web Client (OIDC)</div>
+    <div class="node-name">WorkSpace Web</div>
+    <div class="node-port">https://localhost:5002</div>
+    <ul>
+      <li>ASP.NET Core MVC</li>
+      <li>OIDC login via IS</li>
+      <li>Calls Calendar API</li>
+    </ul>
+  </div>
+  <div class="arch-node cal-node">
+    <div class="node-type">Resource Server</div>
+    <div class="node-name">Calendar API</div>
+    <div class="node-port">https://localhost:5003</div>
+    <ul>
+      <li>JWT Bearer auth</li>
+      <li>Scope: calendar.read/write</li>
+      <li>Policy: tenant ownership</li>
+    </ul>
+  </div>
+  <div class="arch-node con-node">
+    <div class="node-type">Resource Server</div>
+    <div class="node-name">Contacts API</div>
+    <div class="node-port">https://localhost:5004</div>
+    <ul>
+      <li>JWT Bearer auth</li>
+      <li>Scope: contacts.read/write</li>
+      <li>Policy: same-tenant only</li>
+    </ul>
+  </div>
+
+  <!-- Row 4: arrows -->
+  <div class="arch-arrows" style="grid-column: 1 / -1;">
+    <span>↓ client credentials</span>
+    <span></span>
+    <span></span>
+  </div>
+
+  <!-- Row 5: reporting service (bottom-left) -->
+  <div class="arch-node rep-node" style="grid-row: 5; grid-column: 1;">
+    <div class="node-type">Background Service</div>
+    <div class="node-name">Reports Worker</div>
+    <div class="node-port">no HTTP port</div>
+    <ul>
+      <li>Client Credentials only</li>
+      <li>Reads Calendar + Contacts</li>
+      <li>No user context</li>
+    </ul>
+  </div>
+</div>
+
+<hr>
+
+<h2>Every Design Decision — One Table</h2>
+
+<table class="decision-table">
+  <thead>
+    <tr><th>What</th><th>Decision</th><th>Why</th></tr>
+  </thead>
+  <tbody>
+    <tr class="section-head"><td colspan="3">Clients</td></tr>
+    <tr>
+      <td>WorkSpace Web</td>
+      <td><code>GrantTypes.Code</code> + PKCE, <code>RequireClientSecret = false</code></td>
+      <td>Public client running in user's browser flow; no secret needed</td>
+    </tr>
+    <tr>
+      <td>Reports Worker</td>
+      <td><code>GrantTypes.ClientCredentials</code> + hashed secret</td>
+      <td>Machine-to-machine; no user present</td>
+    </tr>
+
+    <tr class="section-head"><td colspan="3">Scopes</td></tr>
+    <tr>
+      <td>Calendar API surface</td>
+      <td><code>calendar.read</code>, <code>calendar.write</code></td>
+      <td>Separate read/write so clients can be scoped minimally</td>
+    </tr>
+    <tr>
+      <td>Contacts API surface</td>
+      <td><code>contacts.read</code>, <code>contacts.write</code></td>
+      <td>Same pattern — each API owns its scope namespace</td>
+    </tr>
+    <tr>
+      <td>Identity scopes</td>
+      <td><code>openid</code>, <code>profile</code>, <code>email</code></td>
+      <td>Standard OIDC; web app needs user identity in ID token</td>
+    </tr>
+
+    <tr class="section-head"><td colspan="3">Claims</td></tr>
+    <tr>
+      <td>Access token carries</td>
+      <td><code>sub</code>, <code>scope</code>, <code>tenant_id</code>, <code>role</code></td>
+      <td>APIs need tenant to enforce row-level isolation</td>
+    </tr>
+    <tr>
+      <td>ID token carries</td>
+      <td><code>sub</code>, <code>name</code>, <code>email</code></td>
+      <td>Web app needs to display user info; auth claims stay in access token</td>
+    </tr>
+
+    <tr class="section-head"><td colspan="3">Authorization policies</td></tr>
+    <tr>
+      <td>Calendar API — read</td>
+      <td><code>RequireClaim("scope", "calendar.read")</code></td>
+      <td>Simple scope policy — any tenant can read their own events</td>
+    </tr>
+    <tr>
+      <td>Calendar API — delete</td>
+      <td>Custom <code>EventOwnerRequirement</code> (imperative)</td>
+      <td>Must check the specific event's <code>tenant_id</code> against token's <code>tenant_id</code></td>
+    </tr>
+    <tr>
+      <td>Reports Worker</td>
+      <td>Scope only — no user context in token</td>
+      <td>Machine tokens carry scopes, not user roles</td>
+    </tr>
+
+    <tr class="section-head"><td colspan="3">Users</td></tr>
+    <tr>
+      <td>User store (development)</td>
+      <td>TestUserStore (QuickStart UI)</td>
+      <td>Hard-coded users; swap for real DB in production</td>
+    </tr>
+    <tr>
+      <td>Profile enrichment</td>
+      <td><code>IProfileService</code> reads <code>tenant_id</code> + <code>role</code> from test dict</td>
+      <td>Both Calendar and Contacts APIs need these to enforce isolation</td>
+    </tr>
+
+    <tr class="section-head"><td colspan="3">Token signing</td></tr>
+    <tr>
+      <td>Development</td>
+      <td><code>AddDeveloperSigningCredential()</code></td>
+      <td>Throwaway key — fine for local dev and tests</td>
+    </tr>
+    <tr>
+      <td>Production (future)</td>
+      <td><code>AddSigningCredential(X509Certificate2)</code></td>
+      <td>Stable key surviving restarts; JWKS cache remains valid</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr>
+
+<h2>The Full Config.cs Sketch</h2>
+
+<div class="code-section">
+  <div class="code-title">Config.cs — complete capstone configuration</div>
+  <pre><code>public static class Config
+{
+    public static IEnumerable&lt;IdentityResource&gt; IdentityResources =&gt; new[]
+    {
+        new IdentityResources.OpenId(),
+        new IdentityResources.Profile(),
+        new IdentityResources.Email(),
+    };
+
+    public static IEnumerable&lt;ApiScope&gt; ApiScopes =&gt; new[]
+    {
+        new ApiScope("calendar.read",   "Read calendar events",
+                     userClaims: new[] { "tenant_id", "role" }),
+        new ApiScope("calendar.write",  "Write calendar events",
+                     userClaims: new[] { "tenant_id", "role" }),
+        new ApiScope("contacts.read",   "Read contacts",
+                     userClaims: new[] { "tenant_id" }),
+        new ApiScope("contacts.write",  "Write contacts",
+                     userClaims: new[] { "tenant_id" }),
+    };
+
+    public static IEnumerable&lt;Client&gt; Clients =&gt; new[]
+    {
+        // Interactive web app
+        new Client
+        {
+            ClientId            = "workspace-web",
+            AllowedGrantTypes   = GrantTypes.Code,
+            RequirePkce         = true,
+            RequireClientSecret = false,
+            RedirectUris        = { "https://localhost:5002/signin-oidc" },
+            PostLogoutRedirectUris = { "https://localhost:5002/signout-callback-oidc" },
+            AllowOfflineAccess  = true,
+            AllowedScopes       =
+            {
+                "openid", "profile", "email",
+                "calendar.read", "calendar.write",
+            }
+        },
+
+        // Background reporting service
+        new Client
+        {
+            ClientId          = "reports-worker",
+            AllowedGrantTypes = GrantTypes.ClientCredentials,
+            ClientSecrets     = { new Secret("worker-secret".Sha256()) },
+            AllowedScopes     = { "calendar.read", "contacts.read" }
+        }
+    };
+}</code></pre>
+</div>
+
+<hr>
+
+<h2>Build Order — Lessons 27–29</h2>
+
+<ul class="build-checklist">
+  <li>
+    <span class="step-tag l27">L 27</span>
+    <div><strong>WorkSpace IS</strong> — scaffold IS project, add Config.cs, scaffold QuickStart UI, wire IProfileService, verify discovery doc at <code>/connect/authorize</code></div>
+  </li>
+  <li>
+    <span class="step-tag l28">L 28</span>
+    <div><strong>Calendar API</strong> — add JWT Bearer, scope policy, custom <code>EventOwnerRequirement</code>, verify 401/403 responses with a test token</div>
+  </li>
+  <li>
+    <span class="step-tag l28">L 28</span>
+    <div><strong>Reports Worker</strong> — add <code>Duende.AccessTokenManagement</code>, wire named <code>HttpClient</code>, verify token caching</div>
+  </li>
+  <li>
+    <span class="step-tag l29">L 29</span>
+    <div><strong>WorkSpace Web</strong> — add OIDC auth (<code>AddOpenIdConnect</code>), login/logout, call Calendar API with user's token, display events</div>
+  </li>
+  <li>
+    <span class="step-tag l29">L 29</span>
+    <div><strong>End-to-end smoke test</strong> — log in as a user, see calendar events, verify Reports Worker reads data without a user, verify 403 on wrong tenant</div>
+  </li>
+</ul>
+
+<hr>
+
+<h2>Quick Recall — Design Decisions</h2>
+
+<div class="quiz" data-quiz="q26">
+
+  <div class="quiz-question" data-correct="b">
+    <p><strong>1.</strong> Why is <code>RequireClientSecret = false</code> set on
+    the WorkSpace Web client?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q26-q0" value="a"> The web app stores its secret in the user's browser cookie for security</label></li>
+      <li><label><input type="radio" name="q26-q0" value="b"> Web apps following Auth Code + PKCE are public clients — PKCE replaces the secret</label></li>
+      <li><label><input type="radio" name="q26-q0" value="c"> Duende IS does not support secrets for Authorization Code clients</label></li>
+      <li><label><input type="radio" name="q26-q0" value="d"> The client secret is stored server-side in the Contacts API instead</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="c">
+    <p><strong>2.</strong> The Reports Worker token will not contain a <code>role</code>
+    claim even though <code>calendar.read</code> scope declares <code>role</code> in
+    <code>userClaims</code>. Why?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q26-q1" value="a"> Client Credentials tokens always omit user claims due to the OAuth spec</label></li>
+      <li><label><input type="radio" name="q26-q1" value="b"> The Reports Worker did not request the role scope in its token request</label></li>
+      <li><label><input type="radio" name="q26-q1" value="c"> There is no authenticated user — IProfileService has no sub to look up role data from</label></li>
+      <li><label><input type="radio" name="q26-q1" value="d"> IProfileService is not called for Client Credentials tokens at all</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="d">
+    <p><strong>3.</strong> Why does the Calendar API's delete endpoint use imperative
+    authorization instead of a named policy attribute?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q26-q2" value="a"> Delete endpoints cannot use [Authorize] attributes in ASP.NET Core</label></li>
+      <li><label><input type="radio" name="q26-q2" value="b"> Imperative authorization is faster — it skips the policy pipeline entirely</label></li>
+      <li><label><input type="radio" name="q26-q2" value="c"> The policy name would conflict with the scope policy on the same controller</label></li>
+      <li><label><input type="radio" name="q26-q2" value="d"> Ownership must be checked against the specific loaded event — the resource is not known at attribute-definition time</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+</div>
+
+<button class="quiz-btn" data-quiz-submit="q26">Check Answers</button>
+<div class="quiz-score"></div>
+
+<hr>
+
+<h2>What's Next</h2>
+
+<p>
+  Design locked. Build starts with
+  <a href="0027-capstone-is.html">Lesson 27 — Building WorkSpace IS</a>:
+  scaffolding the Duende IS project, wiring Config.cs, adding the QuickStart UI,
+  and verifying the discovery document and token endpoint respond correctly.
+</p>
+
+<div class="callout">
+  <strong>Ask your teacher</strong>
+  Any design decisions you'd make differently for your real system? Want to discuss
+  how to structure the Config.cs for a system with many more clients or scopes?
+  Ask before we start building.
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+  window.quizExplanations = {
+    'q26': {
+      0: {
+        a: "Storing secrets in browser cookies would expose them. Public clients deliberately have no secret.",
+        b: "Correct. Public clients (browser-based web apps, SPAs, mobile apps) cannot store a secret securely. PKCE provides equivalent protection for the auth code flow without requiring one.",
+        c: "Duende IS supports secrets on Code clients — it's the client type (public vs confidential) that determines whether a secret is required.",
+        d: "Client secrets are never stored in other services. Each client has its own credentials."
+      },
+      1: {
+        a: "The OAuth spec does not categorically exclude user claims from Client Credentials tokens. IProfileService is called, but there is no user to load claims for.",
+        b: "Scope names and claim type names are different concepts — you cannot request 'role' as a scope.",
+        c: "Correct. Client Credentials has no authenticated user. IProfileService.GetProfileDataAsync is called but ctx.Subject.GetSubjectId() returns the client's ID, not a user's. Your user store lookup returns null, so no role claim is added.",
+        d: "IProfileService IS called for Client Credentials tokens — but with a subject that represents the client, not a user. The role lookup simply returns nothing."
+      },
+      2: {
+        a: "Delete endpoints support [Authorize] like any other endpoint.",
+        b: "Imperative authorization goes through the same policy pipeline — it is not faster.",
+        c: "Multiple policies on the same controller are additive and valid — no conflict arises.",
+        d: "Correct. Whether the user owns this specific event can only be checked after loading the event from the database. The attribute fires before the action body runs, so the resource is unavailable. Imperative authorization inside the action body solves this."
+      }
+    }
+  };
+</script>
+
+</body>
+</html>

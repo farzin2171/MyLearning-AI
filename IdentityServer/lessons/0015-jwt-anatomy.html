@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 15 — JWT Anatomy: Inside the Token</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    /* ── JWT visual ─────────────────────────────────────── */
+    .jwt-display {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      line-height: 1.6;
+      background: #1e1e2e;
+      color: #cdd6f4;
+      border-radius: var(--radius);
+      padding: 1.1rem 1.3rem;
+      margin: 1rem 0 1.4rem;
+      overflow-x: auto;
+      word-break: break-all;
+    }
+    .jwt-header    { color: #f38ba8; }
+    .jwt-dot       { color: #6c7086; }
+    .jwt-payload   { color: #a6e3a1; }
+    .jwt-signature { color: #89b4fa; }
+
+    .jwt-key    { color: #cba6f7; }
+    .jwt-string { color: #a6e3a1; }
+    .jwt-number { color: #fab387; }
+    .jwt-bool   { color: #89dceb; }
+
+    .part-label {
+      display: inline-block;
+      font-family: var(--font-ui);
+      font-size: 0.72rem;
+      padding: 0.1rem 0.5rem;
+      border-radius: 3px;
+      margin-right: 0.4rem;
+      font-weight: 600;
+    }
+    .part-label.header    { background: #f38ba8; color: #1e1e2e; }
+    .part-label.payload   { background: #a6e3a1; color: #1e1e2e; }
+    .part-label.signature { background: #89b4fa; color: #1e1e2e; }
+
+    /* ── Validation checklist ───────────────────────────── */
+    .checklist { list-style: none; margin: 0.5rem 0 1rem; padding: 0; }
+    .checklist li {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.6rem;
+      padding: 0.45rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.92rem;
+    }
+    .checklist li:last-child { border-bottom: none; }
+    .check-num {
+      flex-shrink: 0;
+      width: 1.4rem;
+      height: 1.4rem;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-ui);
+      font-weight: 700;
+      font-size: 0.72rem;
+      margin-top: 0.1rem;
+    }
+    .checklist .claim-name {
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      color: var(--accent);
+      min-width: 4rem;
+    }
+
+    /* ── JWKS flow ──────────────────────────────────────── */
+    .jwks-flow {
+      background: var(--code-bg);
+      border-radius: var(--radius);
+      padding: 0.9rem 1.1rem;
+      margin: 0.8rem 0 1.2rem;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      line-height: 2;
+    }
+    .jwks-comment { color: var(--muted); font-style: italic; font-family: var(--font-body); font-size: 0.82rem; }
+  </style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="../MISSION.md">OAuth &amp; Identity Course</a> › Module 1: OAuth Foundations ›
+    <a href="0014-grant-types.html">Lesson 14</a> › Lesson 15
+  </div>
+  <h1>JWT Anatomy — Inside the Token</h1>
+  <div class="meta">
+    <span>~25 minutes</span>
+    <span>Conceptual + interactive</span>
+    <span>Prerequisite: <a href="0013-authorization-code-flow.html">Lesson 13</a></span>
+  </div>
+</div>
+
+<p>
+  Every OAuth access token and OpenID Connect ID token you will encounter in this course is a
+  <strong>JWT</strong> — a JSON Web Token. You've seen them referenced in every lesson so far;
+  now you'll open one up. Understanding JWT structure is a prerequisite for building a Duende
+  IdentityServer and for writing correct token validation code.
+</p>
+
+<div class="callout warn">
+  <strong>JWTs are not encrypted by default</strong>
+  A JWT is digitally <em>signed</em> (tamper-proof) but not encrypted (not confidential). Anyone can
+  decode the payload without a key. Never put secrets — passwords, PII that shouldn't be exposed,
+  internal system details — in JWT claims unless you're using a JWE (encrypted JWT).
+</div>
+
+<hr>
+
+<h2>The Three-Part Structure</h2>
+
+<p>
+  A JWT is three Base64URL-encoded strings joined by dots:
+</p>
+
+<div style="margin: 1rem 0 0.5rem; font-family: var(--font-ui); font-size: 0.85rem;">
+  <span class="part-label header">header</span>
+  <span class="part-label payload">payload</span>
+  <span class="part-label signature">signature</span>
+</div>
+
+<div class="jwt-display"><span class="jwt-header">eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImtleS0yMDI0LTAxIn0</span><span class="jwt-dot">.</span><span class="jwt-payload">eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJzdWIiOiJ1c3ItNDIiLCJhdWQiOiJodHRwczovL2FwaS5leGFtcGxlLmNvbSIsImV4cCI6MTcxNzE3MDAwMCwiaWF0IjoxNzE3MTY2NDAwLCJqdGkiOiJ1dWlkLWFiY2QiLCJzY29wZSI6ImNhbGVuZGFyOnJlYWQgZW1haWwifQ</span><span class="jwt-dot">.</span><span class="jwt-signature">SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c</span></div>
+
+<p>
+  Paste any JWT at <a href="https://jwt.io" target="_blank">jwt.io</a> to decode it instantly.
+  The site decodes the Base64URL on the left and verifies the signature on the right.
+</p>
+
+<hr>
+
+<h2>Part 1: The Header</h2>
+
+<p>Decoded, the header above is:</p>
+
+<div class="jwt-display">{<br>
+  &nbsp;&nbsp;<span class="jwt-key">"alg"</span>: <span class="jwt-string">"RS256"</span>,<br>
+  &nbsp;&nbsp;<span class="jwt-key">"typ"</span>: <span class="jwt-string">"JWT"</span>,<br>
+  &nbsp;&nbsp;<span class="jwt-key">"kid"</span>: <span class="jwt-string">"key-2024-01"</span><br>
+}</div>
+
+<table>
+  <thead><tr><th>Claim</th><th>Meaning</th><th>What to know</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>alg</code></td>
+      <td>Signing algorithm</td>
+      <td><code>RS256</code> = RSA + SHA-256 (asymmetric). The Authorization Server signs with a private key; Resource Servers verify with the public key. Prefer over <code>HS256</code> (symmetric, requires sharing the secret).</td>
+    </tr>
+    <tr>
+      <td><code>typ</code></td>
+      <td>Token type</td>
+      <td>Always <code>JWT</code> for standard tokens. Some systems use <code>at+JWT</code> for access tokens per <a href="https://www.rfc-editor.org/rfc/rfc9068" target="_blank">RFC 9068</a>.</td>
+    </tr>
+    <tr>
+      <td><code>kid</code></td>
+      <td>Key ID</td>
+      <td>Identifies <em>which</em> public key to use for verification. The Authorization Server rotates keys over time; the <code>kid</code> tells the Resource Server which entry in the JWKS endpoint to use.</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr>
+
+<h2>Part 2: The Payload (Claims)</h2>
+
+<p>Decoded payload:</p>
+
+<div class="jwt-display">{<br>
+  &nbsp;&nbsp;<span class="jwt-key">"iss"</span>: <span class="jwt-string">"https://auth.example.com"</span>,<br>
+  &nbsp;&nbsp;<span class="jwt-key">"sub"</span>: <span class="jwt-string">"usr-42"</span>,<br>
+  &nbsp;&nbsp;<span class="jwt-key">"aud"</span>: <span class="jwt-string">"https://api.example.com"</span>,<br>
+  &nbsp;&nbsp;<span class="jwt-key">"exp"</span>: <span class="jwt-number">1717170000</span>,<br>
+  &nbsp;&nbsp;<span class="jwt-key">"iat"</span>: <span class="jwt-number">1717166400</span>,<br>
+  &nbsp;&nbsp;<span class="jwt-key">"jti"</span>: <span class="jwt-string">"uuid-abcd"</span>,<br>
+  &nbsp;&nbsp;<span class="jwt-key">"scope"</span>: <span class="jwt-string">"calendar:read email"</span><br>
+}</div>
+
+<p>
+  These are <em>claims</em> — statements the Authorization Server is making about the token.
+  They are defined in <a href="https://www.rfc-editor.org/rfc/rfc7519#section-4.1" target="_blank">RFC 7519 §4.1</a>.
+  See the <a href="../reference/jwt-claims-cheatsheet.html">JWT Claims Reference</a> for a complete table.
+</p>
+
+<table>
+  <thead><tr><th>Claim</th><th>Name</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><code>iss</code></td><td>Issuer</td><td>The Authorization Server that issued this token. Validate this matches the expected AS URL.</td></tr>
+    <tr><td><code>sub</code></td><td>Subject</td><td>The principal the token represents — usually the user's unique ID. In Client Credentials tokens, it's the <code>client_id</code>.</td></tr>
+    <tr><td><code>aud</code></td><td>Audience</td><td>Who the token is <em>for</em>. The Resource Server MUST reject any token whose <code>aud</code> does not include its own identifier.</td></tr>
+    <tr><td><code>exp</code></td><td>Expiration</td><td>Unix timestamp. The token MUST NOT be accepted at or after this time.</td></tr>
+    <tr><td><code>iat</code></td><td>Issued At</td><td>Unix timestamp when the token was issued. Used for age checks.</td></tr>
+    <tr><td><code>jti</code></td><td>JWT ID</td><td>Unique identifier for this token. Used by the AS to enable revocation; can be checked against a denylist.</td></tr>
+    <tr><td><code>scope</code></td><td>Scope</td><td>Space-separated list of approved OAuth scopes. The Resource Server checks this before serving a request.</td></tr>
+  </tbody>
+</table>
+
+<hr>
+
+<h2>Part 3: The Signature</h2>
+
+<p>
+  The signature is computed over the encoded header and payload:
+</p>
+
+<pre><code>signature = RSA.sign(
+  SHA256( base64url(header) + "." + base64url(payload) ),
+  authorizationServer.privateKey
+)</code></pre>
+
+<p>
+  If anyone modifies even a single byte of the header or payload, the signature will not match when
+  verified — the token is rejected. The private key never leaves the Authorization Server.
+</p>
+
+<h3>How Resource Servers get the public key — JWKS</h3>
+
+<p>
+  Every compliant Authorization Server publishes its public keys at a <strong>JWKS endpoint</strong>
+  (JSON Web Key Set). The Resource Server fetches keys from here, caches them, and uses them for
+  verification.
+</p>
+
+<div class="jwks-flow">
+  <span class="jwks-comment">Discovery document (auto-generated by Duende IS):</span><br>
+  GET https://auth.example.com/.well-known/openid-configuration<br>
+  <br>
+  <span class="jwks-comment">→ returns JSON including:</span><br>
+  "jwks_uri": "https://auth.example.com/.well-known/jwks"<br>
+  <br>
+  <span class="jwks-comment">JWKS endpoint lists all current public keys:</span><br>
+  GET https://auth.example.com/.well-known/jwks<br>
+  <br>
+  <span class="jwks-comment">→ returns JSON like:</span><br>
+  { "keys": [ { "kty": "RSA", "kid": "key-2024-01", "n": "...", "e": "AQAB" } ] }
+</div>
+
+<p>
+  The <code>kid</code> in the JWT header matches a key in the JWKS list. If the Resource Server
+  sees an unknown <code>kid</code>, it refreshes its key cache — this is how key rotation works
+  transparently.
+</p>
+
+<hr>
+
+<h2>The Validation Checklist</h2>
+
+<p>
+  Accepting a JWT with a valid signature is <strong>not enough</strong>. A Resource Server must
+  check all of the following. Skipping even one check creates a real vulnerability.
+</p>
+
+<ul class="checklist">
+  <li>
+    <span class="check-num">1</span>
+    <span>
+      <strong>Signature</strong> — verify using the public key matching the token's <code>kid</code>.
+      Fetch from JWKS if not cached.
+    </span>
+  </li>
+  <li>
+    <span class="check-num">2</span>
+    <span>
+      <span class="claim-name">iss</span>
+      must exactly match the Authorization Server's URL you trust.
+      A token from a different AS (even a valid one) must be rejected.
+    </span>
+  </li>
+  <li>
+    <span class="check-num">3</span>
+    <span>
+      <span class="claim-name">aud</span>
+      must contain <em>this</em> Resource Server's identifier.
+      Without this check, a token issued for API-A can be replayed against API-B.
+    </span>
+  </li>
+  <li>
+    <span class="check-num">4</span>
+    <span>
+      <span class="claim-name">exp</span>
+      must be in the future. Use server time; allow a small clock-skew tolerance
+      (30–60 seconds) for distributed systems.
+    </span>
+  </li>
+  <li>
+    <span class="check-num">5</span>
+    <span>
+      <span class="claim-name">nbf</span>
+      (if present) must be in the past — the token is not yet valid before this time.
+    </span>
+  </li>
+  <li>
+    <span class="check-num">6</span>
+    <span>
+      <span class="claim-name">scope</span>
+      must include the scope(s) required for this specific endpoint.
+      A token with <code>calendar:read</code> must not access a write endpoint.
+    </span>
+  </li>
+</ul>
+
+<div class="callout tip">
+  <strong>ASP.NET Core handles this for you</strong>
+  When you call <code>AddJwtBearer()</code> in an ASP.NET Core app, the middleware performs all
+  six checks automatically — as long as you configure <code>Authority</code> (→ sets expected issuer
+  and fetches JWKS) and <code>Audience</code> (→ validates <code>aud</code>). Lesson 23 covers the
+  exact configuration.
+</div>
+
+<div class="callout warn">
+  <strong>The confused deputy attack</strong>
+  If a Resource Server skips the <code>aud</code> check, an attacker who obtains a valid token
+  for Service A can use it against Service B. Always configure <code>Audience</code> validation.
+  This is the most common JWT misconfiguration in real systems.
+</div>
+
+<hr>
+
+<h2>Custom Claims</h2>
+
+<p>
+  Authorization Servers can add any additional claims they need. These are called
+  <em>private claims</em> in RFC 7519. Duende IdentityServer lets you add them in the
+  <strong>Profile Service</strong>. When you reach Module 3, you'll implement this.
+</p>
+<p>
+  Examples of custom claims you'll see throughout this course:
+</p>
+
+<table>
+  <thead><tr><th>Claim</th><th>Added by</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>tenantId</code></td><td>Equisoft token generator</td><td>Identifies which tenant the user belongs to</td></tr>
+    <tr><td><code>identityRole</code></td><td>Equisoft token generator</td><td>The user's role within the tenant</td></tr>
+    <tr><td><code>email</code></td><td>OIDC profile scope</td><td>User's email address (Module 2)</td></tr>
+    <tr><td><code>name</code></td><td>OIDC profile scope</td><td>User's display name (Module 2)</td></tr>
+  </tbody>
+</table>
+
+<hr>
+
+<!-- QUIZ -->
+<div class="quiz" data-quiz="quiz15">
+  <h3>Knowledge Check</h3>
+
+  <div class="quiz-question" data-correct="b">
+    <p>1. Why can the payload of a standard JWT be decoded by anyone without a key?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz15-q0" value="a"> JWTs use a one-way hash that cannot be reversed to plaintext</label></li>
+      <li><label><input type="radio" name="quiz15-q0" value="b"> The payload is only Base64URL-encoded, not encrypted at all</label></li>
+      <li><label><input type="radio" name="quiz15-q0" value="c"> The signing key is embedded inside the JWT header section</label></li>
+      <li><label><input type="radio" name="quiz15-q0" value="d"> Resource Servers decrypt tokens using a shared symmetric key</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="b">
+    <p>2. What does the <code>aud</code> claim contain, and why must a Resource Server validate it?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz15-q1" value="a"> The user's unique ID, to identify who owns the token</label></li>
+      <li><label><input type="radio" name="quiz15-q1" value="b"> The intended recipient, to prevent the token being used elsewhere</label></li>
+      <li><label><input type="radio" name="quiz15-q1" value="c"> The Authorization Server URL, to verify the token's origin</label></li>
+      <li><label><input type="radio" name="quiz15-q1" value="d"> The approved scopes, to enforce endpoint-level permissions</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="b">
+    <p>3. A Resource Server validates the signature and checks <code>exp</code>. Which check is still missing?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz15-q2" value="a"> Confirm the <code>iat</code> claim was issued within the last minute</label></li>
+      <li><label><input type="radio" name="quiz15-q2" value="b"> Verify that <code>aud</code> includes this Resource Server's identifier</label></li>
+      <li><label><input type="radio" name="quiz15-q2" value="c"> Check that the token uses the RS256 algorithm specifically</label></li>
+      <li><label><input type="radio" name="quiz15-q2" value="d"> Ensure the <code>jti</code> matches the last request's identifier</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="b">
+    <p>4. What is the <code>kid</code> claim in the JWT header used for?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz15-q3" value="a"> Identifying the user uniquely within the Authorization Server</label></li>
+      <li><label><input type="radio" name="quiz15-q3" value="b"> Selecting which public key from the JWKS endpoint to use</label></li>
+      <li><label><input type="radio" name="quiz15-q3" value="c"> Specifying the key length used when generating the token</label></li>
+      <li><label><input type="radio" name="quiz15-q3" value="d"> Tracking how many times the token has been validated</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+</div>
+
+<script>
+window.quizExplanations = {
+  'quiz15-q0': "Standard JWTs (not JWEs) apply Base64URL encoding to the header and payload — not encryption. Base64URL is trivially reversible. Any bearer of the token can read its claims. Only the signature is cryptographically protected.",
+  'quiz15-q1': "The 'aud' claim names the intended recipient — typically the Resource Server's URL or identifier. Without checking it, a token issued for API-A can be replayed against API-B (the 'confused deputy' attack).",
+  'quiz15-q2': "Signature + expiry is necessary but not sufficient. The 'aud' check prevents the confused deputy attack. The full checklist is: signature → iss → aud → exp → nbf → scope.",
+  'quiz15-q3': "The Authorization Server can have multiple active keys (for rotation). The kid in the header tells the Resource Server exactly which key from the JWKS endpoint to use for verification. When the AS rotates keys, it publishes the new key alongside the old one; clients that see an unfamiliar kid just refresh their JWKS cache."
+};
+</script>
+
+<hr>
+
+<h2>Primary Source</h2>
+<ul>
+  <li>
+    <a href="https://www.rfc-editor.org/rfc/rfc7519" target="_blank">
+      RFC 7519 — JSON Web Token (JWT)
+    </a>
+    — the complete spec for JWT structure and standard claims (Section 4 covers claims; Section 7 covers validation)
+  </li>
+  <li>
+    <a href="https://jwt.io" target="_blank">jwt.io</a>
+    — paste any token to decode it and verify its signature interactively
+  </li>
+  <li>
+    <a href="../reference/jwt-claims-cheatsheet.html">JWT Claims Reference</a>
+    — all standard claims on one printable page
+  </li>
+</ul>
+
+<div class="ask-claude">
+  <strong>Questions? Ask your teacher.</strong>
+  Try: <em>"What's the difference between a JWT and a JWE?"</em>
+  Or: <em>"If tokens are not encrypted, is it safe to put the user's email in the payload?"</em>
+</div>
+
+<div class="lesson-nav">
+  <a class="prev" href="0014-grant-types.html">← Lesson 14: Grant Types</a>
+  <a class="next" href="0016-openid-connect.html">Next → Lesson 16: OpenID Connect — Adding Identity to OAuth</a>
+</div>
+
+<div class="lesson-footer">
+  OAuth &amp; Identity Course · Module 1: OAuth Foundations · Lesson 15 ·
+  Module 1 complete — proceed to <a href="0016-openid-connect.html">Module 2: OpenID Connect</a>
+</div>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

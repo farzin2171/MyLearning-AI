@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 7 — Configuring External Identity Providers</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    .provider-tabs {
+      display: flex; gap: 0.4rem; flex-wrap: wrap;
+      margin-bottom: -1px; /* overlap border */
+      position: relative; z-index: 1;
+    }
+    .tab-btn {
+      font-family: var(--font-ui); font-size: 0.82rem;
+      padding: 0.45rem 1rem;
+      border: 1px solid var(--border);
+      border-bottom: none;
+      border-radius: var(--radius) var(--radius) 0 0;
+      background: var(--code-bg); cursor: pointer; color: var(--muted);
+    }
+    .tab-btn.active { background: var(--surface); color: var(--accent); font-weight: 600; border-bottom: 1px solid var(--surface); }
+    .tab-panel {
+      display: none;
+      border: 1px solid var(--border);
+      border-radius: 0 var(--radius) var(--radius) var(--radius);
+      padding: 1.2rem 1.4rem;
+      background: var(--surface);
+    }
+    .tab-panel.active { display: block; }
+    .prop-table td:first-child { white-space: nowrap; font-family: var(--font-mono); font-size: 0.8rem; min-width: 200px; }
+    .prop-table td:nth-child(2) { text-align:center; font-family: var(--font-ui); font-size: 0.78rem; }
+    .prop-table td:last-child { font-size: 0.86rem; }
+    .badge { display:inline-block; font-family:var(--font-ui); font-size:0.7rem; padding:0.1rem 0.4rem; border-radius:20px; font-weight:600; }
+    .badge.req  { background:#fdecea; color:var(--error); }
+    .badge.opt  { background:var(--code-bg); color:var(--muted); }
+    .scheme-example { background:var(--code-bg); border-left:3px solid var(--accent); padding:0.5rem 0.9rem; font-family:var(--font-mono); font-size:0.85rem; border-radius:0 var(--radius) var(--radius) 0; margin:0.5rem 0 1rem; }
+    .flow-step { display:flex; gap:1rem; align-items:flex-start; margin-bottom:1rem; }
+    .flow-num { background:var(--accent); color:#fff; border-radius:50%; width:1.5rem; height:1.5rem; min-width:1.5rem; display:flex; align-items:center; justify-content:center; font-family:var(--font-ui); font-size:0.75rem; font-weight:700; margin-top:0.15rem; }
+    .flow-step > div { flex:1; }
+  </style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="../MISSION.md">Identity &amp; Authorization</a> ›
+    <a href="0006-new-api-service.html">Lesson 6</a> › Lesson 7
+  </div>
+  <h1>Configuring External Identity Providers</h1>
+  <div class="meta">
+    <span>~35 minutes</span>
+    <span>Practical + code walkthrough</span>
+    <span>Source: <code>dit-base-config-common</code> + <code>Applications.IdentityGateway</code></span>
+  </div>
+</div>
+
+<p>
+  The Identity Gateway can delegate authentication to external providers — Azure AD B2C, corporate
+  Azure AD, any OpenID Connect provider (including Okta), and SAML 2.0 IdPs. This lesson explains
+  how each provider is configured, how the JSON in <code>dit-base-config-common</code> maps to the
+  C# classes in the Identity Gateway, and what happens after the user comes back from the external
+  provider.
+</p>
+
+<h2>The Configuration Source: <code>dit-base-config-common</code></h2>
+
+<p>
+  Provider configurations live in the shared config repository at:
+</p>
+
+<pre><code>dit-base-config-common\src\identitygateway\
+├── {Dev|QA|Demo|Template}\
+│   └── identityProviders.json   ← one per environment
+└── clients.json, apiResources.json, ...  (shared across environments)</code></pre>
+
+<p>
+  <code>identityProviders.json</code> is loaded by the Identity Gateway at startup. It maps into
+  the <code>ExternalProviders</code> configuration section via a file path set with the environment
+  variable <code>EQSVC_ExternalProvidersConfigurationFilePath</code>.
+</p>
+
+<div class="callout">
+  <strong>Two loading modes</strong>
+  Providers can be loaded from <em>file</em> (<code>AddExternalProvidersFromFile</code> — for
+  static environments) or from the <em>database</em> (<code>AddExternalProvidersFromDatabase</code>
+  — when <code>DynamicIdentityProviderEnabled: true</code> in appsettings). This lesson focuses on
+  the file-based approach used in dev/QA.
+</div>
+
+<hr>
+
+<h2>The JSON Structure: Three Required Fields + Properties</h2>
+
+<p>
+  Every provider entry has the same top-level shape, regardless of type:
+</p>
+
+<pre><code>// dit-base-config-common/src/identitygateway/Dev/identityProviders.json
+{
+  "IdentityProviders": [
+    {
+      "Scheme":      "ACME_AzureB2C",               // ① Unique scheme name
+      "DisplayName": "Equisoft IE Dev - Azure AD B2C", // ② Shown on login page
+      "Type":        "azureadb2c",                  // ③ Which provider class to use
+      "Properties": {                               // ④ Type-specific configuration
+        "EcosystemTenant": "ACME",
+        ...
+      }
+    }
+  ]
+}</code></pre>
+
+<h3>The Scheme naming convention</h3>
+<div class="scheme-example">
+  {TenantKey}_{ProviderType}   →   e.g.  ACME_AzureB2C
+</div>
+<p>
+  The <strong>Scheme</strong> is the identifier the Identity Gateway uses internally to route
+  authentication challenges. It appears as the <code>scheme</code> parameter in
+  <code>/External/Challenge?scheme=ACME_AzureB2C</code>. Keep it unique across all providers
+  in a deployment. The Scheme also appears in audit logs and the user's external session store.
+</p>
+
+<h3>The four provider types</h3>
+<table>
+  <thead><tr><th>Type value</th><th>Use case</th><th>Underlying protocol</th></tr></thead>
+  <tbody>
+    <tr><td><code>"azureadb2c"</code></td><td>Consumer-facing login with self-service sign-up, password reset</td><td>OIDC (Azure B2C-specific)</td></tr>
+    <tr><td><code>"azuread"</code></td><td>Corporate employee SSO (single Azure AD tenant)</td><td>OIDC (Microsoft Entra)</td></tr>
+    <tr><td><code>"openidconnect"</code></td><td>Any generic OIDC IdP — <strong>Okta, Auth0, Ping, etc.</strong></td><td>Standard OIDC</td></tr>
+    <tr><td><code>"saml"</code></td><td>Legacy enterprise IdPs</td><td>SAML 2.0</td></tr>
+    <tr><td><code>"guest"</code></td><td>Unauthenticated guest access</td><td>Custom built-in</td></tr>
+  </tbody>
+</table>
+
+<hr>
+
+<h2>Provider Configuration by Type</h2>
+
+<div class="provider-tabs">
+  <button class="tab-btn active" onclick="showTab('b2c', this)">Azure AD B2C</button>
+  <button class="tab-btn" onclick="showTab('aad', this)">Azure AD</button>
+  <button class="tab-btn" onclick="showTab('oidc', this)">OpenID Connect / Okta</button>
+  <button class="tab-btn" onclick="showTab('saml', this)">SAML 2.0</button>
+  <button class="tab-btn" onclick="showTab('guest', this)">Guest</button>
+</div>
+
+<!-- ── AZURE B2C ─────────────────────────────────── -->
+<div class="tab-panel active" id="tab-b2c">
+  <h3>Azure AD B2C (<code>type: "azureadb2c"</code>)</h3>
+  <p>Used for consumer-facing tenants. B2C is Microsoft's customer identity platform — it supports self-service sign-up, password reset, and profile editing through "User Flows" (policies). Each tenant that uses B2C needs its own provider entry (different <code>EcosystemTenant</code>), even if they share the same B2C app registration.</p>
+
+  <h4>Real example from Dev:</h4>
+<pre><code>{
+  "Scheme":      "ACME_AzureB2C",
+  "DisplayName": "Equisoft IE Dev - Azure AD B2C",
+  "Type":        "azureadb2c",
+  "Properties": {
+    "EcosystemTenant": "ACME",                       // Equisoft tenant key
+    "ClientId":        "27418294-0e76-4fb9-8c8e-153b180ce02d", // B2C App Registration ID
+    "Tenant":          "equisoftiedev.onmicrosoft.com",          // B2C tenant domain
+    "SignUpSignInPolicyId": "B2C_1_SignUpSignIn",    // User flow (required)
+    "PasswordResetPolicyId": "B2C_1_PasswordReset",  // User flow (optional)
+    "ClientSecret":    "5F|vF?5XI1M#1j&NKMO/S(96",  // App secret
+    "AppUri":          "https://acme.app.dev.equisoft.com/portal" // For password reset redirect
+  }
+}</code></pre>
+
+  <h4>Properties reference:</h4>
+  <table class="prop-table">
+    <thead><tr><th>Property</th><th>Required?</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td>EcosystemTenant</td><td><span class="badge req">req</span></td><td>Equisoft tenant key (e.g. <code>ACME</code>). The IdG uses this to add the <code>tenant</code> claim after login.</td></tr>
+      <tr><td>ClientId</td><td><span class="badge req">req</span></td><td>Azure app registration GUID from the B2C tenant.</td></tr>
+      <tr><td>Tenant</td><td><span class="badge req">req</span></td><td>B2C domain: <code>{name}.onmicrosoft.com</code></td></tr>
+      <tr><td>SignUpSignInPolicyId</td><td><span class="badge req">req</span></td><td>The user flow name for login, e.g. <code>B2C_1_SignUpSignIn</code></td></tr>
+      <tr><td>PasswordResetPolicyId</td><td><span class="badge opt">opt</span></td><td>User flow for password reset. If set, B2C's "forgot password" button works.</td></tr>
+      <tr><td>EditProfilePolicyId</td><td><span class="badge opt">opt</span></td><td>User flow for profile editing.</td></tr>
+      <tr><td>ClientSecret</td><td><span class="badge opt">opt</span></td><td>Required for server-side token exchange. Store in Key Vault in production.</td></tr>
+      <tr><td>AppUri</td><td><span class="badge opt">opt</span></td><td>The app's root URL — used as the redirect after password reset.</td></tr>
+      <tr><td>Priority</td><td><span class="badge opt">opt</span></td><td>Integer sort order on the login page (lower = higher up).</td></tr>
+      <tr><td>FederatedConfiguration.Enabled</td><td><span class="badge opt">opt</span></td><td>Set to <code>true</code> if this B2C federates to another IdP internally.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout tip">
+    <strong>Multi-tenant pattern</strong>
+    In the Dev config, five tenants (ACME, ACMEDEV, ACMEAUTO, ACME-COSMOS, ACMETEST) each have
+    their own <code>azureadb2c</code> entry — same B2C app registration (<code>ClientId</code>),
+    different <code>EcosystemTenant</code> and <code>AppUri</code>. This is the standard pattern
+    when multiple Equisoft tenants share a single Azure AD B2C directory.
+  </div>
+
+  <h4>What the IdG computes from this config:</h4>
+<pre><code>// AzureAdB2CAuthenticationOptions — computed properties:
+Authority = "https://equisoftiedev.b2clogin.com/equisoftiedev.onmicrosoft.com/B2C_1_SignUpSignIn/v2.0"
+// (built from Tenant + SignUpSignInPolicyId)
+
+AzureAdB2CInstance = "https://equisoftiedev.b2clogin.com/"
+// (Tenant domain with "b2clogin.com" replacing "onmicrosoft.com")</code></pre>
+
+  <h4>Claim transformation on login:</h4>
+  <p>The B2C extension maps <code>emails</code> (array) → <code>email</code> (string) and strips
+  <code>extension_</code> prefixes from B2C custom attributes. Standard OIDC claims then flow
+  through <code>ExternalController.Callback()</code>.</p>
+</div>
+
+<!-- ── AZURE AD ──────────────────────────────────── -->
+<div class="tab-panel" id="tab-aad">
+  <h3>Azure AD / Microsoft Entra (<code>type: "azuread"</code>)</h3>
+  <p>Used for corporate employee SSO. The user logs in with their organisational Microsoft account. Requires an App Registration in the client's Azure AD tenant (not a B2C tenant).</p>
+
+  <h4>Real example from Dev:</h4>
+<pre><code>{
+  "Scheme":      "ACME_AzureAd",
+  "DisplayName": "Equisoft - Azure AD",
+  "Type":        "azuread",
+  "Properties": {
+    "EcosystemTenant": "ACME",
+    "ClientId":  "d9e948ae-1dbf-46a0-a547-f12ed1fd34e5", // App reg in Equisoft's Azure AD
+    "Tenant":    "equisoft.onmicrosoft.com",             // Corporate Azure AD tenant domain
+    "ClientSecret": "RDHX8_ZUJZJpK.=t-cj14mA3y5SOpN*W"
+  }
+}</code></pre>
+
+  <h4>Properties reference:</h4>
+  <table class="prop-table">
+    <thead><tr><th>Property</th><th>Required?</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td>EcosystemTenant</td><td><span class="badge req">req</span></td><td>Equisoft tenant key.</td></tr>
+      <tr><td>ClientId</td><td><span class="badge req">req</span></td><td>App registration GUID in the corporate Azure AD.</td></tr>
+      <tr><td>Tenant</td><td><span class="badge req">req</span></td><td>Corporate Azure AD domain or tenant GUID. Must match the registered app.</td></tr>
+      <tr><td>ClientSecret</td><td><span class="badge req">req</span></td><td>App secret from Azure portal.</td></tr>
+      <tr><td>AzureAdInstance</td><td><span class="badge opt">opt</span></td><td>Defaults to <code>https://login.microsoftonline.com</code>. Override for sovereign clouds.</td></tr>
+      <tr><td>Scopes</td><td><span class="badge opt">opt</span></td><td>Space-separated. <code>offline_access</code> is added automatically for refresh tokens.</td></tr>
+      <tr><td>CallbackPath</td><td><span class="badge opt">opt</span></td><td>Must be unique per provider. Defaults to <code>/signin-oidc</code> — override if you have multiple providers.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <strong>Authority computed automatically:</strong>
+    <code>https://login.microsoftonline.com/equisoft.onmicrosoft.com</code>
+    (from <code>AzureAdInstance</code> + <code>Tenant</code>)
+  </div>
+</div>
+
+<!-- ── OIDC (Okta) ───────────────────────────────── -->
+<div class="tab-panel" id="tab-oidc">
+  <h3>OpenID Connect / Okta (<code>type: "openidconnect"</code>)</h3>
+  <p>This is the generic OIDC provider. Use it for <strong>Okta</strong>, Auth0, Ping Identity,
+  or any IdP that supports standard OpenID Connect. You provide the <code>Authority</code> URL
+  and the IdG fetches the discovery document automatically.</p>
+
+  <h4>Example — Okta configuration:</h4>
+<pre><code>{
+  "Scheme":      "ACME_Okta",
+  "DisplayName": "Okta SSO",
+  "Type":        "openidconnect",
+  "Properties": {
+    "EcosystemTenant": "ACME",
+
+    // ① The Okta authorization server URL (your Okta org + auth server path):
+    "Authority":     "https://your-org.okta.com/oauth2/default",
+
+    // ② App registration values from Okta admin:
+    "ClientId":     "0oa1b2c3d4e5f6g7h8i9",
+    "ClientSecret": "the-client-secret-from-okta",
+
+    // ③ Scopes to request (openid profile email are the minimum):
+    "Scopes": "openid profile email",
+
+    // ④ Callback path — must be unique (register this in Okta as redirect URI):
+    "CallbackPath": "/signin-okta",
+
+    // ⑤ Fetch all user attributes from UserInfo endpoint:
+    "GetClaimsFromUserInfoEndpoint": "true",
+
+    // ⑥ Remove Okta-internal claims that could conflict with Equisoft's claim space:
+    "ClaimsToRemove": ["ver", "at_hash", "nonce", "idp", "amr"]
+  }
+}</code></pre>
+
+  <h4>Properties reference:</h4>
+  <table class="prop-table">
+    <thead><tr><th>Property</th><th>Required?</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td>Authority</td><td><span class="badge req">req</span></td><td>The OIDC issuer URL. For Okta: <code>https://{org}.okta.com/oauth2/default</code>. The IdG appends <code>/.well-known/openid-configuration</code> to discover endpoints.</td></tr>
+      <tr><td>ClientId</td><td><span class="badge req">req</span></td><td>Client ID from the OIDC provider's app registration.</td></tr>
+      <tr><td>ClientSecret</td><td><span class="badge req">req</span></td><td>Client secret from the provider.</td></tr>
+      <tr><td>EcosystemTenant</td><td><span class="badge req">req</span></td><td>Equisoft tenant key.</td></tr>
+      <tr><td>Scopes</td><td><span class="badge opt">opt</span></td><td>Space-separated. Include at least <code>openid profile email</code>. Add provider-specific scopes as needed.</td></tr>
+      <tr><td>CallbackPath</td><td><span class="badge opt">opt</span></td><td>Must be unique and registered as a redirect URI with the provider.</td></tr>
+      <tr><td>GetClaimsFromUserInfoEndpoint</td><td><span class="badge opt">opt</span></td><td>Default: <code>true</code>. Fetches the full user profile from <code>/userinfo</code> after token validation.</td></tr>
+      <tr><td>ClaimsToRemove</td><td><span class="badge opt">opt</span></td><td>Array of claim types to strip before they enter Equisoft's claim pipeline. Use to remove provider-specific noise.</td></tr>
+      <tr><td>ApplyUrlDecode</td><td><span class="badge opt">opt</span></td><td>Default: <code>false</code>. Set to <code>true</code> if the IdP URL-encodes the OAuth <code>state</code> parameter (some Okta configurations do this).</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <strong>Watch out for claim collisions</strong>
+    Some OIDC providers (Okta included) return claims that start with <code>client_</code> or
+    contain <code>service_</code>. The Identity Gateway will reject the login with an exception if
+    these reach the claim pipeline. Always populate <code>ClaimsToRemove</code> to strip them.
+    Source: <code>ExternalController.cs</code> — the forbidden-claim check at line 164.
+  </div>
+
+  <h4>Registering the callback URI in Okta:</h4>
+  <p>The redirect URI you register in the Okta app must exactly match:</p>
+  <pre><code>https://{identity-gateway-host}/External/Callback</code></pre>
+  <p>And the callback path in the provider config must match what you register as the <em>Sign-in redirect URI</em> in the Okta app configuration.
+  The actual ASP.NET Core callback route is built as <code>{CallbackPath}</code> on the IdG host.</p>
+</div>
+
+<!-- ── SAML ──────────────────────────────────────── -->
+<div class="tab-panel" id="tab-saml">
+  <h3>SAML 2.0 (<code>type: "saml"</code>)</h3>
+  <p>For enterprise IdPs that do not support OIDC (older on-premise identity systems, legacy
+  insurance platforms). The Identity Gateway acts as the SAML Service Provider (SP).
+  Uses ComponentSpace SAML2 library.</p>
+
+  <h4>Real example from Dev:</h4>
+<pre><code>{
+  "Scheme":      "ACME_SAML2",
+  "DisplayName": "UMS - SAML 2.0",
+  "Type":        "saml",
+  "Properties": {
+    "EcosystemTenant": "ACME",
+    "PartnerIdentityProviderConfiguration": {
+      "Name":                      "urn:insuranceElements:IdentityProvider", // IdP Entity ID
+      "SignAuthnRequest":           true,      // Sign the AuthnRequest
+      "WantSamlResponseSigned":     true,      // Require signed Response
+      "WantAssertionSigned":        false,
+      "WantAssertionEncrypted":     false,
+      "SingleSignOnServiceUrl":     "http://06.qa.equisoft.com/IdentityProvider/Public/Web/SAML/signin",
+      "SingleLogoutServiceUrl":     "http://06.qa.equisoft.com/IdentityProvider/Public/Web/SAML/signout",
+      "SingleSignOnServiceBinding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect",
+      "PartnerCertificates": [
+        { "String": "LS0tLS1CRU..." }   // base64-encoded IdP signing cert
+      ]
+    },
+    "Extensions": {
+      "environmentName": "EIS_DEV"  // Custom XML extension added to AuthnRequest
+    }
+  }
+}</code></pre>
+
+  <h4>Key fields:</h4>
+  <table class="prop-table">
+    <thead><tr><th>Field</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td>Name</td><td>The IdP's SAML Entity ID URI. Get this from the IdP's metadata XML.</td></tr>
+      <tr><td>SignAuthnRequest</td><td>If <code>true</code>, IdG signs requests with its SP certificate. The IdP must have IdG's public cert.</td></tr>
+      <tr><td>WantSamlResponseSigned</td><td>Require the IdP to sign its response. Strongly recommended.</td></tr>
+      <tr><td>SingleSignOnServiceUrl</td><td>The IdP's SSO endpoint URL (from IdP metadata).</td></tr>
+      <tr><td>PartnerCertificates</td><td>Base64-encoded PEM certificates used by the IdP for signing. Paste the cert string here.</td></tr>
+      <tr><td>Extensions</td><td>Custom key-value pairs added as XML extensions to the AuthnRequest (IdP-specific custom data).</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ── GUEST ─────────────────────────────────────── -->
+<div class="tab-panel" id="tab-guest">
+  <h3>Guest (<code>type: "guest"</code>)</h3>
+  <p>A special built-in provider for unauthenticated guest access. Users authenticated through
+  this provider get the <code>isGuest: true</code> claim and have their <code>identityRole</code>
+  forced to <code>"Guest"</code> by the token generator (no User Service call needed).</p>
+
+<pre><code>{
+  "Scheme":      "ACME_Guest",
+  "DisplayName": "Guest",
+  "Type":        "guest",
+  "Properties": {
+    "EcosystemTenant": "ACME",
+    "Roles": "Guest"    // Comma-separated role names assigned to guest users
+  }
+}</code></pre>
+</div>
+
+<script>
+function showTab(id, btn) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + id).classList.add('active');
+  btn.classList.add('active');
+}
+</script>
+
+<hr>
+
+<h2>What Happens After the User Authenticates: The Callback Flow</h2>
+
+<p>
+  Every provider type — whether B2C, Azure AD, Okta, or SAML — ends up at the same callback
+  handler: <code>ExternalController.Callback()</code>. Understanding this is key to diagnosing
+  login failures.
+</p>
+
+<div class="flow-step">
+  <div class="flow-num">1</div>
+  <div>
+    <strong>External auth completes.</strong><br>
+    The provider redirects to <code>https://idg.host/External/Callback</code>. The external
+    principal is temporarily stored in a cookie keyed by the provider scheme.
+  </div>
+</div>
+<div class="flow-step">
+  <div class="flow-num">2</div>
+  <div>
+    <strong>Claim extraction and normalisation.</strong><br>
+    <code>FindUserFromExternalProviderAsync()</code> extracts the unique user identifier:
+    first tries <code>sub</code>, falls back to <code>nameidentifier</code>. Applies claim type
+    remapping: <code>oid</code> → <code>externalobjectidentifier</code>.
+  </div>
+</div>
+<div class="flow-step">
+  <div class="flow-num">3</div>
+  <div>
+    <strong>Tenant claim injection.</strong><br>
+    <code>TenantAccessor.GetAsync(providerScheme)</code> looks up the <code>EcosystemTenant</code>
+    from the provider's config (e.g. <code>ACME</code>) and adds it as the <code>tenant</code> claim.
+  </div>
+</div>
+<div class="flow-step">
+  <div class="flow-num">4</div>
+  <div>
+    <strong>User lookup or auto-provisioning.</strong><br>
+    <code>UserStore.FindByExternalProviderAsync(scheme, userId)</code> looks up the user in the
+    local <code>UserDb</code>. If not found, <code>UserStore.ProvisionUserAsync()</code> creates
+    a new user record. No manual user creation is needed for first-time logins.
+  </div>
+</div>
+<div class="flow-step">
+  <div class="flow-num">5</div>
+  <div>
+    <strong>Session storage.</strong><br>
+    External session data (OIDC refresh token or SAML session expiry) is stored in Redis keyed
+    by session ID. This is later checked on every token refresh.
+  </div>
+</div>
+<div class="flow-step">
+  <div class="flow-num">6</div>
+  <div>
+    <strong>IdentityServer cookie issued.</strong><br>
+    The user is now authenticated in the Identity Gateway. The Authorization Code flow
+    continues — the IdG redirects back to the application with the auth code.
+  </div>
+</div>
+
+<hr>
+
+<h2>Claim Mapping Reference</h2>
+
+<p>
+  Each provider transforms claims slightly differently. Here is what arrives in Equisoft's
+  claim pipeline after each provider's <code>OnTokenValidated</code> event:
+</p>
+
+<table>
+  <thead>
+    <tr><th>Provider</th><th>External claim → Equisoft claim</th><th>Notes</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Azure B2C</td>
+      <td><code>emails[0]</code> → <code>email</code><br><code>oid</code> → <code>externalobjectidentifier</code><br><code>extension_X</code> → <code>X</code></td>
+      <td>B2C returns email as an array; the extension strips the prefix from custom attributes</td>
+    </tr>
+    <tr>
+      <td>Azure AD</td>
+      <td><code>oid</code> → <code>externalobjectidentifier</code></td>
+      <td>Duplicate name claims removed; standard OIDC claims pass through</td>
+    </tr>
+    <tr>
+      <td>OpenID Connect (Okta)</td>
+      <td><code>sub</code> → <code>externalobjectidentifier</code> (if no oid)</td>
+      <td>Claims in <code>ClaimsToRemove</code> are stripped; everything else passes through</td>
+    </tr>
+    <tr>
+      <td>SAML 2.0</td>
+      <td><code>nameidentifier</code> → used as external user ID</td>
+      <td>ComponentSpace handles assertion parsing; SAML attributes become claims</td>
+    </tr>
+    <tr>
+      <td>All providers</td>
+      <td>Provider scheme → <code>tenant</code> (via TenantAccessor)<br><code>oid</code> / <code>objectidentifier</code> → <code>externalobjectidentifier</code></td>
+      <td>Applied in ExternalController after provider-specific processing</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout warn">
+  <strong>Forbidden claims</strong>
+  The Identity Gateway <em>throws</em> if any claim coming from an external provider starts with
+  <code>client_</code> or <code>service_</code>, unless the claim is in the explicit allow-list
+  (<code>tenantId</code> and <code>identityRole</code>). This protects against spoofing.
+  Always use <code>ClaimsToRemove</code> on OpenID Connect providers to strip any offending claims.
+  Source: <code>ExternalController.cs</code>
+</div>
+
+<hr>
+
+<h2>How Clients Are Restricted to Specific Providers</h2>
+
+<p>
+  In <code>clients_common.json</code>, each client can list which provider schemes it allows
+  via <code>IdPRestrictions</code>. When a user tries to log in with a different provider, the
+  IdG rejects the authorization request before showing a login page:
+</p>
+
+<pre><code>// dit-base-config-common/src/identitygateway/Dev/clients_common.json
+{
+  "ClientId": "my-spa-app",
+  "IdPRestrictions": [
+    "ACME_AzureB2C",    // only these schemes are allowed for this client
+    "ACME_AzureAd"
+  ]
+}</code></pre>
+
+<p>
+  The <code>Properties</code> map on a client can also store a per-tenant default provider mapping,
+  used when the application needs to auto-select the right scheme for a given tenant:
+</p>
+
+<pre><code>"Properties": {
+  "ACME":       "ACME_AzureB2C",
+  "ACMEDEV":    "ACMEDEV_AzureB2C",
+  "ACMETEST":   "ACMETEST_AzureB2C"
+}</code></pre>
+
+<hr>
+
+<div class="quiz" data-quiz="quiz7">
+  <h3>Knowledge Check</h3>
+
+  <div class="quiz-question" data-correct="c">
+    <p>1. A new enterprise client uses Okta for SSO. Which provider type should you use in <code>identityProviders.json</code>?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz7-q0" value="a"> <code>"azuread"</code> — Okta is Microsoft-based</label></li>
+      <li><label><input type="radio" name="quiz7-q0" value="b"> <code>"saml"</code> — all enterprise IdPs use SAML</label></li>
+      <li><label><input type="radio" name="quiz7-q0" value="c"> <code>"openidconnect"</code> — Okta supports standard OIDC</label></li>
+      <li><label><input type="radio" name="quiz7-q0" value="d"> <code>"azureadb2c"</code> — Okta requires B2C policies</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="b">
+    <p>2. What naming convention is used for the <code>Scheme</code> field in provider config?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz7-q1" value="a"> <code>{ProviderName}_{Environment}</code> for disambiguation</label></li>
+      <li><label><input type="radio" name="quiz7-q1" value="b"> <code>{TenantKey}_{ProviderType}</code> for unique identification</label></li>
+      <li><label><input type="radio" name="quiz7-q1" value="c"> <code>{ClientId}_{ProviderType}</code> for traceability</label></li>
+      <li><label><input type="radio" name="quiz7-q1" value="d"> <code>{DisplayName}_{TenantKey}</code> for readability</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="d">
+    <p>3. Five Equisoft tenants share a single Azure AD B2C directory. In <code>identityProviders.json</code>, how many provider entries are needed?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz7-q2" value="a"> One entry — they share the same ClientId</label></li>
+      <li><label><input type="radio" name="quiz7-q2" value="b"> Two entries — one for the B2C tenant, one for apps</label></li>
+      <li><label><input type="radio" name="quiz7-q2" value="c"> One entry per environment (dev, qa, prod)</label></li>
+      <li><label><input type="radio" name="quiz7-q2" value="d"> One entry per Equisoft tenant — different EcosystemTenant values</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="a">
+    <p>4. An Okta provider sends a claim named <code>client_environment</code>. What happens when the user logs in?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz7-q3" value="a"> The Identity Gateway throws and rejects the login</label></li>
+      <li><label><input type="radio" name="quiz7-q3" value="b"> The claim is silently stripped by the default filter</label></li>
+      <li><label><input type="radio" name="quiz7-q3" value="c"> The claim is added to the user's token as-is</label></li>
+      <li><label><input type="radio" name="quiz7-q3" value="d"> The claim triggers the forbidden-claim allow-list check</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="c">
+    <p>5. Which component maps the provider's <code>EcosystemTenant</code> value to the <code>tenant</code> JWT claim?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz7-q4" value="a"> <code>EquisoftTokenResponseGenerator</code> at token issuance</label></li>
+      <li><label><input type="radio" name="quiz7-q4" value="b"> <code>EquisoftProfileService</code> when loading user claims</label></li>
+      <li><label><input type="radio" name="quiz7-q4" value="c"> <code>TenantAccessor.GetAsync()</code> in the external login callback</label></li>
+      <li><label><input type="radio" name="quiz7-q4" value="d"> The provider's <code>OnTokenValidated</code> event handler directly</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <button class="quiz-btn" data-quiz-submit="quiz7">Check Answers</button>
+  <div class="quiz-score"></div>
+</div>
+
+<script>
+window.quizExplanations = {
+  'quiz7-q0': 'Okta supports standard OpenID Connect. Use type "openidconnect" and set Authority to your Okta org\'s authorization server URL.',
+  'quiz7-q1': 'The convention is {TenantKey}_{ProviderType}, e.g. ACME_AzureB2C. The Scheme is the routing identifier used in /External/Challenge calls.',
+  'quiz7-q2': 'One entry per Equisoft tenant — each needs its own EcosystemTenant value even if the ClientId and Tenant are identical.',
+  'quiz7-q3': 'ExternalController.cs checks for claims starting with "client_" or "service_" and throws. You must add such claims to ClaimsToRemove in the provider config.',
+  'quiz7-q4': 'TenantAccessor.GetAsync(providerScheme) is called in ExternalController.Callback(). It reads the EcosystemTenant from the provider options and adds it as the tenant claim.'
+};
+</script>
+
+<hr>
+
+<h2>Hands-on: Add a New Provider</h2>
+
+<p>Follow these steps to add a new OpenID Connect (Okta-style) provider for a new tenant:</p>
+
+<ol>
+  <li>Open <code>dit-base-config-common\src\identitygateway\Dev\identityProviders.json</code></li>
+  <li>Add a new entry following the <code>openidconnect</code> pattern above</li>
+  <li>Set <code>EcosystemTenant</code> to the new tenant's key (e.g. <code>NEWCO</code>)</li>
+  <li>Set <code>Scheme</code> to <code>NEWCO_Okta</code></li>
+  <li>Set <code>Authority</code> to the Okta org URL + <code>/oauth2/default</code></li>
+  <li>Set <code>CallbackPath</code> to a unique path e.g. <code>/signin-newco-okta</code></li>
+  <li>Register that callback path as a redirect URI in the Okta app</li>
+  <li>Add <code>NEWCO_Okta</code> to the relevant client's <code>IdPRestrictions</code> in <code>clients_common.json</code></li>
+  <li>Restart the Identity Gateway and test the login flow</li>
+</ol>
+
+<hr>
+
+<h2>Quick Reference</h2>
+<p>See the printable cheat sheet: <a href="../reference/provider-config-cheatsheet.html">External Provider Configuration Reference</a></p>
+
+<h2>Primary Source</h2>
+<p>
+  <a href="https://docs.duendesoftware.com/identityserver/v7/ui/federation/external-providers/" target="_blank">
+    Duende IS v7 — Federated Authentication: External Providers
+  </a>
+  <br>
+  Real config files: <code>dit-base-config-common\src\identitygateway\Dev\identityProviders.json</code>
+  <br>
+  C# configuration classes: <code>Applications.IdentityGateway\src\Equisoft.IdentityGateway\Configurations\Authentication\</code>
+</p>
+
+<div class="ask-claude">
+  <strong>Questions? Ask your teacher.</strong>
+  Try: <em>"Our Okta provider sends a claim called <code>service_type</code>. How do I handle this without rejecting logins?"</em>
+  Or: <em>"What's the difference between FederatedConfiguration.Enabled and a regular Azure AD B2C provider?"</em>
+</div>
+
+<div class="lesson-nav">
+  <a href="0006-new-api-service.html">← Lesson 6: Building a New API Service</a>
+  <span></span>
+</div>
+
+<div class="lesson-footer">
+  Equisoft Identity Learning · Lesson 7 · Sources: dit-base-config-common, ExternalController.cs,
+  AzureAdB2CAuthenticationExtensions.cs, OpenIdConnectAuthenticationExtensions.cs
+</div>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

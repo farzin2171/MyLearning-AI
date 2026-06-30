@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 12 — OAuth 2.0: The Delegation Problem</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="../MISSION.md">OAuth &amp; Identity Course</a> › Module 1: OAuth Foundations › Lesson 12
+  </div>
+  <h1>OAuth 2.0 — The Delegation Problem</h1>
+  <div class="meta">
+    <span>~20 minutes</span>
+    <span>Conceptual + interactive</span>
+    <span>No prerequisites</span>
+  </div>
+</div>
+
+<p>
+  Every OAuth tutorial starts with "here's how to configure a client." This lesson starts one step earlier:
+  <em>why does OAuth exist at all?</em> Understanding the problem it solves makes every other concept
+  — flows, tokens, scopes, grant types — click naturally into place.
+</p>
+
+<h2>The Problem: Third-Party Apps Want Your Data</h2>
+
+<p>
+  Imagine it's 2006. You've just signed up for a travel-planning app that wants to import your contacts
+  to find friends who are already using it. It shows you this:
+</p>
+
+<div class="callout warn">
+  <strong>The old way (pre-OAuth)</strong>
+  "To import your Gmail contacts, please enter your Gmail username and password."
+</div>
+
+<p>You type your password. What just happened?</p>
+
+<ul>
+  <li>
+    <strong>Full access, not scoped access.</strong> The travel app can now read your email, send email
+    as you, change your account settings — not just read contacts.
+  </li>
+  <li>
+    <strong>No expiry.</strong> Your password doesn't expire automatically. The app stores it
+    indefinitely.
+  </li>
+  <li>
+    <strong>No selective revocation.</strong> The only way to cut off the travel app is to
+    <em>change your password</em> — which also breaks every other app using that password.
+  </li>
+  <li>
+    <strong>The travel app becomes a high-value target.</strong> If its database is breached, attackers
+    get your Google password — not just your contacts.
+  </li>
+</ul>
+
+<p>
+  This was the reality. Twitter's early API, LinkedIn, Facebook Connect — all asked for passwords.
+  It was an industry-wide failure of security design, and OAuth 2.0 was designed specifically
+  to end it.
+</p>
+
+<hr>
+
+<h2>The OAuth Solution: Delegated Authorization</h2>
+
+<p>
+  The core insight is simple: <strong>you don't need to share your password for an app to act on your
+  behalf.</strong> Instead, you tell a trusted server "I authorize this app to access <em>this specific
+  thing</em>," and the server issues a limited-power <em>token</em> for that purpose.
+</p>
+
+<div class="flow">
+  <div class="flow-node highlight">You (user)</div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-node">"Allow app to<br>read contacts?"</div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-node highlight">Authorization<br>Server</div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-node">Issues a<br>scoped token</div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-node service">App uses token<br>(contacts only)</div>
+</div>
+
+<p>
+  The travel app <em>never sees your password</em>. It gets a token that can only read contacts,
+  expires in an hour, and can be revoked at any time without touching your password.
+</p>
+
+<div class="callout key">
+  <strong>The core shift</strong>
+  OAuth 2.0 replaces "I trust you with my master key" with "here is a key that opens only the door
+  you need, for only as long as you need it."
+</div>
+
+<hr>
+
+<h2>The Four OAuth 2.0 Actors</h2>
+
+<p>
+  Every OAuth interaction involves exactly four parties. Learning to spot them in any scenario is
+  the foundation of all OAuth analysis. These terms come directly from
+  <a href="https://www.rfc-editor.org/rfc/rfc6749#section-1.1" target="_blank">RFC 6749 §1.1</a>.
+</p>
+
+<div class="service-grid">
+  <div class="service-card">
+    <div class="tag">Resource Owner</div>
+    <h4>The User</h4>
+    <p>The entity that owns the protected data. Usually a human. They must <em>grant</em> permission before a client receives a token.</p>
+  </div>
+  <div class="service-card">
+    <div class="tag">Client</div>
+    <h4>The Application</h4>
+    <p>The app that wants access. Could be a web app, mobile app, or a background service. It <em>requests</em> tokens — it never touches the user's password.</p>
+  </div>
+  <div class="service-card">
+    <div class="tag">Authorization Server</div>
+    <h4>The Token Issuer</h4>
+    <p>The trusted server that authenticates the user and <em>issues tokens</em>. This is exactly what Duende IdentityServer implements.</p>
+  </div>
+  <div class="service-card">
+    <div class="tag">Resource Server</div>
+    <h4>The Protected API</h4>
+    <p>The API that holds the data. It <em>validates tokens</em> and serves requests only when the token has the right scope.</p>
+  </div>
+</div>
+
+<div class="callout tip">
+  <strong>Try it now — name the actors</strong>
+  "A mobile banking app displays your transaction history from your bank's API."
+  <br><br>
+  Resource Owner = <strong>you</strong> &nbsp;·&nbsp;
+  Client = <strong>mobile app</strong> &nbsp;·&nbsp;
+  Authorization Server = <strong>bank's auth system</strong> &nbsp;·&nbsp;
+  Resource Server = <strong>bank's transaction API</strong>
+</div>
+
+<hr>
+
+<h2>Access Tokens: Limited-Authority Credentials</h2>
+
+<p>
+  The clearest analogy for an OAuth access token is a <strong>hotel key card</strong>:
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Property</th>
+      <th>Key card (access token)</th>
+      <th>Master key (your password)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Scope of access</td>
+      <td>Room 512 only</td>
+      <td>Every room, every floor</td>
+    </tr>
+    <tr>
+      <td>Expiry</td>
+      <td>Expires at checkout</td>
+      <td>Does not expire automatically</td>
+    </tr>
+    <tr>
+      <td>Revocability</td>
+      <td>Deactivate this card; others still work</td>
+      <td>Change the lock; breaks everything</td>
+    </tr>
+    <tr>
+      <td>If stolen</td>
+      <td>Attacker gets room 512 until checkout</td>
+      <td>Attacker gets the whole hotel</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>OAuth 2.0 defines three token types you'll encounter across this course:</p>
+
+<ul>
+  <li><strong>Access token</strong> — short-lived (minutes to hours); sent to Resource Servers to prove authorization.</li>
+  <li><strong>Refresh token</strong> — long-lived; sent <em>only</em> to the Authorization Server to obtain new access tokens when the current one expires.</li>
+  <li><strong>ID token</strong> — introduced by OpenID Connect (Lesson 16); carries claims about <em>who</em> the user is, not just what they can do.</li>
+</ul>
+
+<hr>
+
+<h2>Scopes: What the Token Is Allowed to Do</h2>
+
+<p>
+  A <strong>scope</strong> is a named permission string. The client requests scopes, the user approves
+  them, and the Authorization Server encodes the approved scopes into the token. The Resource Server
+  checks the token's scopes before serving any request.
+</p>
+
+<table>
+  <thead>
+    <tr><th>Scope</th><th>What the client is permitted to do</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>contacts:read</code></td><td>Read address book entries</td></tr>
+    <tr><td><code>calendar:read</code></td><td>Read calendar events</td></tr>
+    <tr><td><code>calendar:write</code></td><td>Create and edit calendar events</td></tr>
+    <tr><td><code>email:send</code></td><td>Send email on the user's behalf</td></tr>
+  </tbody>
+</table>
+
+<p>
+  The consent screen the user sees is generated from the requested scopes. If a travel app
+  importing contacts shows <code>email:send</code> in the consent screen, that is a red flag —
+  it is requesting far more than it needs.
+</p>
+
+<div class="callout">
+  <strong>Principle of least privilege</strong>
+  Clients should request only the scopes their current operation requires. Over-scoped tokens increase
+  the blast radius if a token is stolen or a client is compromised.
+</div>
+
+<hr>
+
+<!-- QUIZ -->
+<div class="quiz" data-quiz="quiz12">
+  <h3>Knowledge Check</h3>
+
+  <div class="quiz-question" data-correct="b">
+    <p>1. What core problem does OAuth 2.0 primarily solve?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz12-q0" value="a"> Encrypting user passwords before storing in databases</label></li>
+      <li><label><input type="radio" name="quiz12-q0" value="b"> Allowing apps to access resources without sharing the user's password</label></li>
+      <li><label><input type="radio" name="quiz12-q0" value="c"> Preventing replay attacks on authentication endpoints</label></li>
+      <li><label><input type="radio" name="quiz12-q0" value="d"> Synchronizing user sessions across multiple browser tabs</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="d">
+    <p>2. Which OAuth 2.0 actor issues access tokens to the client?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz12-q1" value="a"> The Resource Owner — the user who approves access</label></li>
+      <li><label><input type="radio" name="quiz12-q1" value="b"> The Resource Server — the API holding protected data</label></li>
+      <li><label><input type="radio" name="quiz12-q1" value="c"> The Client — the application requesting the token</label></li>
+      <li><label><input type="radio" name="quiz12-q1" value="d"> The Authorization Server — the trusted token issuer</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="c">
+    <p>3. In OAuth 2.0, what does the access token's "scope" define?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz12-q2" value="a"> How long the access token remains valid before expiry</label></li>
+      <li><label><input type="radio" name="quiz12-q2" value="b"> Which user's identity the token was issued for</label></li>
+      <li><label><input type="radio" name="quiz12-q2" value="c"> Which specific resources or actions the client may access</label></li>
+      <li><label><input type="radio" name="quiz12-q2" value="d"> How many API calls the client can make per minute</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="b">
+    <p>4. You revoke a third-party app's access in your account settings. What happens?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz12-q3" value="a"> Your account password is automatically rotated for security</label></li>
+      <li><label><input type="radio" name="quiz12-q3" value="b"> The app's tokens are invalidated and it loses access immediately</label></li>
+      <li><label><input type="radio" name="quiz12-q3" value="c"> The app retains access until its currently-issued tokens expire</label></li>
+      <li><label><input type="radio" name="quiz12-q3" value="d"> The revocation only applies to newly-issued tokens, not existing ones</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <button class="quiz-btn" data-quiz-submit="quiz12">Check Answers</button>
+  <div class="quiz-score"></div>
+</div>
+
+<script>
+window.quizExplanations = {
+  'quiz12-q0': "OAuth 2.0's purpose is delegated authorization: the user authorizes limited, scoped access to a client — no password sharing required.",
+  'quiz12-q1': 'The Authorization Server (e.g., Duende IdentityServer) is the only actor that issues tokens. The Resource Server validates them but never creates them.',
+  'quiz12-q2': 'Scope is the set of named permissions the client requested and the user approved. The Resource Server checks these before serving any request.',
+  'quiz12-q3': 'Revocation invalidates the token (and its associated refresh token) at the Authorization Server. Short-lived access tokens may still work briefly; that is why combining short token lifetimes with refresh token revocation is the standard hardening pattern.'
+};
+</script>
+
+<hr>
+
+<h2>Primary Source</h2>
+<p>
+  The motivation section of the OAuth 2.0 spec is unusually readable. Read the introduction — it explains
+  the exact problem in the spec authors' own words:
+  <a href="https://www.rfc-editor.org/rfc/rfc6749#section-1" target="_blank">
+    RFC 6749 — OAuth 2.0 Authorization Framework, §1: Introduction
+  </a>
+</p>
+
+<div class="ask-claude">
+  <strong>Questions? Ask your teacher.</strong>
+  Something unclear? Open a new chat with Claude Code and ask — for example:
+  <em>"What's the difference between authentication and authorization, and which one does OAuth 2.0 actually handle?"</em>
+</div>
+
+<div class="lesson-nav">
+  <span></span>
+  <a class="next" href="0013-authorization-code-flow.html">Next → Lesson 13: The Authorization Code Flow + PKCE</a>
+</div>
+
+<div class="lesson-footer">
+  OAuth &amp; Identity Course · Module 1: OAuth Foundations · Lesson 12 ·
+  Primary spec: <a href="https://www.rfc-editor.org/rfc/rfc6749" target="_blank">RFC 6749</a>
+</div>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

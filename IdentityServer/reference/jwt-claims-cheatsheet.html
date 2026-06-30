@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JWT Claims — Quick Reference</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    /* ── Reference-specific overrides ──────────────────── */
+    body { font-size: 16px; }
+    h1 { font-size: 1.6rem; }
+    h2 { font-size: 1.15rem; margin: 1.8rem 0 0.5rem; }
+
+    .ref-tag {
+      display: inline-block;
+      font-family: var(--font-ui);
+      font-size: 0.68rem;
+      padding: 0.12rem 0.5rem;
+      border-radius: 20px;
+      margin-left: 0.5rem;
+      vertical-align: middle;
+    }
+    .ref-tag.required  { background: #fdecea; color: #c0392b; }
+    .ref-tag.important { background: #e8f0ff; color: var(--accent); }
+    .ref-tag.optional  { background: var(--code-bg); color: var(--muted); }
+
+    table td:first-child {
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      color: var(--accent);
+      white-space: nowrap;
+      width: 8rem;
+    }
+    table td:nth-child(2) {
+      font-size: 0.84rem;
+      font-weight: 600;
+      width: 8rem;
+    }
+    table td:last-child { font-size: 0.84rem; color: var(--muted); }
+
+    .jwt-display {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      background: #1e1e2e;
+      color: #cdd6f4;
+      border-radius: var(--radius);
+      padding: 0.9rem 1.1rem;
+      margin: 0.7rem 0;
+      word-break: break-all;
+    }
+    .jwt-h { color: #f38ba8; }
+    .jwt-p { color: #a6e3a1; }
+    .jwt-s { color: #89b4fa; }
+    .jwt-dot { color: #6c7086; }
+
+    .validate-list { list-style: none; margin: 0; padding: 0; }
+    .validate-list li {
+      display: flex;
+      gap: 0.5rem;
+      padding: 0.35rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.86rem;
+      align-items: baseline;
+    }
+    .validate-list li:last-child { border-bottom: none; }
+    .validate-list .n {
+      flex-shrink: 0;
+      font-family: var(--font-ui);
+      font-weight: 700;
+      color: var(--accent);
+      width: 1.2rem;
+    }
+    .validate-list code { font-size: 0.8rem; }
+
+    .alg-table td:first-child { width: 6rem; }
+
+    @media print {
+      .lesson-nav { display: none; }
+      a { color: var(--text); }
+    }
+  </style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="../MISSION.md">OAuth &amp; Identity Course</a> › Reference
+  </div>
+  <h1>JWT Claims — Quick Reference</h1>
+  <div class="meta">
+    <span>RFC 7519 · RFC 7517 · RFC 9068</span>
+    <span>Print-friendly</span>
+  </div>
+</div>
+
+<h2>Structure</h2>
+
+<div class="jwt-display">
+<span class="jwt-h">BASE64URL(header)</span><span class="jwt-dot">.</span><span class="jwt-p">BASE64URL(payload)</span><span class="jwt-dot">.</span><span class="jwt-s">BASE64URL(signature)</span>
+</div>
+
+<p style="font-size:0.85rem; color:var(--muted);">
+  Not encrypted — payload is readable by anyone. Signature is tamper-proof but not confidential.
+</p>
+
+<hr>
+
+<h2>Header Claims</h2>
+
+<table>
+  <thead><tr><th>Claim</th><th>Name</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>alg</td><td>Algorithm</td><td><code>RS256</code> preferred (asymmetric). Avoid <code>none</code>. Be explicit in validation code.</td></tr>
+    <tr><td>typ</td><td>Type</td><td><code>JWT</code> standard; <code>at+JWT</code> for OAuth access tokens (RFC 9068).</td></tr>
+    <tr><td>kid</td><td>Key ID</td><td>Identifies which JWKS key to use. Refresh JWKS cache on unknown kid.</td></tr>
+  </tbody>
+</table>
+
+<h2>Registered Payload Claims <span style="font-family:var(--font-ui);font-size:0.78rem;font-weight:400;color:var(--muted);">RFC 7519 §4.1</span></h2>
+
+<table>
+  <thead><tr><th>Claim</th><th>Name</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>iss</td><td>Issuer
+      <span class="ref-tag required">validate</span></td>
+      <td>Authorization Server URL. Must match expected AS exactly.</td>
+    </tr>
+    <tr>
+      <td>sub</td><td>Subject</td>
+      <td>Principal the token represents. User ID for interactive logins; <code>client_id</code> for Client Credentials.</td>
+    </tr>
+    <tr>
+      <td>aud</td><td>Audience
+      <span class="ref-tag required">validate</span></td>
+      <td>Intended recipient(s). Resource Server MUST reject if its identifier is not in <code>aud</code>. Skipping this enables the confused deputy attack.</td>
+    </tr>
+    <tr>
+      <td>exp</td><td>Expiration
+      <span class="ref-tag required">validate</span></td>
+      <td>Unix timestamp. Reject token at or after this time. Allow ≤60s clock skew.</td>
+    </tr>
+    <tr>
+      <td>iat</td><td>Issued At
+      <span class="ref-tag optional">optional</span></td>
+      <td>Unix timestamp of issuance. Useful for max-age checks.</td>
+    </tr>
+    <tr>
+      <td>nbf</td><td>Not Before
+      <span class="ref-tag optional">optional</span></td>
+      <td>Reject token before this Unix timestamp. Validate if present.</td>
+    </tr>
+    <tr>
+      <td>jti</td><td>JWT ID
+      <span class="ref-tag optional">optional</span></td>
+      <td>Unique token identifier. Can be checked against a revocation denylist.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Common OAuth / OIDC Claims</h2>
+
+<table>
+  <thead><tr><th>Claim</th><th>Name</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>scope</td><td>Scope</td><td>Space-separated approved OAuth scopes. Check before serving each endpoint.</td></tr>
+    <tr><td>client_id</td><td>Client ID</td><td>The client that requested this token.</td></tr>
+    <tr><td>azp</td><td>Authorized Party</td><td>Same as client_id in some AS implementations (e.g. Keycloak).</td></tr>
+    <tr><td>email</td><td>Email</td><td>OIDC <code>email</code> scope. User's email address.</td></tr>
+    <tr><td>name</td><td>Full name</td><td>OIDC <code>profile</code> scope. Display name.</td></tr>
+    <tr><td>given_name</td><td>First name</td><td>OIDC <code>profile</code> scope.</td></tr>
+    <tr><td>family_name</td><td>Last name</td><td>OIDC <code>profile</code> scope.</td></tr>
+    <tr><td>amr</td><td>Auth Methods</td><td>How the user authenticated — e.g. <code>["pwd"]</code>, <code>["mfa"]</code>.</td></tr>
+    <tr><td>acr</td><td>Auth Context</td><td>Authentication assurance level. Can require MFA with policy.</td></tr>
+  </tbody>
+</table>
+
+<hr>
+
+<h2>Signing Algorithms</h2>
+
+<table class="alg-table">
+  <thead><tr><th>Algorithm</th><th>Type</th><th>Use</th></tr></thead>
+  <tbody>
+    <tr><td>RS256</td><td>RSA + SHA-256</td><td><strong>Preferred.</strong> Asymmetric: AS signs with private key; RSes verify with public key from JWKS. Enables key rotation.</td></tr>
+    <tr><td>RS384 / RS512</td><td>RSA + SHA-384/512</td><td>Stronger hash. Use RS256 unless you have a specific requirement.</td></tr>
+    <tr><td>ES256</td><td>ECDSA + SHA-256</td><td>Smaller signatures than RSA. Duende IS supports this.</td></tr>
+    <tr><td>HS256</td><td>HMAC + SHA-256</td><td>Symmetric: shared secret. Avoid for OAuth — requires distributing the secret to all Resource Servers.</td></tr>
+    <tr><td>none</td><td>—</td><td><strong>Never accept.</strong> No signature. Always explicitly reject in validation code.</td></tr>
+  </tbody>
+</table>
+
+<hr>
+
+<h2>Resource Server Validation Checklist</h2>
+
+<ul class="validate-list">
+  <li><span class="n">1</span><span><strong>Signature</strong> — verify using public key from JWKS matching the token's <code>kid</code></span></li>
+  <li><span class="n">2</span><span><code>iss</code> matches the expected Authorization Server URL exactly</span></li>
+  <li><span class="n">3</span><span><code>aud</code> contains this Resource Server's identifier</span></li>
+  <li><span class="n">4</span><span><code>exp</code> is in the future (with ≤60s clock-skew tolerance)</span></li>
+  <li><span class="n">5</span><span><code>nbf</code> is in the past, if the claim is present</span></li>
+  <li><span class="n">6</span><span><code>scope</code> includes the scope required by the endpoint being called</span></li>
+</ul>
+
+<h2>JWKS Discovery</h2>
+
+<pre style="font-size:0.8rem; margin:0.6rem 0;">GET /.well-known/openid-configuration     → { "jwks_uri": "..." }
+GET {jwks_uri}                             → { "keys": [ { "kid": "...", "n": "...", "e": "AQAB" } ] }</pre>
+
+<p style="font-size:0.84rem; color:var(--muted);">
+  Cache JWKS keys. On unknown <code>kid</code>, refresh the cache (AS may have rotated keys).
+  In ASP.NET Core <code>AddJwtBearer()</code> this is handled automatically.
+</p>
+
+<hr>
+
+<h2>Related Lessons &amp; References</h2>
+<ul style="font-size:0.88rem;">
+  <li><a href="../lessons/0015-jwt-anatomy.html">Lesson 15 — JWT Anatomy</a></li>
+  <li><a href="../lessons/0012-oauth-delegation-problem.html">Lesson 12 — OAuth 2.0 Foundations</a></li>
+  <li><a href="https://www.rfc-editor.org/rfc/rfc7519" target="_blank">RFC 7519 — JWT</a></li>
+  <li><a href="https://www.rfc-editor.org/rfc/rfc7517" target="_blank">RFC 7517 — JSON Web Key (JWK)</a></li>
+  <li><a href="https://jwt.io" target="_blank">jwt.io — interactive decoder</a></li>
+</ul>
+
+<div class="lesson-footer">
+  OAuth &amp; Identity Course · Reference · JWT Claims
+</div>
+
+</body>
+</html>

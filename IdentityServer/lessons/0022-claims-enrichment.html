@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 22 — Claims Enrichment: IProfileService</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    /* ── Pipeline diagram ──────────────────────────────── */
+    .pipeline {
+      display: flex;
+      align-items: stretch;
+      gap: 0;
+      margin: 1.2rem 0;
+      overflow-x: auto;
+    }
+    .pipe-stage {
+      flex: 1;
+      min-width: 100px;
+      border: 1px solid var(--border);
+      border-right: none;
+      padding: 0.7rem 0.8rem;
+      background: var(--surface);
+    }
+    .pipe-stage:last-child { border-right: 1px solid var(--border); border-radius: 0 var(--radius) var(--radius) 0; }
+    .pipe-stage:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+    .pipe-stage.highlight { background: #eef3ff; border-color: var(--accent); }
+    .pipe-label {
+      font-family: var(--font-ui);
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--muted);
+      margin-bottom: 0.25rem;
+    }
+    .pipe-title {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      font-weight: 700;
+    }
+    .pipe-title.accent { color: var(--accent); }
+    .pipe-desc { font-size: 0.76rem; color: var(--muted); margin-top: 0.25rem; }
+    .pipe-arrow {
+      display: flex;
+      align-items: center;
+      color: var(--muted);
+      font-size: 1.1rem;
+      padding: 0 0.2rem;
+      flex-shrink: 0;
+    }
+
+    /* ── Code section ──────────────────────────────────── */
+    .code-section {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 1rem 0;
+    }
+    .code-section .code-title {
+      font-family: var(--font-ui);
+      font-size: 0.72rem;
+      padding: 0.4rem 0.9rem;
+      background: var(--border);
+      color: var(--muted);
+      letter-spacing: 0.04em;
+    }
+    .code-section pre {
+      margin: 0;
+      padding: 1rem 1.1rem;
+      background: transparent;
+      border: none;
+      font-size: 0.81rem;
+      line-height: 1.65;
+    }
+
+    /* ── Token column layout ───────────────────────────── */
+    .token-cols {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin: 1rem 0;
+    }
+    @media (max-width: 600px) { .token-cols { grid-template-columns: 1fr; } }
+    .token-col {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .token-col .col-head {
+      font-family: var(--font-ui);
+      font-size: 0.76rem;
+      font-weight: 700;
+      padding: 0.4rem 0.8rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    .token-col ul {
+      margin: 0;
+      padding: 0.7rem 0.8rem 0.7rem 1.5rem;
+      font-size: 0.82rem;
+    }
+    .token-col li { margin-bottom: 0.25rem; }
+
+    /* ── Prop table ────────────────────────────────────── */
+    .prop-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.83rem;
+      margin: 0.8rem 0 1.2rem;
+    }
+    .prop-table th {
+      font-family: var(--font-ui);
+      text-align: left;
+      border-bottom: 2px solid var(--border);
+      padding: 0.4rem 0.6rem;
+      font-size: 0.74rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+    }
+    .prop-table td {
+      padding: 0.42rem 0.6rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    .prop-table td code { font-size: 0.78rem; }
+    .prop-table tr:last-child td { border-bottom: none; }
+
+    /* ── Annotation aside ──────────────────────────────── */
+    .annotated {
+      display: grid;
+      grid-template-columns: 1fr 0.52fr;
+      gap: 0 1.2rem;
+      align-items: start;
+      margin: 1rem 0;
+    }
+    @media (max-width: 600px) { .annotated { grid-template-columns: 1fr; } }
+    .annotation {
+      font-family: var(--font-ui);
+      font-size: 0.79rem;
+      color: var(--muted);
+      border-left: 3px solid var(--border);
+      padding-left: 0.8rem;
+    }
+    .annotation strong { color: var(--text); }
+    .annotation p { margin-bottom: 0.7rem; }
+  </style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="../MISSION.md">OAuth &amp; Identity Course</a> › Module 3: Building Duende IS ›
+    <a href="0021-external-providers.html">Lesson 21</a> › Lesson 22
+  </div>
+  <h1>Claims Enrichment — <code>IProfileService</code></h1>
+  <div class="meta">
+    <span>~25 minutes</span>
+    <span>Module 3 finale</span>
+    <span>Prerequisite: <a href="0021-external-providers.html">Lesson 21</a></span>
+  </div>
+</div>
+
+<p>
+  After login you have a <code>sub</code> claim — the user's stable ID.
+  Your APIs need more: tenant ID, roles, permissions, subscription tier.
+  These cannot go in the authentication cookie at login time because they may change
+  between sessions, differ per client, or come from multiple data sources.
+  <strong><code>IProfileService</code> is where Duende IS asks you to supply them,
+  on demand, each time a token is issued.</strong>
+</p>
+
+<div class="callout">
+  <strong>Module 3 capstone concept</strong>
+  Every piece of Module 3 leads here. You register clients (L19), handle login (L20),
+  federate external users (L21) — and then enrich the tokens those users receive
+  with the business claims that make authorization decisions possible.
+</div>
+
+<hr>
+
+<h2>The Claim Pipeline</h2>
+
+<div class="pipeline">
+  <div class="pipe-stage">
+    <div class="pipe-label">1 — Login</div>
+    <div class="pipe-title">Session</div>
+    <div class="pipe-desc">sub, name, idp stored in the auth cookie</div>
+  </div>
+  <div class="pipe-arrow">→</div>
+  <div class="pipe-stage">
+    <div class="pipe-label">2 — Config</div>
+    <div class="pipe-title">Scope declares</div>
+    <div class="pipe-desc">which claim types to include (e.g. tenant_id)</div>
+  </div>
+  <div class="pipe-arrow">→</div>
+  <div class="pipe-stage highlight">
+    <div class="pipe-label">3 — Your code</div>
+    <div class="pipe-title accent">IProfileService</div>
+    <div class="pipe-desc">adds actual claim values from your DB</div>
+  </div>
+  <div class="pipe-arrow">→</div>
+  <div class="pipe-stage">
+    <div class="pipe-label">4 — Token</div>
+    <div class="pipe-title">Signed JWT</div>
+    <div class="pipe-desc">claims included, signed, delivered</div>
+  </div>
+</div>
+
+<p>
+  The scope configuration (<em>step 2</em>) acts as a filter — it declares
+  <em>which claim types</em> can appear. Your <code>IProfileService</code>
+  (<em>step 3</em>) supplies the actual values. Both must cooperate.
+</p>
+
+<hr>
+
+<h2>Which Token Gets Which Claims</h2>
+
+<div class="token-cols">
+  <div class="token-col">
+    <div class="col-head">ID Token — identity claims</div>
+    <ul>
+      <li>Declared via <code>IdentityResource</code></li>
+      <li>Consumer: the client app (not your API)</li>
+      <li>Typical: <code>sub</code>, <code>name</code>, <code>email</code></li>
+      <li>Keep it small — clients may display these</li>
+    </ul>
+  </div>
+  <div class="token-col">
+    <div class="col-head">Access Token — authorization claims</div>
+    <ul>
+      <li>Declared via <code>ApiScope</code> or <code>ApiResource</code></li>
+      <li>Consumer: your API (validates and enforces)</li>
+      <li>Typical: <code>scope</code>, <code>tenant_id</code>, <code>role</code></li>
+      <li>Can be larger — the API needs context</li>
+    </ul>
+  </div>
+</div>
+
+<div class="callout callout-warn">
+  <strong>Don't put authorization claims in the ID token</strong>
+  The ID token is for the client to learn <em>who</em> the user is.
+  The access token is for APIs to decide <em>what</em> the user may do.
+  Mixing them inflates the ID token and leaks authorization logic to the front end.
+</div>
+
+<hr>
+
+<h2>Wiring <code>IProfileService</code></h2>
+
+<p>
+  Implement the interface and register it. Duende IS calls it every time it needs
+  to populate an ID token or access token.
+</p>
+
+<div class="annotated">
+  <div class="code-section" style="margin:0;">
+    <div class="code-title">Services/MyProfileService.cs</div>
+    <pre><code>public class MyProfileService : IProfileService
+{
+    private readonly IUserRepository _users;
+
+    public MyProfileService(IUserRepository users)
+    {
+        _users = users;
+    }
+
+    // Called when a token is about to be issued
+    public async Task GetProfileDataAsync(
+        ProfileDataRequestContext context)
+    {
+        // Who is the user?
+        var sub = context.Subject.GetSubjectId();
+
+        // Load their data from your store
+        var user = await _users.GetBySubjectIdAsync(sub);
+
+        // What claim types did the scope config declare?
+        // Only include what was requested — don't add everything.
+        var claims = new List&lt;Claim&gt;();
+
+        if (context.RequestedClaimTypes.Contains("tenant_id"))
+            claims.Add(new Claim("tenant_id", user.TenantId));
+
+        if (context.RequestedClaimTypes.Contains("role"))
+            claims.AddRange(
+                user.Roles.Select(r => new Claim("role", r)));
+
+        if (context.RequestedClaimTypes.Contains("email"))
+            claims.Add(new Claim("email", user.Email));
+
+        // Add them to the token
+        context.IssuedClaims.AddRange(claims);
+    }
+
+    // Called to check if the user is still allowed to get tokens
+    public async Task IsActiveAsync(IsActiveContext context)
+    {
+        var sub  = context.Subject.GetSubjectId();
+        var user = await _users.GetBySubjectIdAsync(sub);
+
+        // Return false to silently block token issuance
+        // (e.g. account locked, suspended, deleted)
+        context.IsActive = user?.IsActive ?? false;
+    }
+}</code></pre>
+  </div>
+  <div class="annotation">
+    <p><strong>GetProfileDataAsync</strong><br>
+    Called for both ID tokens and access tokens. The
+    <code>context.RequestedClaimTypes</code> set tells you exactly which claims
+    the client's requested scopes have declared — filter to that set.</p>
+
+    <p><strong>IsActiveAsync</strong><br>
+    Called before every token issuance and before returning tokens from the
+    UserInfo endpoint. Return <code>false</code> to block a locked or
+    deleted account from receiving new tokens.</p>
+
+    <p><strong>Only emit requested claims</strong><br>
+    Adding claims not in <code>RequestedClaimTypes</code> wastes bytes and
+    may expose data the client didn't ask for. Filter strictly.</p>
+  </div>
+</div>
+
+<h3>Registration</h3>
+
+<div class="code-section">
+  <div class="code-title">Program.cs</div>
+  <pre><code>builder.Services.AddIdentityServer()
+    .AddInMemoryIdentityResources(Config.IdentityResources)
+    .AddInMemoryApiScopes(Config.ApiScopes)
+    .AddInMemoryClients(Config.Clients)
+    .AddProfileService&lt;MyProfileService&gt;()   // ← add this
+    .AddDeveloperSigningCredential();</code></pre>
+</div>
+
+<hr>
+
+<h2>Connecting Scopes to Claims — The Full Picture</h2>
+
+<p>
+  Your <code>Config.cs</code> must declare which claim types a scope surfaces.
+  <code>IProfileService</code> then supplies the values. Both sides must agree
+  on the claim name.
+</p>
+
+<div class="code-section">
+  <div class="code-title">Config.cs — declaring claim types on scopes</div>
+  <pre><code>// Access token claims — declared on ApiScope
+new ApiScope(
+    name:       "calendar.read",
+    displayName: "Read calendar events",
+    userClaims:  new[] { "tenant_id", "role" }   // ← these get added to the access token
+),
+
+// ID token claims — declared on IdentityResource
+new IdentityResource(
+    name:       "tenant",
+    displayName: "Tenant membership",
+    userClaims:  new[] { "tenant_id", "tenant_role" }   // ← these get added to the ID token
+)</code></pre>
+</div>
+
+<p>
+  When a client requests <code>scope=calendar.read</code>, Duende IS sees that
+  scope needs <code>tenant_id</code> and <code>role</code>, sets those in
+  <code>RequestedClaimTypes</code>, and calls your <code>GetProfileDataAsync</code>.
+  Your service loads them from the database and adds them to <code>IssuedClaims</code>.
+</p>
+
+<hr>
+
+<h2>Context-Aware Claims — Per Client</h2>
+
+<p>
+  <code>context.Client</code> tells you which registered client is requesting the token.
+  Use this to add different claims for different applications:
+</p>
+
+<div class="code-section">
+  <div class="code-title">Per-client claims in GetProfileDataAsync</div>
+  <pre><code>// Only add highly-privileged claims for the internal admin tool
+if (context.Client.ClientId == "admin-dashboard"
+    &amp;&amp; context.RequestedClaimTypes.Contains("permission"))
+{
+    var permissions = await _users.GetPermissionsAsync(sub);
+    claims.AddRange(
+        permissions.Select(p => new Claim("permission", p)));
+}</code></pre>
+</div>
+
+<hr>
+
+<h2>Knowledge Check</h2>
+
+<div class="quiz" data-quiz="q22">
+
+  <div class="quiz-question" data-correct="c">
+    <p><strong>1.</strong> A user's role changes after they log in. How does the new
+    role appear in their next access token?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q22-q0" value="a"> It doesn't — roles are baked into the session cookie at login and cannot change</label></li>
+      <li><label><input type="radio" name="q22-q0" value="b"> The client must log the user out and back in to trigger a session refresh</label></li>
+      <li><label><input type="radio" name="q22-q0" value="c"> The next token request calls <code>GetProfileDataAsync</code>, which reads the current role from the DB</label></li>
+      <li><label><input type="radio" name="q22-q0" value="d"> Duende IS polls the user store every 5 minutes and updates the session automatically</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="b">
+    <p><strong>2.</strong> Your <code>GetProfileDataAsync</code> adds a <code>tenant_id</code>
+    claim, but it never appears in the access token. The most likely cause is:</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q22-q1" value="a"> <code>IProfileService</code> is only called for ID tokens, not access tokens</label></li>
+      <li><label><input type="radio" name="q22-q1" value="b"> The ApiScope does not list <code>tenant_id</code> in its <code>userClaims</code>, so it is never requested</label></li>
+      <li><label><input type="radio" name="q22-q1" value="c"> The client must explicitly pass <code>claims=tenant_id</code> in the token request parameters</label></li>
+      <li><label><input type="radio" name="q22-q1" value="d"> Access tokens cannot carry custom claims — only standard IANA-registered claim names are allowed</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="d">
+    <p><strong>3.</strong> What is the purpose of <code>IsActiveAsync</code>?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q22-q2" value="a"> It validates the client's secret before any token can be issued to that client</label></li>
+      <li><label><input type="radio" name="q22-q2" value="b"> It checks whether the requested scopes are still registered in the ApiScopes collection</label></li>
+      <li><label><input type="radio" name="q22-q2" value="c"> It verifies the signing certificate has not expired before signing the outgoing token</label></li>
+      <li><label><input type="radio" name="q22-q2" value="d"> It lets you block token issuance for locked, suspended, or deleted user accounts</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="a">
+    <p><strong>4.</strong> A client requests <code>scope=openid profile calendar.read</code>.
+    Which method on <code>IProfileService</code> will Duende IS call to populate the
+    <em>access token</em>?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q22-q3" value="a"> <code>GetProfileDataAsync</code>, with <code>RequestedClaimTypes</code> set from <code>calendar.read</code>'s declared user claims</label></li>
+      <li><label><input type="radio" name="q22-q3" value="b"> <code>GetProfileDataAsync</code>, with <code>RequestedClaimTypes</code> set from <code>openid profile</code>'s declared user claims</label></li>
+      <li><label><input type="radio" name="q22-q3" value="c"> <code>IsActiveAsync</code>, because the access token checks activity, not the profile service</label></li>
+      <li><label><input type="radio" name="q22-q3" value="d"> Neither — access tokens are populated automatically from the session cookie without calling the profile service</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+</div>
+
+<button class="quiz-btn" data-quiz-submit="q22">Check Answers</button>
+<div class="quiz-score"></div>
+
+<hr>
+
+<h2>Quick Reference</h2>
+
+<table class="prop-table">
+  <thead>
+    <tr><th>I want to…</th><th>I do…</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Add a custom claim to the access token</td>
+      <td>Add it to <code>ApiScope.userClaims</code> in Config.cs AND emit it in <code>GetProfileDataAsync</code></td>
+    </tr>
+    <tr>
+      <td>Add a custom claim to the ID token</td>
+      <td>Add it to <code>IdentityResource.userClaims</code> in Config.cs AND emit it in <code>GetProfileDataAsync</code></td>
+    </tr>
+    <tr>
+      <td>Block a suspended account from getting tokens</td>
+      <td>Return <code>context.IsActive = false</code> in <code>IsActiveAsync</code></td>
+    </tr>
+    <tr>
+      <td>Add different claims per client</td>
+      <td>Check <code>context.Client.ClientId</code> inside <code>GetProfileDataAsync</code></td>
+    </tr>
+    <tr>
+      <td>Register the service</td>
+      <td><code>.AddProfileService&lt;MyProfileService&gt;()</code> in <code>AddIdentityServer()</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  See also: <a href="../reference/authorization-cheatsheet.html">Authorization Cheat Sheet</a>
+  and <a href="../reference/jwt-claims-cheatsheet.html">JWT Claims Cheat Sheet</a>.
+</p>
+
+<hr>
+
+<h2>Primary Source</h2>
+
+<p>
+  The Duende documentation on profile service covers both methods with concrete examples:
+  <a href="https://docs.duendesoftware.com/identityserver/v7/fundamentals/claims/" target="_blank">
+  docs.duendesoftware.com → Fundamentals → Claims</a>.
+</p>
+
+<hr>
+
+<h2>Module 3 Complete</h2>
+
+<p>
+  You have finished all five lessons in Module 3 — Duende IS is no longer a black box.
+  You know how to set it up, configure clients and resources, build the login UI,
+  federate external providers, and enrich tokens with business claims.
+</p>
+
+<p>
+  <strong>Module 4 — Microservices Auth</strong> starts with
+  <a href="0023-jwt-bearer-api.html">Lesson 23: JWT Bearer API</a> —
+  the other side of the token: protecting an ASP.NET Core API so it validates
+  and enforces the tokens Duende IS issues.
+</p>
+
+<div class="callout">
+  <strong>Ask your teacher</strong>
+  Unsure when to load claims eagerly at login vs. freshly via <code>IProfileService</code>?
+  Want to know how the UserInfo endpoint relates to <code>GetProfileDataAsync</code>?
+  Post your question and I'll explain it.
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+  window.quizExplanations = {
+    'q22': {
+      0: {
+        a: "IProfileService is called on every token request — it reads fresh data from your DB each time.",
+        b: "Logout/login is not required. The profile service is called on the next token issuance automatically.",
+        c: "Correct. GetProfileDataAsync fires on every token request and reads current data from the DB, so role changes are reflected in the next token.",
+        d: "Duende IS does not poll your user store. Data is fetched on demand when a token is requested."
+      },
+      1: {
+        a: "IProfileService is called for both ID tokens and access tokens — token type is distinguished by context.",
+        b: "Correct. The scope config (ApiScope.userClaims) is the source of RequestedClaimTypes. Without tenant_id there, it is never placed in RequestedClaimTypes, so your service never adds it.",
+        c: "Claim filtering is configuration-driven (scope declarations), not a request parameter clients pass.",
+        d: "Access tokens support any claim — there is no restriction to IANA-registered names."
+      },
+      2: {
+        a: "Client secret validation happens in the token endpoint pipeline, before the profile service is ever called.",
+        b: "Scope registration is validated much earlier in the pipeline, not inside IsActiveAsync.",
+        c: "Certificate validation is infrastructure-level, completely separate from the profile service.",
+        d: "Correct. IsActiveAsync lets you gate token issuance on real-time user state — if you return false, the token is not issued regardless of valid credentials or session."
+      },
+      3: {
+        a: "Correct. For the access token, Duende IS assembles RequestedClaimTypes from the ApiScope(s) in the request — here calendar.read. IProfileService.GetProfileDataAsync is then called with that set.",
+        b: "openid and profile are IdentityResources — they drive ID token population, not access token population.",
+        c: "IsActiveAsync checks whether to issue any token at all. Claim population is GetProfileDataAsync.",
+        d: "Access tokens are not populated from the session cookie. IProfileService is always called to supply claims."
+      }
+    }
+  };
+</script>
+
+</body>
+</html>

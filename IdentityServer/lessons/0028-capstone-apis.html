@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 28 — Capstone: Build the Calendar API & Reports Worker</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    /* ── Numbered step ─────────────────────────────────── */
+    .steps { counter-reset: step; margin: 1.2rem 0; }
+    .step-block {
+      counter-increment: step;
+      display: grid;
+      grid-template-columns: 2.4rem 1fr;
+      gap: 0 0.85rem;
+      margin-bottom: 1.8rem;
+      align-items: start;
+    }
+    .step-num {
+      width: 2.4rem;
+      height: 2.4rem;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-ui);
+      font-weight: 700;
+      font-size: 0.9rem;
+      flex-shrink: 0;
+      margin-top: 0.05rem;
+    }
+    .step-content h3 { margin-top: 0.1rem; margin-bottom: 0.5rem; font-size: 1rem; }
+    .step-content p  { margin-bottom: 0.6rem; }
+
+    /* ── Section divider ───────────────────────────────── */
+    .project-heading {
+      font-family: var(--font-ui);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+      border-bottom: 2px solid var(--border);
+      padding-bottom: 0.3rem;
+      margin: 2rem 0 1.2rem;
+    }
+    .project-heading span {
+      background: var(--accent);
+      color: #fff;
+      border-radius: var(--radius);
+      padding: 0.1rem 0.55rem;
+      font-size: 0.68rem;
+      margin-right: 0.5rem;
+    }
+
+    /* ── Code section ──────────────────────────────────── */
+    .code-section {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 0.7rem 0;
+    }
+    .code-section .code-title {
+      font-family: var(--font-ui);
+      font-size: 0.72rem;
+      padding: 0.35rem 0.9rem;
+      background: var(--border);
+      color: var(--muted);
+      letter-spacing: 0.04em;
+    }
+    .code-section pre {
+      margin: 0;
+      padding: 0.9rem 1.1rem;
+      font-size: 0.8rem;
+      line-height: 1.65;
+    }
+
+    /* ── Verify box ────────────────────────────────────── */
+    .verify-box {
+      border: 1px solid var(--success);
+      background: var(--success-bg);
+      border-radius: var(--radius);
+      padding: 0.75rem 1rem;
+      font-size: 0.83rem;
+      margin: 0.7rem 0;
+    }
+    .verify-box strong { color: var(--success); display: block; margin-bottom: 0.2rem; }
+
+    /* ── HTTP test table ───────────────────────────────── */
+    .http-tests {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+      margin: 0.8rem 0;
+    }
+    .http-tests th {
+      font-family: var(--font-ui);
+      text-align: left;
+      border-bottom: 2px solid var(--border);
+      padding: 0.35rem 0.6rem;
+      font-size: 0.73rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+    }
+    .http-tests td {
+      padding: 0.4rem 0.6rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    .http-tests td code { font-size: 0.77rem; }
+    .http-tests tr:last-child td { border-bottom: none; }
+    .status-200 { color: var(--success); font-family: var(--font-mono); font-weight: 700; }
+    .status-401 { color: var(--error);   font-family: var(--font-mono); font-weight: 700; }
+    .status-403 { color: var(--warn);    font-family: var(--font-mono); font-weight: 700; }
+  </style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="../MISSION.md">OAuth &amp; Identity Course</a> › Module 5: Capstone ›
+    <a href="0027-capstone-is.html">Lesson 27</a> › Lesson 28
+  </div>
+  <h1>Capstone — Build the Calendar API &amp; Reports Worker</h1>
+  <div class="meta">
+    <span>~40 minutes</span>
+    <span>Hands-on build</span>
+    <span>Prerequisite: <a href="0027-capstone-is.html">Lesson 27</a> — WorkSpace IS running on port 5001</span>
+  </div>
+</div>
+
+<p>
+  WorkSpace IS is up and issuing tokens. This lesson builds two more projects:
+  the <strong>Calendar API</strong> that validates those tokens and enforces tenant isolation,
+  and the <strong>Reports Worker</strong> that acquires its own service token to call the API.
+</p>
+
+<hr>
+<div class="project-heading"><span>Project 1</span> Calendar API — port 5003</div>
+
+<div class="steps">
+
+  <!-- STEP 1 -->
+  <div class="step-block">
+    <div class="step-num">1</div>
+    <div class="step-content">
+      <h3>Create project and add packages</h3>
+      <div class="code-section">
+        <div class="code-title">Terminal — in the solution root (sibling to WorkSpaceIS)</div>
+        <pre><code>dotnet new webapi -n CalendarApi --no-openapi
+cd CalendarApi
+dotnet add package Microsoft.AspNetCore.Authentication.JwtBearer</code></pre>
+      </div>
+      <p>Set the port in <code>Properties/launchSettings.json</code>:</p>
+      <div class="code-section">
+        <div class="code-title">Properties/launchSettings.json</div>
+        <pre><code>{
+  "profiles": {
+    "CalendarApi": {
+      "commandName": "Project",
+      "applicationUrl": "https://localhost:5003",
+      "environmentVariables": { "ASPNETCORE_ENVIRONMENT": "Development" }
+    }
+  }
+}</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 2 -->
+  <div class="step-block">
+    <div class="step-num">2</div>
+    <div class="step-content">
+      <h3>Create the in-memory event store</h3>
+      <p>Create <code>Models/CalendarEvent.cs</code> — a simple model with tenant ownership:</p>
+      <div class="code-section">
+        <div class="code-title">Models/CalendarEvent.cs</div>
+        <pre><code>public record CalendarEvent(int Id, string Title, string TenantId, DateTime Start);</code></pre>
+      </div>
+      <p>Create <code>Data/EventStore.cs</code> — a static in-memory list seeded with test data:</p>
+      <div class="code-section">
+        <div class="code-title">Data/EventStore.cs</div>
+        <pre><code>public static class EventStore
+{
+    public static List&lt;CalendarEvent&gt; Events { get; } = new()
+    {
+        new(1, "ACME All-Hands",    "tenant-acme",   DateTime.Today.AddDays(1)),
+        new(2, "ACME Sprint Review","tenant-acme",   DateTime.Today.AddDays(3)),
+        new(3, "Globex Kickoff",    "tenant-globex", DateTime.Today.AddDays(2)),
+    };
+}</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 3 -->
+  <div class="step-block">
+    <div class="step-num">3</div>
+    <div class="step-content">
+      <h3>Wire JWT Bearer and scope policies in Program.cs</h3>
+      <div class="code-section">
+        <div class="code-title">Program.cs</div>
+        <pre><code>var builder = WebApplication.CreateBuilder(args);
+
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.Authority = "https://localhost:5001";
+
+        // Duende IS sets aud to the scope name when no ApiResource groups it
+        options.TokenValidationParameters.ValidateAudience = false;
+
+        // Allow self-signed cert from IS in development
+        options.BackchannelHttpHandler = new HttpClientHandler
+        {
+            ServerCertificateCustomValidationCallback = (_, _, _, _) => true
+        };
+    });
+
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("CanReadCalendar",  p => p.RequireClaim("scope", "calendar.read"));
+    options.AddPolicy("CanWriteCalendar", p => p.RequireClaim("scope", "calendar.write"));
+});
+
+// Register the ownership requirement handler
+builder.Services.AddSingleton&lt;IAuthorizationHandler, EventOwnerHandler&gt;();
+
+builder.Services.AddControllers();
+
+var app = builder.Build();
+
+app.UseAuthentication();
+app.UseAuthorization();
+app.MapControllers();
+app.Run();</code></pre>
+      </div>
+      <div class="callout callout-warn">
+        <strong>ValidateAudience = false</strong>
+        This is a development shortcut. In production, configure <code>ApiResource</code>
+        in Config.cs and set <code>ValidAudience</code> to the resource name.
+        Duende IS then stamps <code>aud</code> on the token automatically.
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 4 -->
+  <div class="step-block">
+    <div class="step-num">4</div>
+    <div class="step-content">
+      <h3>Implement the EventOwner requirement and handler</h3>
+      <p>Create <code>Authorization/EventOwnerRequirement.cs</code>:</p>
+      <div class="code-section">
+        <div class="code-title">Authorization/EventOwnerRequirement.cs</div>
+        <pre><code>public class EventOwnerRequirement : IAuthorizationRequirement { }
+
+public class EventOwnerHandler
+    : AuthorizationHandler&lt;EventOwnerRequirement, CalendarEvent&gt;
+{
+    protected override Task HandleRequirementAsync(
+        AuthorizationHandlerContext context,
+        EventOwnerRequirement requirement,
+        CalendarEvent resource)
+    {
+        var tokenTenantId = context.User.FindFirstValue("tenant_id");
+
+        if (tokenTenantId != null
+            && tokenTenantId == resource.TenantId)
+        {
+            context.Succeed(requirement);
+        }
+
+        return Task.CompletedTask;
+    }
+}</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 5 -->
+  <div class="step-block">
+    <div class="step-num">5</div>
+    <div class="step-content">
+      <h3>Create the CalendarController</h3>
+      <div class="code-section">
+        <div class="code-title">Controllers/CalendarController.cs</div>
+        <pre><code>[ApiController]
+[Route("api/[controller]")]
+[Authorize(Policy = "CanReadCalendar")]   // all actions need calendar.read
+public class CalendarController : ControllerBase
+{
+    private readonly IAuthorizationService _authz;
+
+    public CalendarController(IAuthorizationService authz) => _authz = authz;
+
+    // GET api/calendar — return events for the caller's tenant only
+    [HttpGet]
+    public IActionResult GetEvents()
+    {
+        var tenantId = User.FindFirstValue("tenant_id");
+        var events   = EventStore.Events
+            .Where(e => e.TenantId == tenantId)
+            .ToList();
+
+        return Ok(events);
+    }
+
+    // DELETE api/calendar/{id} — must own the event
+    [HttpDelete("{id:int}")]
+    [Authorize(Policy = "CanWriteCalendar")]   // also needs write scope
+    public async Task&lt;IActionResult&gt; DeleteEvent(int id)
+    {
+        var calEvent = EventStore.Events.FirstOrDefault(e => e.Id == id);
+        if (calEvent == null) return NotFound();
+
+        // Imperative: check ownership against the specific event
+        var result = await _authz.AuthorizeAsync(User, calEvent, new EventOwnerRequirement());
+        if (!result.Succeeded) return Forbid();
+
+        EventStore.Events.Remove(calEvent);
+        return NoContent();
+    }
+}</code></pre>
+      </div>
+      <div class="verify-box">
+        <strong>Verify →</strong> <code>dotnet build</code> succeeds, then
+        <code>dotnet run</code> starts the API at <code>https://localhost:5003</code>.
+      </div>
+    </div>
+  </div>
+
+</div><!-- end Calendar API steps -->
+
+<h3>Expected HTTP responses</h3>
+
+<table class="http-tests">
+  <thead><tr><th>Request</th><th>Token</th><th>Expected</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>GET /api/calendar</code></td>
+      <td>None</td>
+      <td><span class="status-401">401</span> — no token</td>
+    </tr>
+    <tr>
+      <td><code>GET /api/calendar</code></td>
+      <td>Alice's token with <code>calendar.read</code></td>
+      <td><span class="status-200">200</span> — ACME events only</td>
+    </tr>
+    <tr>
+      <td><code>GET /api/calendar</code></td>
+      <td>Bob's token with <code>calendar.read</code></td>
+      <td><span class="status-200">200</span> — Globex events only</td>
+    </tr>
+    <tr>
+      <td><code>DELETE /api/calendar/3</code></td>
+      <td>Alice's token (tenant-acme, event is tenant-globex)</td>
+      <td><span class="status-403">403</span> — wrong tenant</td>
+    </tr>
+    <tr>
+      <td><code>DELETE /api/calendar/1</code></td>
+      <td>Alice's token (tenant-acme, event is tenant-acme)</td>
+      <td><span class="status-200">204</span> — deleted</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  To get a token for manual testing, use the Duende IS
+  <a href="https://localhost:5001/diagnostics" target="_blank">Diagnostics page</a>
+  after logging in, or the token endpoint directly with a tool like
+  <a href="https://www.thunderclient.com/" target="_blank">Thunder Client</a> or curl.
+</p>
+
+<hr>
+<div class="project-heading"><span>Project 2</span> Reports Worker — background service</div>
+
+<div class="steps" style="counter-reset: step 5;">
+
+  <!-- STEP 6 -->
+  <div class="step-block">
+    <div class="step-num">6</div>
+    <div class="step-content">
+      <h3>Create the worker project and add packages</h3>
+      <div class="code-section">
+        <div class="code-title">Terminal — in solution root</div>
+        <pre><code>dotnet new worker -n ReportsWorker
+cd ReportsWorker
+dotnet add package Duende.AccessTokenManagement
+dotnet add package Microsoft.Extensions.Http</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 7 -->
+  <div class="step-block">
+    <div class="step-num">7</div>
+    <div class="step-content">
+      <h3>Wire token management and a named HttpClient in Program.cs</h3>
+      <div class="code-section">
+        <div class="code-title">Program.cs</div>
+        <pre><code>var builder = Host.CreateApplicationBuilder(args);
+
+// Token management — declare the IS token endpoint and client credentials
+builder.Services.AddClientCredentialsTokenManagement()
+    .AddClient("calendar-api", client =>
+    {
+        client.TokenEndpoint = "https://localhost:5001/connect/token";
+        client.ClientId      = "reports-worker";
+        client.ClientSecret  = "worker-secret";
+        client.Scope         = "calendar.read";
+    });
+
+// Named HttpClient — automatically attaches a valid Bearer token
+builder.Services.AddClientCredentialsHttpClient(
+    httpClientName: "CalendarClient",
+    tokenClientName: "calendar-api",
+    configureClient: client =>
+    {
+        client.BaseAddress = new Uri("https://localhost:5003");
+
+        // Trust dev cert from Calendar API
+        // In production: use proper cert validation
+    });
+
+builder.Services.AddHostedService&lt;ReportsWorker&gt;();
+
+var host = builder.Build();
+host.Run();</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 8 -->
+  <div class="step-block">
+    <div class="step-num">8</div>
+    <div class="step-content">
+      <h3>Implement the worker</h3>
+      <div class="code-section">
+        <div class="code-title">ReportsWorker.cs</div>
+        <pre><code>public class ReportsWorker : BackgroundService
+{
+    private readonly IHttpClientFactory _factory;
+    private readonly ILogger&lt;ReportsWorker&gt; _logger;
+
+    public ReportsWorker(
+        IHttpClientFactory factory,
+        ILogger&lt;ReportsWorker&gt; logger)
+    {
+        _factory = factory;
+        _logger  = logger;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                // Token is automatically acquired, cached, and renewed
+                var client   = _factory.CreateClient("CalendarClient");
+                var response = await client.GetAsync("/api/calendar", stoppingToken);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    var json = await response.Content.ReadAsStringAsync(stoppingToken);
+                    _logger.LogInformation("Calendar data: {data}", json);
+                }
+                else
+                {
+                    _logger.LogWarning("Unexpected status: {status}", response.StatusCode);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Report run failed");
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
+        }
+    }
+}</code></pre>
+      </div>
+      <div class="verify-box">
+        <strong>Verify →</strong> Start the worker with <code>dotnet run</code> (CalendarApi must also be running).
+        Watch the console — you should see <em>"Calendar data: […]"</em> logged every 30 seconds.
+        The worker fetches a token once and reuses it until near expiry.
+      </div>
+    </div>
+  </div>
+
+</div><!-- end Worker steps -->
+
+<hr>
+
+<h2>Knowledge Check</h2>
+
+<div class="quiz" data-quiz="q28">
+
+  <div class="quiz-question" data-correct="a">
+    <p><strong>1.</strong> The Calendar API sets <code>ValidateAudience = false</code>
+    in development. What is the correct production fix?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q28-q0" value="a"> Define an <code>ApiResource</code> in Config.cs and set <code>ValidAudience</code> to that resource name</label></li>
+      <li><label><input type="radio" name="q28-q0" value="b"> Set <code>ValidateAudience = true</code> without configuring an audience — the middleware detects it automatically</label></li>
+      <li><label><input type="radio" name="q28-q0" value="c"> Add a custom middleware that validates the audience header before JWT Bearer runs</label></li>
+      <li><label><input type="radio" name="q28-q0" value="d"> Move audience validation into the <code>EventOwnerHandler</code> alongside the tenant check</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="c">
+    <p><strong>2.</strong> Alice (tenant-acme) tries to delete event #3 (tenant-globex)
+    with a valid token containing <code>calendar.write</code> scope.
+    At which point does the API deny the request?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q28-q1" value="a"> At <code>[Authorize(Policy = "CanReadCalendar")]</code> on the controller class</label></li>
+      <li><label><input type="radio" name="q28-q1" value="b"> At <code>[Authorize(Policy = "CanWriteCalendar")]</code> on the delete action</label></li>
+      <li><label><input type="radio" name="q28-q1" value="c"> Inside the action body — <code>AuthorizeAsync</code> against <code>EventOwnerRequirement</code> fails</label></li>
+      <li><label><input type="radio" name="q28-q1" value="d"> In JWT Bearer middleware — Alice's token does not contain Globex's tenant_id</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="b">
+    <p><strong>3.</strong> The Reports Worker calls <code>/api/calendar</code> and
+    gets a list of events back. Which tenant's events does it receive?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q28-q2" value="a"> All events from every tenant — machine tokens bypass the tenant filter</label></li>
+      <li><label><input type="radio" name="q28-q2" value="b"> No events — the Client Credentials token has no <code>tenant_id</code> claim, so the WHERE filter returns empty</label></li>
+      <li><label><input type="radio" name="q28-q2" value="c"> Only tenant-acme events — Client Credentials tokens default to the first tenant in the store</label></li>
+      <li><label><input type="radio" name="q28-q2" value="d"> All ACME events and all Globex events — scope alone unlocks full cross-tenant access</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="d">
+    <p><strong>4.</strong> The ReportsWorker runs every 30 seconds. How many times
+    does <code>Duende.AccessTokenManagement</code> call <code>/connect/token</code>
+    during a 60-minute run? (Token lifetime = 3600 s, renewal at 60 s before expiry.)</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q28-q3" value="a"> 120 times — once per 30-second loop iteration</label></li>
+      <li><label><input type="radio" name="q28-q3" value="b"> 60 times — once per minute as the token is re-validated</label></li>
+      <li><label><input type="radio" name="q28-q3" value="c"> 2 times — once at startup and once at the 30-minute renewal checkpoint</label></li>
+      <li><label><input type="radio" name="q28-q3" value="d"> 1 time — the token is cached for ~59 minutes; no renewal occurs within 60 minutes</label></pre></label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+</div>
+
+<button class="quiz-btn" data-quiz-submit="q28">Check Answers</button>
+<div class="quiz-score"></div>
+
+<hr>
+
+<h2>Primary Source</h2>
+
+<p>
+  For JWT Bearer configuration options see
+  <a href="https://learn.microsoft.com/en-us/aspnet/core/security/authentication/jwt-authn" target="_blank">
+  JWT bearer authentication in ASP.NET Core</a>.
+  For the token management library see
+  <a href="https://docs.duendesoftware.com/accesstokenmanagement/v2/client/" target="_blank">
+  Duende Access Token Management — Client Token Management</a>.
+</p>
+
+<hr>
+
+<h2>What's Next</h2>
+
+<p>
+  IS is running. Calendar API is protected. Reports Worker is fetching data silently.
+  The final piece is the user-facing side:
+  <a href="0029-capstone-web.html">Lesson 29 — Build WorkSpace Web</a>,
+  the ASP.NET Core MVC app where a real user logs in via OIDC, sees their calendar events,
+  and triggers the complete end-to-end flow.
+</p>
+
+<div class="callout">
+  <strong>Ask your teacher</strong>
+  Getting a 401 from the Calendar API even with a token? Run
+  <code>dotnet run --project WorkSpaceIS</code> in one terminal and
+  <code>dotnet run --project CalendarApi</code> in another, paste the error and
+  the decoded token from <a href="https://jwt.ms" target="_blank">jwt.ms</a> here.
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+  window.quizExplanations = {
+    'q28': {
+      0: {
+        a: "Correct. ApiResource groups related scopes under one audience name. Duende IS then stamps that name into the token's aud claim. Set ValidAudience to match it in AddJwtBearer.",
+        b: "Setting ValidateAudience = true without a ValidAudience value causes every token to fail — the middleware has nothing to compare against.",
+        c: "Audience validation is a JWT concern handled by the JWT Bearer middleware — not custom middleware.",
+        d: "EventOwnerHandler enforces resource ownership, not token audience. These are separate concerns."
+      },
+      1: {
+        a: "Alice's token has calendar.read scope, so the controller-level policy passes.",
+        b: "Alice's token has calendar.write scope, so the action-level policy also passes.",
+        c: "Correct. Both scope policies pass (Alice has read + write). The denial happens inside the action body when AuthorizeAsync checks EventOwnerRequirement and finds that tenant-acme ≠ tenant-globex.",
+        d: "JWT Bearer validates the token's structure, expiry, and issuer — it does not inspect tenant_id. That is application-layer authorization."
+      },
+      2: {
+        a: "The Calendar API's GetEvents filters by the caller's tenant_id claim. Machine tokens have no tenant_id, so the filter produces an empty result — not a bypass.",
+        b: "Correct. Client Credentials tokens carry no user context. IProfileService has no user sub to look up, so no tenant_id is added. The WHERE clause returns an empty list.",
+        c: "There is no 'default tenant' behavior in the API or the token. The filter is purely claim-driven.",
+        d: "Scope controls which endpoints can be called, not which rows are returned. Tenant isolation is enforced by the tenant_id claim filter in the action body."
+      },
+      3: {
+        a: "120 calls would mean a call per iteration — exactly the anti-pattern the library is designed to prevent.",
+        b: "The library does not re-validate per minute. It caches and only calls the endpoint near expiry.",
+        c: "Renewal happens at 3540 seconds (59 minutes). In a 60-minute window, the first renewal falls just at the end — potentially 2 calls, but only if the run exceeds 59 minutes.",
+        d: "Correct. With expires_in = 3600s, the library caches the token and renews at ~3540s. A 60-minute run (3600s) barely triggers a second request — effectively 1 token acquisition for the entire run."
+      }
+    }
+  };
+</script>
+
+</body>
+</html>

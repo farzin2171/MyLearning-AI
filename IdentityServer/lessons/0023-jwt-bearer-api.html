@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 23 — JWT Bearer API: Protecting an ASP.NET Core API</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    /* ── Two-side layout (IS ↔ API) ────────────────────── */
+    .sides {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin: 1.2rem 0;
+    }
+    @media (max-width: 600px) { .sides { grid-template-columns: 1fr; } }
+    .side {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .side .side-head {
+      font-family: var(--font-ui);
+      font-size: 0.76rem;
+      font-weight: 700;
+      padding: 0.45rem 0.85rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    .side .side-head.accent { color: var(--accent); }
+    .side ul {
+      margin: 0;
+      padding: 0.7rem 0.85rem 0.7rem 1.8rem;
+      font-size: 0.82rem;
+    }
+    .side li { margin-bottom: 0.28rem; }
+
+    /* ── Code section ──────────────────────────────────── */
+    .code-section {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 1rem 0;
+    }
+    .code-section .code-title {
+      font-family: var(--font-ui);
+      font-size: 0.72rem;
+      padding: 0.4rem 0.9rem;
+      background: var(--border);
+      color: var(--muted);
+      letter-spacing: 0.04em;
+    }
+    .code-section pre {
+      margin: 0;
+      padding: 1rem 1.1rem;
+      background: transparent;
+      border: none;
+      font-size: 0.81rem;
+      line-height: 1.65;
+    }
+
+    /* ── Validation checklist ──────────────────────────── */
+    .checklist {
+      list-style: none;
+      margin: 0.8rem 0 1.2rem;
+      padding: 0;
+    }
+    .checklist li {
+      display: flex;
+      gap: 0.6rem;
+      align-items: baseline;
+      padding: 0.4rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.84rem;
+    }
+    .checklist li:last-child { border-bottom: none; }
+    .check-num {
+      font-family: var(--font-ui);
+      font-size: 0.7rem;
+      font-weight: 700;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 50%;
+      width: 1.4rem;
+      height: 1.4rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .check-claim { font-family: var(--font-mono); font-size: 0.8rem; color: var(--accent); }
+
+    /* ── Annotated code ───────────────────────────────── */
+    .annotated {
+      display: grid;
+      grid-template-columns: 1fr 0.5fr;
+      gap: 0 1.2rem;
+      align-items: start;
+      margin: 1rem 0;
+    }
+    @media (max-width: 600px) { .annotated { grid-template-columns: 1fr; } }
+    .annotation {
+      font-family: var(--font-ui);
+      font-size: 0.79rem;
+      color: var(--muted);
+      border-left: 3px solid var(--border);
+      padding-left: 0.8rem;
+    }
+    .annotation strong { color: var(--text); }
+    .annotation p { margin-bottom: 0.65rem; }
+
+    /* ── Sequence diagram ──────────────────────────────── */
+    .seq { margin: 1.2rem 0; font-family: var(--font-ui); font-size: 0.8rem; }
+    .seq-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.48rem;
+    }
+    .seq-actor {
+      min-width: 110px;
+      text-align: right;
+      font-weight: 700;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+    .seq-arrow { color: var(--accent); font-size: 1rem; flex-shrink: 0; }
+    .seq-label {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 0.18rem 0.7rem;
+      font-family: var(--font-mono);
+      font-size: 0.73rem;
+    }
+    .seq-note {
+      margin-left: 125px;
+      color: var(--muted);
+      font-size: 0.76rem;
+      font-style: italic;
+      margin-bottom: 0.48rem;
+    }
+  </style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="../MISSION.md">OAuth &amp; Identity Course</a> › Module 4: Microservices Auth ›
+    <a href="0022-claims-enrichment.html">Lesson 22</a> › Lesson 23
+  </div>
+  <h1>JWT Bearer API — Protecting an ASP.NET Core API</h1>
+  <div class="meta">
+    <span>~25 minutes</span>
+    <span>Module 4 start</span>
+    <span>Prerequisite: <a href="0022-claims-enrichment.html">Module 3</a></span>
+  </div>
+</div>
+
+<p>
+  So far every lesson has been about the <em>issuer</em> side — Duende IS producing tokens.
+  This lesson is about the <em>resource server</em> side: an ASP.NET Core API that receives
+  a Bearer token on every request, validates it, and serves or refuses based on what it finds.
+</p>
+
+<div class="sides">
+  <div class="side">
+    <div class="side-head">Duende IS (what you built)</div>
+    <ul>
+      <li>Issues access tokens</li>
+      <li>Signs them with a private key</li>
+      <li>Publishes the public key at <code>/.well-known/jwks</code></li>
+    </ul>
+  </div>
+  <div class="side">
+    <div class="side-head accent">Your API (this lesson)</div>
+    <ul>
+      <li>Receives <code>Authorization: Bearer &lt;token&gt;</code></li>
+      <li>Fetches the public key from Duende IS</li>
+      <li>Validates the signature, expiry, issuer, audience</li>
+      <li>Reads claims to make authorization decisions</li>
+    </ul>
+  </div>
+</div>
+
+<hr>
+
+<h2>What "JWT Bearer" Means at Runtime</h2>
+
+<div class="seq">
+  <div class="seq-row">
+    <span class="seq-actor">Client</span>
+    <span class="seq-arrow">→</span>
+    <span class="seq-label">GET /api/calendar  Authorization: Bearer eyJhbGci…</span>
+  </div>
+  <div class="seq-note">Every request carries the access token in the Authorization header</div>
+
+  <div class="seq-row">
+    <span class="seq-actor">API middleware</span>
+    <span class="seq-arrow">→</span>
+    <span class="seq-label">GET https://is.example.com/.well-known/openid-configuration</span>
+  </div>
+  <div class="seq-note">On first request, middleware fetches the discovery doc (then caches it)</div>
+
+  <div class="seq-row">
+    <span class="seq-actor">API middleware</span>
+    <span class="seq-arrow">→</span>
+    <span class="seq-label">Fetch JWKS → verify signature → check exp, iss, aud</span>
+  </div>
+  <div class="seq-note">All validation is local — no round-trip to IS per request after the first</div>
+
+  <div class="seq-row">
+    <span class="seq-actor">API middleware</span>
+    <span class="seq-arrow">→</span>
+    <span class="seq-label">Populate HttpContext.User with claims from the token</span>
+  </div>
+  <div class="seq-note">Your controller reads claims from User — no database call for identity</div>
+</div>
+
+<p>
+  The public key is fetched once on startup (or first request) and cached.
+  Subsequent requests validate entirely locally — this is why JWT Bearer scales
+  well across many API replicas with no shared session store.
+</p>
+
+<hr>
+
+<h2>Two Lines to Protect an API</h2>
+
+<p>
+  Add one NuGet package and configure two options. That is the entire setup.
+</p>
+
+<div class="code-section">
+  <div class="code-title">Terminal — add the package</div>
+  <pre><code>dotnet add package Microsoft.AspNetCore.Authentication.JwtBearer</code></pre>
+</div>
+
+<div class="annotated">
+  <div class="code-section" style="margin:0;">
+    <div class="code-title">Program.cs — JWT Bearer setup</div>
+    <pre><code>builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        // Where to find the discovery document + JWKS
+        options.Authority = "https://localhost:5001";
+
+        // The 'aud' claim the token must carry
+        options.TokenValidationParameters.ValidAudience
+            = "https://localhost:5001/resources";
+    });
+
+builder.Services.AddAuthorization();
+
+// …
+
+var app = builder.Build();
+
+// Order matters: Authentication before Authorization
+app.UseAuthentication();
+app.UseAuthorization();</code></pre>
+  </div>
+  <div class="annotation">
+    <p><strong>Authority</strong><br>
+    The base URL of your Duende IS. The middleware appends
+    <code>/.well-known/openid-configuration</code> to discover endpoints
+    and the JWKS URI automatically.</p>
+
+    <p><strong>ValidAudience</strong><br>
+    The <code>aud</code> claim the token must contain. Duende IS sets
+    <code>aud</code> to the ApiResource name (if configured) or the
+    ApiScope name. Mismatches cause 401.</p>
+
+    <p><strong>Middleware order</strong><br>
+    <code>UseAuthentication()</code> must come before
+    <code>UseAuthorization()</code>. Swapping them silently breaks
+    everything — a classic gotcha.</p>
+  </div>
+</div>
+
+<h3>What the middleware validates automatically</h3>
+
+<ul class="checklist">
+  <li>
+    <span class="check-num">1</span>
+    <div><span class="check-claim">alg / signature</span> — verified against the JWKS public key from Duende IS</div>
+  </li>
+  <li>
+    <span class="check-num">2</span>
+    <div><span class="check-claim">exp</span> — token must not be expired</div>
+  </li>
+  <li>
+    <span class="check-num">3</span>
+    <div><span class="check-claim">iss</span> — issuer must match <code>options.Authority</code></div>
+  </li>
+  <li>
+    <span class="check-num">4</span>
+    <div><span class="check-claim">aud</span> — audience must match <code>ValidAudience</code></div>
+  </li>
+  <li>
+    <span class="check-num">5</span>
+    <div><span class="check-claim">nbf</span> — "not before" time must have passed</div>
+  </li>
+</ul>
+
+<p>
+  All five checks happen before your controller code runs. A failed check returns
+  <code>401 Unauthorized</code> automatically — you write no validation logic.
+</p>
+
+<hr>
+
+<h2>Protecting Endpoints</h2>
+
+<p>
+  Apply <code>[Authorize]</code> to require a valid token. Without it, the endpoint
+  is public. Use <code>[AllowAnonymous]</code> to explicitly opt out on an otherwise
+  protected controller.
+</p>
+
+<div class="code-section">
+  <div class="code-title">Controllers/CalendarController.cs</div>
+  <pre><code>[ApiController]
+[Route("api/[controller]")]
+[Authorize]                     // all actions require a valid token
+public class CalendarController : ControllerBase
+{
+    [HttpGet]
+    public IActionResult GetEvents()
+    {
+        // Claims are populated from the token — no DB call needed
+        var sub      = User.FindFirstValue("sub");
+        var tenantId = User.FindFirstValue("tenant_id");
+
+        return Ok(new { sub, tenantId });
+    }
+
+    [HttpGet("public")]
+    [AllowAnonymous]            // this one action needs no token
+    public IActionResult PublicInfo() => Ok("no auth required");
+}</code></pre>
+</div>
+
+<h3>Minimal API (no controllers)</h3>
+
+<div class="code-section">
+  <div class="code-title">Program.cs — Minimal API equivalent</div>
+  <pre><code>app.MapGet("/api/calendar", (HttpContext ctx) =>
+{
+    var sub = ctx.User.FindFirstValue("sub");
+    return Results.Ok(new { sub });
+})
+.RequireAuthorization();    // equivalent to [Authorize]</code></pre>
+</div>
+
+<hr>
+
+<h2>Requiring a Specific Scope</h2>
+
+<p>
+  <code>[Authorize]</code> alone only checks for a valid token.
+  To require a specific scope claim (<code>calendar.read</code>), add a policy:
+</p>
+
+<div class="code-section">
+  <div class="code-title">Program.cs — scope policy</div>
+  <pre><code>builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("CalendarRead", policy =>
+        policy.RequireClaim("scope", "calendar.read"));
+});</code></pre>
+</div>
+
+<div class="code-section">
+  <div class="code-title">Controller — applying the policy</div>
+  <pre><code>[Authorize(Policy = "CalendarRead")]
+public IActionResult GetEvents() { … }</code></pre>
+</div>
+
+<div class="callout callout-info">
+  <strong>Scope claim format</strong>
+  Duende IS may emit scopes as a space-separated string (<code>"scope": "calendar.read openid"</code>)
+  or as an array depending on configuration and token type.
+  The <a href="https://github.com/DuendeSoftware/IdentityServer/blob/main/src/IdentityServer/Extensions/ClaimsPrincipalExtensions.cs" target="_blank">
+  <code>HasScope()</code></a> extension from
+  <code>Duende.IdentityServer.AccessTokenValidation</code> handles both formats.
+  Alternatively, the <code>Microsoft.Identity.Web</code> package provides scope-policy helpers.
+</div>
+
+<hr>
+
+<h2>Debugging 401 Responses</h2>
+
+<p>
+  The middleware swallows validation errors silently by default.
+  Turn on detailed logging to see exactly what failed:
+</p>
+
+<div class="code-section">
+  <div class="code-title">appsettings.Development.json</div>
+  <pre><code>{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore.Authentication": "Debug"
+    }
+  }
+}</code></pre>
+</div>
+
+<p>Common causes of 401:</p>
+<ul>
+  <li><strong>Wrong Authority URL</strong> — scheme, host, or port mismatch</li>
+  <li><strong>Missing or wrong audience</strong> — check the token's <code>aud</code> claim in <a href="https://jwt.ms" target="_blank">jwt.ms</a></li>
+  <li><strong>Middleware order</strong> — <code>UseAuthentication</code> after <code>UseAuthorization</code></li>
+  <li><strong>Expired token</strong> — clock skew between services (default tolerance: 5 minutes)</li>
+  <li><strong>Token sent as cookie, not Bearer header</strong> — JWT Bearer only reads the Authorization header</li>
+</ul>
+
+<hr>
+
+<h2>Knowledge Check</h2>
+
+<div class="quiz" data-quiz="q23">
+
+  <div class="quiz-question" data-correct="c">
+    <p><strong>1.</strong> On the first request after API startup, how does the JWT Bearer
+    middleware get the public key to verify the token signature?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q23-q0" value="a"> It decodes the key from the token header without any network call</label></li>
+      <li><label><input type="radio" name="q23-q0" value="b"> You paste the public key into <code>appsettings.json</code> at deploy time</label></li>
+      <li><label><input type="radio" name="q23-q0" value="c"> It fetches the discovery document from the Authority URL, then retrieves the JWKS</label></li>
+      <li><label><input type="radio" name="q23-q0" value="d"> It calls Duende IS's token introspection endpoint on every incoming request</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="b">
+    <p><strong>2.</strong> You add <code>[Authorize]</code> to a controller. A request arrives
+    with a valid, unexpired token — but the <code>aud</code> claim does not match
+    <code>ValidAudience</code>. What does the API return?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q23-q1" value="a"> 200 OK — audience is advisory and not enforced by the middleware</label></li>
+      <li><label><input type="radio" name="q23-q1" value="b"> 401 Unauthorized — audience validation is mandatory and fails before the controller runs</label></li>
+      <li><label><input type="radio" name="q23-q1" value="c"> 403 Forbidden — the token is valid but the user lacks the required permission</label></li>
+      <li><label><input type="radio" name="q23-q1" value="d"> 400 Bad Request — the token format is rejected as malformed</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="d">
+    <p><strong>3.</strong> What is the difference between a <code>401</code> and a <code>403</code>
+    response from an API protected with JWT Bearer?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q23-q2" value="a"> 401 means the token is expired; 403 means the token signature is invalid</label></li>
+      <li><label><input type="radio" name="q23-q2" value="b"> 401 means the user is not registered; 403 means the user is suspended</label></li>
+      <li><label><input type="radio" name="q23-q2" value="c"> 401 means the policy name was not found; 403 means the policy check threw an exception</label></li>
+      <li><label><input type="radio" name="q23-q2" value="d"> 401 means no valid token was presented; 403 means a valid token was presented but lacks required claims</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="a">
+    <p><strong>4.</strong> You call <code>app.UseAuthorization()</code> before
+    <code>app.UseAuthentication()</code> by mistake. What happens?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q23-q3" value="a"> All protected endpoints return 401 — the User identity is not set when authorization runs</label></li>
+      <li><label><input type="radio" name="q23-q3" value="b"> A startup exception is thrown immediately — ASP.NET Core enforces middleware order</label></li>
+      <li><label><input type="radio" name="q23-q3" value="c"> Only the first request fails; subsequent requests succeed once the cache is populated</label></li>
+      <li><label><input type="radio" name="q23-q3" value="d"> Public endpoints return 403 and protected endpoints return 200 — the order is reversed</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+</div>
+
+<button class="quiz-btn" data-quiz-submit="q23">Check Answers</button>
+<div class="quiz-score"></div>
+
+<hr>
+
+<h2>Primary Source</h2>
+
+<p>
+  The official ASP.NET Core docs on JWT Bearer authentication:
+  <a href="https://learn.microsoft.com/en-us/aspnet/core/security/authentication/jwt-authn" target="_blank">
+  JWT bearer authentication in ASP.NET Core</a>.
+  For the Duende IS side (how audience is configured), see
+  <a href="https://docs.duendesoftware.com/identityserver/v7/fundamentals/resources/api_resources/" target="_blank">
+  Duende IS → API Resources</a>.
+</p>
+
+<hr>
+
+<h2>What's Next</h2>
+
+<p>
+  Your API can now validate tokens and read claims. The next question is: how does a
+  <em>background service</em> (with no user present) obtain a token to call your API?
+  <a href="0024-client-credentials-flow.html">Lesson 24</a> covers the Client Credentials
+  grant from the client's perspective — acquiring and caching tokens for service-to-service calls.
+</p>
+
+<div class="callout">
+  <strong>Ask your teacher</strong>
+  Unsure how to handle token refresh in the client when the API returns 401?
+  Want to know how to validate tokens without contacting Duende IS on every request?
+  Post your question and I'll explain it.
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+  window.quizExplanations = {
+    'q23': {
+      0: {
+        a: "The token header contains the key ID (kid) hint, not the key itself. The key must be fetched from the JWKS endpoint.",
+        b: "Hardcoding the key in config is an anti-pattern — it breaks when IS rotates its signing key. Auto-discovery handles key rotation.",
+        c: "Correct. The middleware calls the Authority URL + /.well-known/openid-configuration, reads the jwks_uri, and fetches the public keys. This is then cached.",
+        d: "Introspection is a separate, optional mechanism. JWT Bearer validates locally using the JWKS — no per-request network call to IS."
+      },
+      1: {
+        a: "Audience is enforced. Tokens with the wrong aud are rejected — this is a core security guarantee of the Bearer scheme.",
+        b: "Correct. Audience validation is part of the mandatory JWT validation pipeline. A wrong aud returns 401 before controller code runs.",
+        c: "403 is for authorization failures (valid token, wrong permissions), not token validation failures.",
+        d: "The token format is fine — the validation failure is in the claims, not the structure. The response is 401, not 400."
+      },
+      2: {
+        a: "401 and 403 are not split by expiry vs. signature — both would return 401 (authentication failure).",
+        b: "These are application concepts, not HTTP auth semantics. 401/403 are about token/claim presence.",
+        c: "Policy name lookup failure would throw a configuration exception, not a 401/403.",
+        d: "Correct. 401 = authentication failed (no token, bad signature, expired, wrong audience). 403 = authenticated but not authorized (missing scope, role, or custom claim)."
+      },
+      3: {
+        a: "Correct. UseAuthorization runs when HttpContext.User is still anonymous (UseAuthentication hasn't run to set it). Every [Authorize] check sees an unauthenticated user and returns 401.",
+        b: "ASP.NET Core does not enforce middleware ordering at startup — the bug silently causes runtime 401s.",
+        c: "The bug is not request-count-dependent. Every request through the wrong-order pipeline fails the same way.",
+        d: "The behavior is not reversed — protected endpoints return 401, public ones work normally."
+      }
+    }
+  };
+</script>
+
+</body>
+</html>

@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Duende IS — Claims Pipeline Cheat Sheet</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    @media print {
+      body { font-size: 13px; padding: 1.2rem; }
+      .no-print { display: none; }
+    }
+
+    .ref-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.2rem;
+      margin: 1rem 0;
+    }
+    @media (max-width: 600px) { .ref-grid { grid-template-columns: 1fr; } }
+
+    .ref-card {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .ref-card .card-head {
+      font-family: var(--font-ui);
+      font-size: 0.74rem;
+      font-weight: 700;
+      padding: 0.4rem 0.8rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+    .ref-card .card-body {
+      padding: 0.75rem 0.9rem;
+      font-size: 0.82rem;
+    }
+    .ref-card ul { margin: 0 0 0 1.2rem; }
+    .ref-card li { margin-bottom: 0.3rem; }
+
+    .flow-row {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+      margin: 0.5rem 0;
+      font-size: 0.82rem;
+    }
+    .flow-box {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.25rem 0.65rem;
+      font-family: var(--font-mono);
+      font-size: 0.77rem;
+    }
+    .flow-box.you { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+    .flow-arrow { color: var(--muted); }
+
+    table.cheat {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.81rem;
+      margin: 0.6rem 0;
+    }
+    table.cheat th {
+      font-family: var(--font-ui);
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      text-align: left;
+      border-bottom: 2px solid var(--border);
+      padding: 0.3rem 0.5rem;
+    }
+    table.cheat td {
+      padding: 0.38rem 0.5rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    table.cheat td code { font-size: 0.76rem; }
+    table.cheat tr:last-child td { border-bottom: none; }
+
+    .code-block {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.75rem 0.9rem;
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      line-height: 1.6;
+      overflow-x: auto;
+      margin: 0.5rem 0;
+    }
+  </style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb no-print">
+    <a href="../lessons/0022-claims-enrichment.html">← Lesson 22: Claims Enrichment</a>
+  </div>
+  <h1>Duende IS — Claims Pipeline</h1>
+  <div class="meta">
+    <span>Quick reference</span>
+    <span>Module 3 — Building Duende IS</span>
+  </div>
+</div>
+
+<h2>The Four-Step Pipeline</h2>
+
+<div class="flow-row">
+  <span class="flow-box">1. Login<br><small>sub baked into session</small></span>
+  <span class="flow-arrow">→</span>
+  <span class="flow-box">2. Scope config<br><small>declares claim types</small></span>
+  <span class="flow-arrow">→</span>
+  <span class="flow-box you">3. IProfileService<br><small>your code — supplies values</small></span>
+  <span class="flow-arrow">→</span>
+  <span class="flow-box">4. Signed token<br><small>claims in JWT payload</small></span>
+</div>
+
+<hr>
+
+<h2>Where Each Claim Type Lives</h2>
+
+<div class="ref-grid">
+  <div class="ref-card">
+    <div class="card-head">ID Token — identity claims</div>
+    <div class="card-body">
+      <strong>Declared in:</strong> <code>IdentityResource.userClaims</code><br>
+      <strong>Consumer:</strong> client app (never your API)<br>
+      <strong>Standard:</strong> <code>sub</code>, <code>name</code>, <code>email</code>, <code>picture</code>
+      <div class="code-block">new IdentityResource(
+  "tenant",
+  new[] { "tenant_id" })</div>
+    </div>
+  </div>
+  <div class="ref-card">
+    <div class="card-head">Access Token — authorization claims</div>
+    <div class="card-body">
+      <strong>Declared in:</strong> <code>ApiScope.userClaims</code><br>
+      <strong>Consumer:</strong> your protected API<br>
+      <strong>Standard:</strong> <code>scope</code>, <code>client_id</code>, <code>sub</code>
+      <div class="code-block">new ApiScope(
+  "calendar.read",
+  new[] { "tenant_id", "role" })</div>
+    </div>
+  </div>
+</div>
+
+<hr>
+
+<h2><code>IProfileService</code> Interface</h2>
+
+<table class="cheat">
+  <thead>
+    <tr><th>Method</th><th>When called</th><th>What to do</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>GetProfileDataAsync</code></td>
+      <td>Every token issuance; UserInfo endpoint</td>
+      <td>Add claims to <code>context.IssuedClaims</code> — filter by <code>context.RequestedClaimTypes</code></td>
+    </tr>
+    <tr>
+      <td><code>IsActiveAsync</code></td>
+      <td>Before every token issuance; UserInfo endpoint</td>
+      <td>Set <code>context.IsActive = false</code> to block a locked / deleted account</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Minimal implementation</h3>
+
+<div class="code-block">public async Task GetProfileDataAsync(ProfileDataRequestContext context)
+{
+    var sub  = context.Subject.GetSubjectId();
+    var user = await _users.GetBySubjectIdAsync(sub);
+
+    // Only emit what was requested — filter strictly
+    if (context.RequestedClaimTypes.Contains("tenant_id"))
+        context.IssuedClaims.Add(new Claim("tenant_id", user.TenantId));
+
+    if (context.RequestedClaimTypes.Contains("role"))
+        context.IssuedClaims.AddRange(
+            user.Roles.Select(r => new Claim("role", r)));
+}
+
+public async Task IsActiveAsync(IsActiveContext context)
+{
+    var sub  = context.Subject.GetSubjectId();
+    var user = await _users.GetBySubjectIdAsync(sub);
+    context.IsActive = user?.IsActive ?? false;
+}</div>
+
+<h3>Registration</h3>
+
+<div class="code-block">.AddProfileService&lt;MyProfileService&gt;()   // inside AddIdentityServer()</div>
+
+<hr>
+
+<h2>Useful Context Properties</h2>
+
+<table class="cheat">
+  <thead>
+    <tr><th>Property</th><th>Type</th><th>Use for</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>context.Subject</code></td>
+      <td><code>ClaimsPrincipal</code></td>
+      <td>Read <code>.GetSubjectId()</code> to get the user's <code>sub</code></td>
+    </tr>
+    <tr>
+      <td><code>context.RequestedClaimTypes</code></td>
+      <td><code>IEnumerable&lt;string&gt;</code></td>
+      <td>Filter: only add claims in this set</td>
+    </tr>
+    <tr>
+      <td><code>context.IssuedClaims</code></td>
+      <td><code>List&lt;Claim&gt;</code></td>
+      <td>Add your claims here</td>
+    </tr>
+    <tr>
+      <td><code>context.Client</code></td>
+      <td><code>Client</code></td>
+      <td>Branch on <code>.ClientId</code> for per-client claim sets</td>
+    </tr>
+    <tr>
+      <td><code>context.Caller</code></td>
+      <td><code>string</code></td>
+      <td>Distinguish: <code>"ClaimsProviderAccessToken"</code> vs <code>"UserInfoEndpoint"</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<hr>
+
+<h2>Common Pitfalls</h2>
+
+<ul>
+  <li><strong>Claim type not declared in scope config</strong> → never appears in <code>RequestedClaimTypes</code> → silently absent from token.</li>
+  <li><strong>Adding claims without filtering</strong> → leaks data to clients that didn't request it.</li>
+  <li><strong>Auth claims in the ID token</strong> → inflates client payload; authorization logic bleeds into the front end.</li>
+  <li><strong>Using Google's user ID as <code>sub</code></strong> → breaks if you ever change providers.</li>
+  <li><strong>Forgetting <code>IsActiveAsync</code></strong> → locked accounts can still get tokens from an active session until it expires.</li>
+</ul>
+
+</body>
+</html>

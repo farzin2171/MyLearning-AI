@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__plugin_dit-infra_dit-azure-monitor__alerts_summary",
+      "mcp__plugin_dit-infra_dit-azure-monitor__list_alerts",
+      "mcp__plugin_dit-infra_dit-azure-monitor__query_logs"
+    ]
+  }
+}

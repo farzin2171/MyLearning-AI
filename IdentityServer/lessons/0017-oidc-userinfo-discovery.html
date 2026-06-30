@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 17 — UserInfo, Discovery &amp; OIDC in Practice</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    /* ── Discovery document display ─────────────────────── */
+    .discovery-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.8rem;
+      margin: 1rem 0;
+    }
+    @media (max-width: 600px) { .discovery-grid { grid-template-columns: 1fr; } }
+
+    .disc-field {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.7rem 0.9rem;
+    }
+    .disc-field code {
+      display: block;
+      font-size: 0.8rem;
+      color: var(--accent);
+      margin-bottom: 0.2rem;
+    }
+    .disc-field p {
+      font-size: 0.83rem;
+      color: var(--muted);
+      margin: 0;
+    }
+    .disc-field.key-field { border-color: var(--accent); }
+
+    /* ── Decision table ─────────────────────────────────── */
+    .decision td:first-child { font-weight: 600; width: 10rem; font-size: 0.87rem; }
+    .decision td { font-size: 0.86rem; vertical-align: top; }
+
+    /* ── HTTP exchange display ──────────────────────────── */
+    .http-box {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.9rem 1.1rem;
+      margin: 0.7rem 0;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      line-height: 1.7;
+    }
+    .http-comment {
+      color: var(--muted);
+      font-style: italic;
+      font-family: var(--font-body);
+      font-size: 0.8rem;
+    }
+
+    /* ── Logout flow ────────────────────────────────────── */
+    .logout-step {
+      display: flex;
+      gap: 0.8rem;
+      margin-bottom: 1rem;
+      align-items: flex-start;
+    }
+    .logout-num {
+      flex-shrink: 0;
+      width: 1.7rem;
+      height: 1.7rem;
+      background: #c0392b;
+      color: #fff;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-ui);
+      font-weight: 700;
+      font-size: 0.8rem;
+      margin-top: 0.15rem;
+    }
+    .logout-num.green { background: #1a7a3a; }
+    .logout-step p { margin: 0; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="../MISSION.md">OAuth &amp; Identity Course</a> › Module 2: OpenID Connect ›
+    <a href="0016-openid-connect.html">Lesson 16</a> › Lesson 17
+  </div>
+  <h1>UserInfo, Discovery &amp; OIDC in Practice</h1>
+  <div class="meta">
+    <span>~25 minutes</span>
+    <span>Conceptual + interactive</span>
+    <span>Prerequisite: <a href="0016-openid-connect.html">Lesson 16</a></span>
+  </div>
+</div>
+
+<p>
+  Lesson 16 established the core OIDC contract: <code>scope=openid</code> → ID token in the response.
+  This lesson completes the picture with the three remaining practical pieces:
+  the <strong>UserInfo endpoint</strong> (getting fresh claims on demand),
+  the <strong>discovery document</strong> (auto-configuring clients),
+  and <strong>RP-Initiated Logout</strong> (ending sessions properly).
+</p>
+
+<hr>
+
+<h2>The UserInfo Endpoint</h2>
+
+<p>
+  The UserInfo endpoint is a protected REST endpoint the Authorization Server exposes. The client
+  calls it — with an access token as Bearer auth — to fetch the current claims for the authenticated
+  user. It returns JSON (or optionally a signed JWT).
+</p>
+
+<div class="http-box">
+  <span class="http-comment">Request — present the access token:</span><br>
+  GET /connect/userinfo HTTP/1.1<br>
+  Host: auth.example.com<br>
+  Authorization: Bearer eyJhbGciOiJSUzI1NiJ9...<br>
+  <br>
+  <span class="http-comment">Response — user's current claims as JSON:</span><br>
+  HTTP/1.1 200 OK<br>
+  Content-Type: application/json<br>
+  <br>
+  {<br>
+  &nbsp;&nbsp;"sub":            "usr-42",<br>
+  &nbsp;&nbsp;"name":           "Alice Example",<br>
+  &nbsp;&nbsp;"given_name":     "Alice",<br>
+  &nbsp;&nbsp;"family_name":    "Example",<br>
+  &nbsp;&nbsp;"email":          "alice@example.com",<br>
+  &nbsp;&nbsp;"email_verified": true,<br>
+  &nbsp;&nbsp;"picture":        "https://cdn.example.com/avatars/usr-42.jpg"<br>
+  }
+</div>
+
+<p>
+  The claims returned depend on which scopes were granted in the original authorization request.
+  If the client asked for <code>openid profile email</code>, it gets <code>sub</code>,
+  profile fields, and email fields.
+</p>
+
+<h3>ID Token vs. UserInfo — when to use each</h3>
+
+<table class="decision">
+  <thead><tr><th>Situation</th><th>Use ID token</th><th>Use UserInfo endpoint</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>At login — establish who the user is</td>
+      <td>✓ Available immediately in the token response</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td>Large user profiles (100+ custom claims)</td>
+      <td>—</td>
+      <td>✓ Keeps token size small; fetch on demand</td>
+    </tr>
+    <tr>
+      <td>Claims that change frequently (name, avatar)</td>
+      <td>— ID token is a snapshot at issuance</td>
+      <td>✓ Always returns current data</td>
+    </tr>
+    <tr>
+      <td>Showing the user's profile page</td>
+      <td>— May be stale</td>
+      <td>✓ Fetch fresh data on each page load</td>
+    </tr>
+    <tr>
+      <td>Making authorization decisions</td>
+      <td>— Neither token is designed for authz</td>
+      <td>— Use the access token + scopes instead</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout tip">
+  <strong>In practice with ASP.NET Core</strong>
+  <code>AddOpenIdConnect()</code> has a <code>GetClaimsFromUserInfoEndpoint = true</code> option that
+  automatically calls the UserInfo endpoint after login and merges the claims into the identity.
+  This is the recommended approach — let the middleware handle it rather than calling UserInfo manually.
+</div>
+
+<hr>
+
+<h2>The Discovery Document</h2>
+
+<p>
+  Every OIDC-compliant Authorization Server publishes a machine-readable metadata document at a
+  well-known URL:
+</p>
+
+<div class="http-box">
+  GET https://auth.example.com/.well-known/openid-configuration
+</div>
+
+<p>
+  A client that knows only the Authorization Server's base URL can use this document to
+  auto-configure all its endpoints. This is how ASP.NET Core's <code>AddOpenIdConnect()</code>
+  works — you set <code>Authority = "https://auth.example.com"</code> and the middleware fetches
+  the discovery document on startup.
+</p>
+
+<h3>Key fields in the discovery document</h3>
+
+<div class="discovery-grid">
+  <div class="disc-field key-field">
+    <code>"issuer"</code>
+    <p>The AS's canonical URL. Must exactly match <code>iss</code> in all tokens.</p>
+  </div>
+  <div class="disc-field key-field">
+    <code>"authorization_endpoint"</code>
+    <p>Where to send auth requests (Step 1 of the Auth Code flow).</p>
+  </div>
+  <div class="disc-field key-field">
+    <code>"token_endpoint"</code>
+    <p>Where to exchange codes for tokens (back-channel POST).</p>
+  </div>
+  <div class="disc-field key-field">
+    <code>"jwks_uri"</code>
+    <p>Where to fetch public keys for token signature verification.</p>
+  </div>
+  <div class="disc-field">
+    <code>"userinfo_endpoint"</code>
+    <p>Where to fetch user claims using an access token.</p>
+  </div>
+  <div class="disc-field">
+    <code>"end_session_endpoint"</code>
+    <p>Where to redirect users for RP-Initiated Logout.</p>
+  </div>
+  <div class="disc-field">
+    <code>"scopes_supported"</code>
+    <p>List of scopes this AS recognizes: <code>["openid","profile","email",…]</code></p>
+  </div>
+  <div class="disc-field">
+    <code>"claims_supported"</code>
+    <p>List of claims this AS can return: <code>["sub","name","email",…]</code></p>
+  </div>
+</div>
+
+<p>
+  Duende IdentityServer generates this document automatically. You can view the live discovery
+  document for any OIDC server by appending <code>/.well-known/openid-configuration</code>
+  to its base URL — for example, Google's is at
+  <a href="https://accounts.google.com/.well-known/openid-configuration" target="_blank">
+    accounts.google.com/.well-known/openid-configuration
+  </a>.
+</p>
+
+<hr>
+
+<h2>RP-Initiated Logout</h2>
+
+<p>
+  When a user clicks "Sign out," most developers clear the application's session cookie and redirect
+  to the home page. This is <strong>incomplete</strong>.
+</p>
+
+<div class="callout warn">
+  <strong>The partial logout problem</strong>
+  Clearing your app's cookie only ends the session <em>in your app</em>. The user's session at the
+  Authorization Server (the IdP session cookie) is still active. If they visit another OIDC app
+  sharing the same AS, they are silently signed back in — no login prompt.
+  To users this looks like "logout is broken."
+</div>
+
+<p>
+  <a href="https://openid.net/specs/openid-connect-rpinitiated-1_0.html" target="_blank">
+    RP-Initiated Logout
+  </a>
+  terminates the IdP session as well. The flow:
+</p>
+
+<div class="logout-step">
+  <div class="logout-num">1</div>
+  <p>User clicks Sign Out. The client clears its own session cookie and local tokens.</p>
+</div>
+<div class="logout-step">
+  <div class="logout-num">2</div>
+  <p>
+    Client redirects the browser to the AS's <code>end_session_endpoint</code>:
+  </p>
+</div>
+
+<div class="http-box" style="margin-top:-0.3rem;">
+  GET /connect/endsession?<br>
+  &nbsp;&nbsp;id_token_hint=eyJhbGciOiJSUzI1NiJ9...    <span class="http-comment">(the ID token from login)</span><br>
+  &nbsp;&nbsp;&amp;post_logout_redirect_uri=https://app.example.com/signed-out
+</div>
+
+<div class="logout-step">
+  <div class="logout-num green">3</div>
+  <p>
+    The AS ends the IdP session. If front-channel logout is configured, it fires invisible
+    <code>&lt;iframe&gt;</code> requests to all other registered OIDC clients, telling them to
+    end their sessions too (federated single sign-out).
+  </p>
+</div>
+<div class="logout-step">
+  <div class="logout-num green">4</div>
+  <p>
+    AS redirects the browser to <code>post_logout_redirect_uri</code> — your "you've been signed out" page.
+  </p>
+</div>
+
+<div class="callout">
+  <strong>id_token_hint is key</strong>
+  The <code>id_token_hint</code> tells the AS <em>which user</em> to sign out. Without it,
+  the AS may show a confirmation screen asking "are you sure?" (it doesn't know whose session to end).
+  Store the raw ID token string until logout completes, then discard it.
+</div>
+
+<hr>
+
+<h2>The Complete OIDC Flow — All Together</h2>
+
+<p>
+  Combining Lessons 16 and 17, here is the full OIDC Authorization Code flow:
+</p>
+
+<pre><code>1. CLIENT → Browser redirect →
+   GET /connect/authorize
+     ?response_type=code
+     &amp;client_id=my-app
+     &amp;redirect_uri=https://app.example.com/callback
+     &amp;scope=openid profile email
+     &amp;state=abc
+     &amp;nonce=xyz
+     &amp;code_challenge=...&amp;code_challenge_method=S256
+
+2. User authenticates at AS, approves scopes
+
+3. AS → Browser redirect →
+   GET /callback?code=SplxlO&amp;state=abc
+
+4. CLIENT server → AS (back-channel) →
+   POST /connect/token
+     grant_type=authorization_code
+     &amp;code=SplxlO&amp;code_verifier=...
+
+5. AS responds:
+   {
+     "access_token":  "...",   // → send to APIs
+     "id_token":      "...",   // → validate nonce, read sub/name/email
+     "refresh_token": "...",
+     "expires_in":    3600
+   }
+
+6. CLIENT (optional) →
+   GET /connect/userinfo
+     Authorization: Bearer &lt;access_token&gt;
+   ← { "sub": "usr-42", "email": "alice@example.com", ... }
+
+7. LOGOUT: Client → Browser redirect →
+   GET /connect/endsession
+     ?id_token_hint=&lt;id_token&gt;
+     &amp;post_logout_redirect_uri=https://app.example.com/signed-out</code></pre>
+
+<hr>
+
+<!-- QUIZ -->
+<div class="quiz" data-quiz="quiz17">
+  <h3>Knowledge Check</h3>
+
+  <div class="quiz-question" data-correct="b">
+    <p>1. When should you call the UserInfo endpoint instead of reading claims from the ID token?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz17-q0" value="a"> When validating the user's identity at initial login time</label></li>
+      <li><label><input type="radio" name="quiz17-q0" value="b"> When you need fresh or more claims than are in the token</label></li>
+      <li><label><input type="radio" name="quiz17-q0" value="c"> When the access token has expired and must be refreshed</label></li>
+      <li><label><input type="radio" name="quiz17-q0" value="d"> When the Authorization Server does not support OIDC scopes</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="b">
+    <p>2. What is the primary purpose of the OIDC Discovery document?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz17-q1" value="a"> Listing all users currently registered at the Authorization Server</label></li>
+      <li><label><input type="radio" name="quiz17-q1" value="b"> Describing the AS endpoints and capabilities for client auto-configuration</label></li>
+      <li><label><input type="radio" name="quiz17-q1" value="c"> Publishing the current active access tokens for auditing purposes</label></li>
+      <li><label><input type="radio" name="quiz17-q1" value="d"> Defining which scopes each registered client is allowed to request</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="b">
+    <p>3. What does the <code>id_token_hint</code> parameter do in an RP-Initiated Logout request?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz17-q2" value="a"> Provides a fresh access token to authorize the logout operation</label></li>
+      <li><label><input type="radio" name="quiz17-q2" value="b"> Identifies whose IdP session the Authorization Server should end</label></li>
+      <li><label><input type="radio" name="quiz17-q2" value="c"> Specifies where the user should be redirected after logout completes</label></li>
+      <li><label><input type="radio" name="quiz17-q2" value="d"> Proves the client has permission to initiate a logout flow</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="b">
+    <p>4. A developer sets <code>Authority = "https://auth.example.com"</code> in ASP.NET Core. What does the middleware fetch to find the token endpoint?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz17-q3" value="a"> The JWKS endpoint at <code>/connect/jwks</code> directly</label></li>
+      <li><label><input type="radio" name="quiz17-q3" value="b"> The discovery document at <code>/.well-known/openid-configuration</code></label></li>
+      <li><label><input type="radio" name="quiz17-q3" value="c"> A hard-coded path at <code>/connect/token</code> on the authority</label></li>
+      <li><label><input type="radio" name="quiz17-q3" value="d"> A DNS TXT record published by the Authorization Server</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+</div>
+
+<script>
+window.quizExplanations = {
+  'quiz17-q0': 'The ID token is a snapshot at login time and may become stale. The UserInfo endpoint always returns current data. Use it when the user\'s profile might have changed, or when a large profile doesn\'t belong in every token.',
+  'quiz17-q1': 'The discovery document is a machine-readable JSON file at /.well-known/openid-configuration. OIDC client libraries fetch it at startup to discover all endpoints (token, jwks, userinfo, end_session) automatically from a single Authority URL.',
+  'quiz17-q2': 'Without id_token_hint, the AS does not know which session to end and may show a confirmation dialog. The ID token carries the user\'s sub and the AS\'s session reference. Store the ID token until logout, then discard it.',
+  'quiz17-q3': 'OIDC clients discover all endpoints from the discovery document. Setting Authority tells the middleware the base URL; it appends /.well-known/openid-configuration and reads the jwks_uri, token_endpoint, userinfo_endpoint, and end_session_endpoint from there.'
+};
+</script>
+
+<hr>
+
+<h2>Primary Source</h2>
+<ul>
+  <li>
+    <a href="https://openid.net/specs/openid-connect-core-1_0.html#UserInfo" target="_blank">
+      OIDC Core 1.0 §5.3 — UserInfo Endpoint
+    </a>
+  </li>
+  <li>
+    <a href="https://openid.net/specs/openid-connect-discovery-1_0.html" target="_blank">
+      OIDC Discovery 1.0
+    </a>
+    — the full spec for <code>/.well-known/openid-configuration</code>
+  </li>
+  <li>
+    <a href="https://openid.net/specs/openid-connect-rpinitiated-1_0.html" target="_blank">
+      OIDC RP-Initiated Logout 1.0
+    </a>
+    — the logout spec
+  </li>
+</ul>
+
+<div class="ask-claude">
+  <strong>Questions? Ask your teacher.</strong>
+  Try: <em>"How do I implement RP-Initiated Logout in ASP.NET Core?"</em>
+  Or: <em>"What's the difference between front-channel logout and back-channel logout?"</em>
+</div>
+
+<div class="lesson-nav">
+  <a class="prev" href="0016-openid-connect.html">← Lesson 16: OpenID Connect</a>
+  <a class="next" href="0018-duende-is-setup.html">Next → Lesson 18: Building Your First Duende IdentityServer</a>
+</div>
+
+<div class="lesson-footer">
+  OAuth &amp; Identity Course · Module 2: OpenID Connect · Lesson 17 · Module 2 complete —
+  next: <a href="0018-duende-is-setup.html">Module 3: Building Duende IdentityServer</a>
+</div>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

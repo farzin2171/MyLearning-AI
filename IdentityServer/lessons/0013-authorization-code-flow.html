@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 13 — The Authorization Code Flow + PKCE</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    /* ── Step-through diagram ───────────────────────────── */
+    .steps { margin: 1.4rem 0; }
+    .step {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 1.2rem;
+      align-items: flex-start;
+    }
+    .step-num {
+      flex-shrink: 0;
+      width: 2rem;
+      height: 2rem;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-ui);
+      font-weight: 700;
+      font-size: 0.9rem;
+      margin-top: 0.2rem;
+    }
+    .step-body { flex: 1; }
+    .step-body h4 {
+      font-family: var(--font-ui);
+      font-size: 0.95rem;
+      margin: 0 0 0.3rem;
+      color: var(--text);
+      text-transform: none;
+      letter-spacing: 0;
+    }
+    .step-arrow {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-family: var(--font-ui);
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-bottom: 0.5rem;
+    }
+    .step-arrow .actor {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.2rem 0.5rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .step-arrow .actor.as { border-color: var(--accent); background: #e8f0ff; }
+    .step-arrow .actor.api { border-color: #0a9e5c; background: #e8faf0; }
+
+    /* ── PKCE diagram ───────────────────────────────────── */
+    .pkce-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.2rem 1.4rem;
+      margin: 1.2rem 0;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+    }
+    .pkce-box .label {
+      font-family: var(--font-ui);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--muted);
+      margin-bottom: 0.3rem;
+    }
+    .pkce-row { margin-bottom: 0.7rem; }
+    .pkce-row:last-child { margin-bottom: 0; }
+    .pkce-arrow {
+      text-align: center;
+      color: var(--muted);
+      font-size: 1rem;
+      margin: 0.3rem 0;
+    }
+
+    /* ── Param table ────────────────────────────────────── */
+    .param-table td:first-child {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      white-space: nowrap;
+      color: #005c99;
+    }
+    .param-table td:last-child { color: var(--muted); font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="../MISSION.md">OAuth &amp; Identity Course</a> › Module 1: OAuth Foundations ›
+    <a href="0012-oauth-delegation-problem.html">Lesson 12</a> › Lesson 13
+  </div>
+  <h1>The Authorization Code Flow + PKCE</h1>
+  <div class="meta">
+    <span>~25 minutes</span>
+    <span>Conceptual + interactive</span>
+    <span>Prerequisite: <a href="0012-oauth-delegation-problem.html">Lesson 12</a></span>
+  </div>
+</div>
+
+<p>
+  You know <em>why</em> OAuth 2.0 exists. Now: how does a web app actually obtain a token?
+  The <strong>Authorization Code Flow</strong> — with PKCE — is the answer for any app that runs
+  in a browser or on a device. It is the most important OAuth flow in practice and the default for
+  every new OAuth client you will build.
+</p>
+
+<hr>
+
+<h2>Why Not Just Return the Token Directly?</h2>
+
+<p>
+  A reasonable first instinct: after the user logs in on the Authorization Server, redirect them back
+  to the app with the access token in the URL. This is the old <strong>Implicit Flow</strong>, and it
+  was deprecated for good reason.
+</p>
+
+<div class="callout warn">
+  <strong>The implicit flow problem</strong>
+  Tokens in redirect URLs leak. Browser history records them. Server logs capture them.
+  The HTTP Referer header can expose them to third-party scripts on the page.
+  A token in a URL is a token at risk.
+</div>
+
+<p>
+  The Authorization Code Flow solves this by using a two-step process:
+</p>
+<ol>
+  <li>Step 1 (front-channel, visible to browser): the Authorization Server redirects back with a short-lived <strong>authorization code</strong>.</li>
+  <li>Step 2 (back-channel, server-to-server): the app's server exchanges the code for a token. The token <em>never appears in a URL</em>.</li>
+</ol>
+
+<hr>
+
+<h2>The Flow — Step by Step</h2>
+
+<p>
+  Four parties are active. Keep
+  <a href="0012-oauth-delegation-problem.html">Lesson 12's actor definitions</a> in mind as you read.
+</p>
+
+<div class="steps">
+
+  <div class="step">
+    <div class="step-num">1</div>
+    <div class="step-body">
+      <h4>User clicks "Login" — the Authorization Request</h4>
+      <div class="step-arrow">
+        <span class="actor">Client</span> → browser redirect →
+        <span class="actor as">Authorization Server</span>
+      </div>
+      <p>The client sends the browser to the Authorization Server's <code>/authorize</code> endpoint with these query parameters:</p>
+      <pre><code>GET /connect/authorize?
+  response_type=code
+  &amp;client_id=my-web-app
+  &amp;redirect_uri=https://app.example.com/callback
+  &amp;scope=openid%20profile%20email
+  &amp;state=a3fwQRthY7
+  &amp;code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM
+  &amp;code_challenge_method=S256</code></pre>
+      <table class="param-table">
+        <tbody>
+          <tr><td>response_type=code</td><td>Tells the AS: "give me back a code, not a token"</td></tr>
+          <tr><td>client_id</td><td>Identifies which registered client is asking</td></tr>
+          <tr><td>redirect_uri</td><td>Where to send the user after login (must match a pre-registered URI)</td></tr>
+          <tr><td>scope</td><td>The permissions being requested (space-separated)</td></tr>
+          <tr><td>state</td><td>Random value to prevent CSRF (explained below)</td></tr>
+          <tr><td>code_challenge</td><td>PKCE commitment (explained below)</td></tr>
+          <tr><td>code_challenge_method=S256</td><td>SHA-256 was used to derive the challenge</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">2</div>
+    <div class="step-body">
+      <h4>User authenticates and consents</h4>
+      <div class="step-arrow">
+        <span class="actor">User</span> → logs in and approves scopes on →
+        <span class="actor as">Authorization Server</span>
+      </div>
+      <p>
+        The Authorization Server shows a login page (or delegates to an external IdP). After successful
+        authentication, it shows a consent screen listing the requested scopes. The user approves.
+      </p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">3</div>
+    <div class="step-body">
+      <h4>AS redirects back with the authorization code</h4>
+      <div class="step-arrow">
+        <span class="actor as">Authorization Server</span> → browser redirect →
+        <span class="actor">Client</span>
+      </div>
+      <pre><code>GET /callback?
+  code=SplxlOBeZQQYbYS6WxSbIA
+  &amp;state=a3fwQRthY7</code></pre>
+      <p>
+        The <strong>code</strong> is short-lived (typically 60 seconds), single-use, and meaningless
+        without the PKCE verifier. Even if an attacker captures this URL, they cannot use it.
+        The <strong>state</strong> is echoed back so the client can verify it matches what it sent.
+      </p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">4</div>
+    <div class="step-body">
+      <h4>Client exchanges the code for tokens (back-channel)</h4>
+      <div class="step-arrow">
+        <span class="actor">Client server</span> → HTTPS POST →
+        <span class="actor as">Authorization Server</span>
+      </div>
+      <pre><code>POST /connect/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=authorization_code
+&amp;code=SplxlOBeZQQYbYS6WxSbIA
+&amp;redirect_uri=https://app.example.com/callback
+&amp;client_id=my-web-app
+&amp;code_verifier=dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk</code></pre>
+      <p>
+        This is a direct server-to-server call — the browser is not involved. The Authorization Server
+        verifies the <code>code_verifier</code> against the <code>code_challenge</code> committed in
+        Step 1 and, if valid, responds with tokens:
+      </p>
+      <pre><code>{
+  "access_token": "eyJhbGciOiJSUzI1NiJ9...",
+  "token_type":   "Bearer",
+  "expires_in":   3600,
+  "refresh_token": "8xLOxBtZp8",
+  "id_token":     "eyJhbGciOiJSUzI1NiJ9..."
+}</code></pre>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">5</div>
+    <div class="step-body">
+      <h4>Client calls the Resource Server</h4>
+      <div class="step-arrow">
+        <span class="actor">Client</span> → HTTPS request →
+        <span class="actor api">Resource Server (API)</span>
+      </div>
+      <pre><code>GET /api/user/profile
+Authorization: Bearer eyJhbGciOiJSUzI1NiJ9...</code></pre>
+      <p>
+        The access token travels in the <code>Authorization: Bearer …</code> header.
+        The Resource Server validates it (signature, expiry, audience, scopes) and serves the response.
+      </p>
+    </div>
+  </div>
+
+</div>
+
+<div class="callout tip">
+  <strong>Key insight — why the code?</strong>
+  The authorization code exists solely to protect the access token from appearing in a browser URL.
+  It is a short-lived, one-time-use proxy that is worthless without the back-channel POST and
+  PKCE verification. This is the entire reason for Step 3 and Step 4 being separate.
+</div>
+
+<hr>
+
+<h2>PKCE — Proof Key for Code Exchange</h2>
+
+<p>
+  PKCE (<a href="https://www.rfc-editor.org/rfc/rfc7636" target="_blank">RFC 7636</a>, pronounced
+  "pixy") solves the <strong>authorization code interception attack</strong>. Consider: if a malicious
+  app on the same device intercepts the authorization code before the legitimate app receives it, and
+  the only check is a <code>client_secret</code>, the attacker cannot easily exchange it (they lack the
+  secret). But SPAs and mobile apps <em>cannot keep a client_secret secret</em> — the secret is
+  shipped with the app code.
+</p>
+
+<p>
+  PKCE replaces the static <code>client_secret</code> check with a <em>per-request dynamic proof</em>:
+</p>
+
+<div class="pkce-box">
+  <div class="pkce-row">
+    <div class="label">Step 1 — Client generates a random secret</div>
+    <code>code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"</code>
+  </div>
+  <div class="pkce-arrow">↓ one-way hash (SHA-256 + BASE64URL)</div>
+  <div class="pkce-row">
+    <div class="label">Step 2 — Client computes a commitment (safe to transmit publicly)</div>
+    <code>code_challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"</code>
+  </div>
+  <div class="pkce-arrow">↓ sent in the authorization URL (Step 1 of the flow)</div>
+  <div class="pkce-row">
+    <div class="label">Step 3 — Client sends the verifier in the token exchange</div>
+    <code>code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"</code>
+  </div>
+  <div class="pkce-arrow">↓ Authorization Server verifies: SHA256(verifier) == challenge?</div>
+  <div class="pkce-row">
+    <div class="label">Step 4 — AS confirms the same client started and finished the flow</div>
+    <code>✓ Match → issue tokens &nbsp; ✗ Mismatch → reject request</code>
+  </div>
+</div>
+
+<p>
+  An attacker who intercepts the authorization code in the redirect URL never saw the
+  <code>code_verifier</code> (it was only sent in the back-channel POST). They cannot compute the
+  verifier from the challenge because SHA-256 is one-way. The code is useless to them.
+</p>
+
+<div class="callout">
+  <strong>PKCE is now required for all new clients</strong>
+  The <a href="https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1" target="_blank">OAuth 2.1 draft</a>
+  mandates PKCE for all authorization code flows — including confidential clients (those with a
+  client_secret). Duende IdentityServer enforces this by default for new clients.
+</div>
+
+<hr>
+
+<h2>The <code>state</code> Parameter — CSRF Protection</h2>
+
+<p>
+  Before the user starts the login flow, the client generates a random <code>state</code> value and
+  stores it (in a cookie or session). It sends <code>state</code> in the authorization request. When
+  the browser returns with the authorization code, the client checks that <code>state</code> matches
+  what it stored.
+</p>
+
+<p>
+  Without <code>state</code>, an attacker could trick a user into completing a login that the attacker
+  initiated (CSRF on the redirect endpoint). A matching <code>state</code> proves the redirect
+  originated from this user's own login attempt.
+</p>
+
+<hr>
+
+<h2>Complete Annotated Flow</h2>
+
+<div class="flow" style="flex-direction:column; align-items:flex-start; gap:0.2rem;">
+  <div class="flow" style="align-items:center;">
+    <div class="flow-node">Browser</div>
+    <div class="flow-arrow">─── GET /authorize?response_type=code&amp;state&amp;code_challenge ───▶</div>
+    <div class="flow-node highlight">Auth Server</div>
+  </div>
+  <div style="margin-left:5rem; font-size:0.78rem; color:var(--muted); font-family:var(--font-ui);">
+    ↕ user authenticates and approves scopes
+  </div>
+  <div class="flow" style="align-items:center;">
+    <div class="flow-node">Browser</div>
+    <div class="flow-arrow">◀── redirect /callback?code=…&amp;state=… ─────────────────────</div>
+    <div class="flow-node highlight">Auth Server</div>
+  </div>
+  <div style="margin-left:1rem; font-size:0.78rem; color:var(--muted); font-family:var(--font-ui);">
+    ↕ client verifies state, prepares token exchange
+  </div>
+  <div class="flow" style="align-items:center;">
+    <div class="flow-node">Client server</div>
+    <div class="flow-arrow">─── POST /token (code + code_verifier) ───────────────────▶</div>
+    <div class="flow-node highlight">Auth Server</div>
+  </div>
+  <div class="flow" style="align-items:center;">
+    <div class="flow-node">Client server</div>
+    <div class="flow-arrow">◀── access_token + refresh_token + id_token ───────────────</div>
+    <div class="flow-node highlight">Auth Server</div>
+  </div>
+  <div style="margin-left:1rem; font-size:0.78rem; color:var(--muted); font-family:var(--font-ui);">
+    ↕ client stores tokens securely
+  </div>
+  <div class="flow" style="align-items:center;">
+    <div class="flow-node">Client</div>
+    <div class="flow-arrow">─── GET /api/resource (Authorization: Bearer …) ──────────▶</div>
+    <div class="flow-node service">Resource Server</div>
+  </div>
+</div>
+
+<hr>
+
+<!-- QUIZ -->
+<div class="quiz" data-quiz="quiz13">
+  <h3>Knowledge Check</h3>
+
+  <div class="quiz-question" data-correct="c">
+    <p>1. Why does the Authorization Code Flow use an intermediate code rather than returning the token directly in the redirect URL?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz13-q0" value="a"> Tokens are too large to fit inside a browser redirect URL</label></li>
+      <li><label><input type="radio" name="quiz13-q0" value="b"> The Authorization Server needs extra time to generate tokens</label></li>
+      <li><label><input type="radio" name="quiz13-q0" value="c"> Tokens exchanged back-channel never appear in URLs or browser history</label></li>
+      <li><label><input type="radio" name="quiz13-q0" value="d"> Browser redirect URLs only support GET requests, not OAuth tokens</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="a">
+    <p>2. What specific attack does PKCE protect against?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz13-q1" value="a"> A malicious app intercepting the authorization code from the redirect</label></li>
+      <li><label><input type="radio" name="quiz13-q1" value="b"> An attacker stealing the access token from an HTTP response header</label></li>
+      <li><label><input type="radio" name="quiz13-q1" value="c"> A man-in-the-middle reading encrypted traffic on the network</label></li>
+      <li><label><input type="radio" name="quiz13-q1" value="d"> A brute-force attack guessing the client_secret value directly</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="d">
+    <p>3. The <code>state</code> parameter in the authorization request prevents what class of attack?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz13-q2" value="a"> Token theft via a compromised browser extension</label></li>
+      <li><label><input type="radio" name="quiz13-q2" value="b"> Interception of the code on a shared network connection</label></li>
+      <li><label><input type="radio" name="quiz13-q2" value="c"> Brute-force enumeration of valid authorization codes</label></li>
+      <li><label><input type="radio" name="quiz13-q2" value="d"> Cross-site request forgery on the authorization callback</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="b">
+    <p>4. When the client sends the <code>code_verifier</code> in the token request, the Authorization Server checks it by doing what?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="quiz13-q3" value="a"> Decrypting the code_challenge using the client's public key</label></li>
+      <li><label><input type="radio" name="quiz13-q3" value="b"> Hashing the verifier with SHA-256 and comparing to the stored challenge</label></li>
+      <li><label><input type="radio" name="quiz13-q3" value="c"> Looking up the verifier in a session store from the initial request</label></li>
+      <li><label><input type="radio" name="quiz13-q3" value="d"> Verifying the verifier is a valid JWT signed by the client</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+</div><!-- /.quiz -->
+
+<script>
+window.quizExplanations = {
+  'quiz13-q0': 'The code is worthless without the back-channel POST. Moving the token exchange to a server-to-server HTTPS call keeps the access token out of URLs, browser history, and logs.',
+  'quiz13-q1': "PKCE defends specifically against code interception — e.g., a malicious app on the same mobile device that registered itself as a handler for the redirect URI scheme. Without PKCE and a client_secret, it could exchange the code.",
+  'quiz13-q2': 'CSRF on the callback endpoint lets an attacker trick the victim\'s browser into completing an attacker-controlled login. The random state value, stored in the user\'s session, proves the redirect was triggered by that user\'s own login attempt.',
+  'quiz13-q3': 'S256 method: the AS stores the challenge (the hash). At token time, it hashes the received verifier and compares. SHA-256 is one-way, so the verifier cannot be derived from the challenge — that is the entire security property.'
+};
+</script>
+
+<hr>
+
+<h2>Primary Source</h2>
+<p>
+  The two RFCs that define everything in this lesson:
+</p>
+<ul>
+  <li>
+    <a href="https://www.rfc-editor.org/rfc/rfc6749#section-4.1" target="_blank">
+      RFC 6749 §4.1 — Authorization Code Grant
+    </a>
+    — the canonical flow definition
+  </li>
+  <li>
+    <a href="https://www.rfc-editor.org/rfc/rfc7636" target="_blank">
+      RFC 7636 — PKCE for OAuth Public Clients
+    </a>
+    — the full PKCE specification, only 14 pages
+  </li>
+</ul>
+
+<div class="ask-claude">
+  <strong>Questions? Ask your teacher.</strong>
+  Something unclear? Open a new chat and ask — for example:
+  <em>"What happens when the access token expires? How does the refresh token flow work?"</em>
+  (That's Lesson 14.)
+</div>
+
+<div class="lesson-nav">
+  <a class="prev" href="0012-oauth-delegation-problem.html">← Lesson 12: The Delegation Problem</a>
+  <a class="next" href="0014-grant-types.html">Next → Lesson 14: Grant Types — Choosing the Right Flow</a>
+</div>
+
+<div class="lesson-footer">
+  OAuth &amp; Identity Course · Module 1: OAuth Foundations · Lesson 13 ·
+  Specs: <a href="https://www.rfc-editor.org/rfc/rfc6749" target="_blank">RFC 6749</a>,
+  <a href="https://www.rfc-editor.org/rfc/rfc7636" target="_blank">RFC 7636</a>
+</div>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

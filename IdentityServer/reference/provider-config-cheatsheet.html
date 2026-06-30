@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>External Provider Configuration — Quick Reference</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    h2 { font-size: 1rem; margin: 1.6rem 0 0.4rem; }
+    h3 { font-size: 0.88rem; margin: 1rem 0 0.3rem; color: var(--accent); font-family: var(--font-ui); }
+    .ref-block {
+      background: var(--code-bg); border: 1px solid var(--border);
+      border-left: 4px solid var(--accent);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      padding: 0.7rem 1rem; font-family: var(--font-mono); font-size: 0.79rem;
+      line-height: 1.65; margin: 0.5rem 0 1rem; overflow-x: auto;
+    }
+    .ref-block.green  { border-left-color: #0a9e5c; }
+    .ref-block.purple { border-left-color: #7700cc; }
+    .ref-block.orange { border-left-color: #c06000; }
+    .ref-block.gray   { border-left-color: #999; }
+    .mini { font-size: 0.82rem; }
+    .mini td, .mini th { padding: 0.28rem 0.55rem; }
+    .badge { display:inline-block; font-family:var(--font-ui); font-size:0.68rem; padding:0.08rem 0.35rem; border-radius:20px; font-weight:600; vertical-align:middle; }
+    .req { background:#fdecea; color:var(--error); }
+    .opt { background:var(--code-bg); color:var(--muted); }
+    .c { color: #888; font-style: italic; }
+    @media print { body { font-size: 8.5pt; max-width:100%; } h1 { font-size:13pt; } }
+  </style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb"><a href="../MISSION.md">Identity &amp; Authorization</a> › Reference</div>
+  <h1>External Provider Configuration — Quick Reference</h1>
+  <div class="meta"><span>Print-friendly</span><span>dit-base-config-common + Applications.IdentityGateway</span></div>
+</div>
+
+<h2>Universal JSON Structure</h2>
+<div class="ref-block">
+<span class="c">// identityProviders.json — every entry follows this shape:</span>
+{
+  "Scheme":      "{TenantKey}_{ProviderType}",  <span class="c">// e.g. ACME_AzureB2C — routing key</span>
+  "DisplayName": "...",                          <span class="c">// shown on login page</span>
+  "Type":        "azureadb2c|azuread|openidconnect|saml|guest",
+  "Properties": {
+    "EcosystemTenant": "{TenantKey}",            <span class="c">// required on ALL providers</span>
+    ...                                          <span class="c">// type-specific fields below</span>
+  }
+}
+</div>
+
+<h2>Provider Types Cheat Sheet</h2>
+<table class="mini">
+  <thead><tr><th>Type value</th><th>Use for</th><th>Protocol</th></tr></thead>
+  <tbody>
+    <tr><td><code>azureadb2c</code></td><td>Consumer sign-in with self-service password reset</td><td>OIDC (B2C-specific)</td></tr>
+    <tr><td><code>azuread</code></td><td>Corporate employee SSO via Microsoft Entra</td><td>OIDC</td></tr>
+    <tr><td><code>openidconnect</code></td><td>Okta, Auth0, Ping, any standard OIDC IdP</td><td>OIDC</td></tr>
+    <tr><td><code>saml</code></td><td>Legacy enterprise IdPs (UMS, OIPA, etc.)</td><td>SAML 2.0</td></tr>
+    <tr><td><code>guest</code></td><td>Unauthenticated guest access</td><td>Custom</td></tr>
+  </tbody>
+</table>
+
+<!-- B2C -->
+<h3>Azure AD B2C — <code>type: "azureadb2c"</code></h3>
+<div class="ref-block">
+"Properties": {
+  "EcosystemTenant": "ACME",                     <span class="badge req">req</span>
+  "ClientId":        "27418294-...",             <span class="badge req">req</span> <span class="c">app reg GUID in B2C</span>
+  "Tenant":          "name.onmicrosoft.com",     <span class="badge req">req</span> <span class="c">B2C tenant domain</span>
+  "SignUpSignInPolicyId": "B2C_1_SignUpSignIn",  <span class="badge req">req</span> <span class="c">user flow name</span>
+  "PasswordResetPolicyId": "B2C_1_PasswordReset", <span class="badge opt">opt</span>
+  "EditProfilePolicyId": "B2C_1_EditProfile",   <span class="badge opt">opt</span>
+  "ClientSecret":    "...",                      <span class="badge opt">opt</span> <span class="c">use Key Vault in prod</span>
+  "AppUri":          "https://tenant.app.host/", <span class="badge opt">opt</span> <span class="c">post-reset redirect</span>
+  "Priority":        1,                          <span class="badge opt">opt</span> <span class="c">login page sort order</span>
+  "FederatedConfiguration": { "Enabled": false } <span class="badge opt">opt</span>
+}
+<span class="c">// Computed: Authority = https://{Tenant→b2clogin.com}/{Tenant}/{SignUpSignInPolicyId}/v2.0</span>
+<span class="c">// Claim: emails[0] → email, extension_X → X, oid → externalobjectidentifier</span>
+</div>
+
+<!-- AAD -->
+<h3>Azure AD — <code>type: "azuread"</code></h3>
+<div class="ref-block green">
+"Properties": {
+  "EcosystemTenant": "ACME",                     <span class="badge req">req</span>
+  "ClientId":        "d9e948ae-...",             <span class="badge req">req</span> <span class="c">app reg GUID in corporate AAD</span>
+  "Tenant":          "corp.onmicrosoft.com",     <span class="badge req">req</span> <span class="c">corp tenant domain or GUID</span>
+  "ClientSecret":    "...",                      <span class="badge req">req</span>
+  "AzureAdInstance": "https://login.microsoftonline.com", <span class="badge opt">opt</span> <span class="c">change for sovereign clouds</span>
+  "Scopes":          "offline_access profile",  <span class="badge opt">opt</span>
+  "CallbackPath":    "/signin-aad"              <span class="badge opt">opt</span> <span class="c">must be unique</span>
+}
+<span class="c">// Computed: Authority = {AzureAdInstance}/{Tenant}</span>
+<span class="c">// Claim: oid → externalobjectidentifier (duplicate name claims removed)</span>
+</div>
+
+<!-- OIDC / Okta -->
+<h3>OpenID Connect / Okta — <code>type: "openidconnect"</code></h3>
+<div class="ref-block purple">
+"Properties": {
+  "EcosystemTenant": "ACME",                     <span class="badge req">req</span>
+  "Authority":       "https://org.okta.com/oauth2/default", <span class="badge req">req</span> <span class="c">OIDC issuer URL</span>
+  "ClientId":        "0oa1b2c3...",              <span class="badge req">req</span>
+  "ClientSecret":    "...",                      <span class="badge req">req</span>
+  "Scopes":          "openid profile email",     <span class="badge opt">opt</span>
+  "CallbackPath":    "/signin-okta",             <span class="badge opt">opt</span> <span class="c">register in Okta as redirect URI</span>
+  "GetClaimsFromUserInfoEndpoint": "true",       <span class="badge opt">opt</span> <span class="c">default: true</span>
+  "ClaimsToRemove":  ["ver","at_hash","nonce"],  <span class="badge opt">opt</span> <span class="c">strip provider-specific noise</span>
+  "ApplyUrlDecode":  "false"                     <span class="badge opt">opt</span> <span class="c">true if state is URL-encoded</span>
+}
+<span class="c">// CRITICAL: Add any claims starting with "client_" or "service_" to ClaimsToRemove</span>
+<span class="c">// or the IdG will THROW and reject the login</span>
+</div>
+
+<!-- SAML -->
+<h3>SAML 2.0 — <code>type: "saml"</code></h3>
+<div class="ref-block orange">
+"Properties": {
+  "EcosystemTenant": "ACME",                     <span class="badge req">req</span>
+  "PartnerIdentityProviderConfiguration": {
+    "Name": "urn:entity:id",                     <span class="badge req">req</span> <span class="c">SAML Entity ID (from IdP metadata)</span>
+    "SignAuthnRequest": true,                    <span class="badge opt">opt</span>
+    "WantSamlResponseSigned": true,              <span class="badge opt">opt</span> <span class="c">strongly recommended</span>
+    "WantAssertionSigned": false,
+    "WantAssertionEncrypted": false,
+    "SingleSignOnServiceUrl": "https://idp/sso", <span class="badge req">req</span>
+    "SingleLogoutServiceUrl": "https://idp/slo", <span class="badge opt">opt</span>
+    "SingleSignOnServiceBinding": "urn:...HTTP-Redirect",
+    "PartnerCertificates": [{ "String": "BASE64" }] <span class="badge req">req</span> <span class="c">IdP signing cert</span>
+  },
+  "Extensions": { "environmentName": "EIS_DEV" } <span class="badge opt">opt</span> <span class="c">custom XML AuthnRequest extensions</span>
+}
+</div>
+
+<!-- Guest -->
+<h3>Guest — <code>type: "guest"</code></h3>
+<div class="ref-block gray">
+"Properties": {
+  "EcosystemTenant": "ACME",                     <span class="badge req">req</span>
+  "Roles": "Guest"                               <span class="badge opt">opt</span> <span class="c">forces identityRole = "Guest" in tokens</span>
+}
+</div>
+
+<h2>Post-Login Callback Flow</h2>
+<table class="mini">
+  <thead><tr><th>#</th><th>Step</th><th>Code location</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>Provider redirects to <code>/External/Callback</code></td><td>ExternalController.cs</td></tr>
+    <tr><td>2</td><td>Extract <code>sub</code> or <code>nameidentifier</code> as user ID</td><td><code>FindUserFromExternalProviderAsync()</code></td></tr>
+    <tr><td>3</td><td><code>oid</code> → <code>externalobjectidentifier</code> claim remap</td><td><code>CustomClaimTypes.OutboundClaimTypeMap</code></td></tr>
+    <tr><td>4</td><td><code>EcosystemTenant</code> → <code>tenant</code> claim added</td><td><code>TenantAccessor.GetAsync(scheme)</code></td></tr>
+    <tr><td>5</td><td>User looked up or auto-provisioned in UserDb</td><td><code>UserStore.FindByExternalProviderAsync()</code></td></tr>
+    <tr><td>6</td><td>External session stored in Redis</td><td><code>PopulateUserSessionInformationAsync()</code></td></tr>
+  </tbody>
+</table>
+
+<h2>Forbidden Claims (Will Throw)</h2>
+<p style="font-size:0.83rem">Claims from any external provider whose type starts with <code>client_</code> or <code>service_</code> cause a hard exception — unless the claim is in the allow-list (<code>tenantId</code>, <code>identityRole</code>). Add them to <code>ClaimsToRemove</code>.</p>
+
+<h2>Client → Provider Restriction</h2>
+<div class="ref-block gray">
+<span class="c">// clients_common.json</span>
+"IdPRestrictions": ["ACME_AzureB2C", "ACME_AzureAd"],
+"Properties": {
+  "ACME": "ACME_AzureB2C",    <span class="c">// auto-select scheme per tenant</span>
+  "NEWCO": "NEWCO_Okta"
+}
+</div>
+
+<h2>Files to Edit When Adding a Provider</h2>
+<table class="mini">
+  <thead><tr><th>File</th><th>Change</th></tr></thead>
+  <tbody>
+    <tr><td><code>identitygateway/{env}/identityProviders.json</code></td><td>Add new provider entry</td></tr>
+    <tr><td><code>identitygateway/{env}/clients_common.json</code></td><td>Add scheme to <code>IdPRestrictions</code> + <code>Properties</code> map</td></tr>
+    <tr><td>Provider admin console (Okta/Azure)</td><td>Register callback redirect URI</td></tr>
+  </tbody>
+</table>
+
+<div class="lesson-footer">
+  External Provider Quick Reference · See <a href="../lessons/0007-external-providers.html">Lesson 7</a> for the full walkthrough.
+</div>
+
+</body>
+</html>

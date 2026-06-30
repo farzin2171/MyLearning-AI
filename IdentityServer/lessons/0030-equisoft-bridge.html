@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 30 — Module 6: WorkSpace → Equisoft</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+  <style>
+    /* ── Mapping table ─────────────────────────────────── */
+    .map-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.84rem;
+      margin: 1rem 0 1.4rem;
+    }
+    .map-table th {
+      font-family: var(--font-ui);
+      text-align: left;
+      border-bottom: 2px solid var(--border);
+      padding: 0.4rem 0.7rem;
+      font-size: 0.73rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+    }
+    .map-table th:first-child { color: #555; }
+    .map-table th:last-child  { color: var(--accent); }
+    .map-table td {
+      padding: 0.45rem 0.7rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    .map-table td code { font-size: 0.78rem; }
+    .map-table tr:last-child td { border-bottom: none; }
+    .map-table .section-head td {
+      background: var(--code-bg);
+      font-family: var(--font-ui);
+      font-size: 0.71rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      padding: 0.3rem 0.7rem;
+    }
+
+    /* ── Code section ──────────────────────────────────── */
+    .code-section {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 1rem 0;
+    }
+    .code-section .code-title {
+      font-family: var(--font-ui);
+      font-size: 0.72rem;
+      padding: 0.4rem 0.9rem;
+      background: var(--border);
+      color: var(--muted);
+      letter-spacing: 0.04em;
+    }
+    .code-section pre {
+      margin: 0;
+      padding: 1rem 1.1rem;
+      font-size: 0.81rem;
+      line-height: 1.65;
+    }
+
+    /* ── Authorization flow comparison ────────────────── */
+    .authz-compare {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin: 1.2rem 0;
+    }
+    @media (max-width: 620px) { .authz-compare { grid-template-columns: 1fr; } }
+    .authz-panel {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .authz-panel .panel-head {
+      font-family: var(--font-ui);
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 0.4rem 0.85rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    .authz-panel pre {
+      margin: 0;
+      padding: 0.85rem;
+      background: var(--code-bg);
+      font-size: 0.78rem;
+      line-height: 1.55;
+      overflow-x: auto;
+    }
+
+    /* ── Reading guide ─────────────────────────────────── */
+    .reading-guide {
+      list-style: none;
+      margin: 0.8rem 0;
+      padding: 0;
+    }
+    .reading-guide li {
+      display: flex;
+      gap: 0.8rem;
+      align-items: baseline;
+      padding: 0.4rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.84rem;
+    }
+    .reading-guide li:last-child { border-bottom: none; }
+    .rg-num {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--accent);
+      font-weight: 700;
+      min-width: 2rem;
+      flex-shrink: 0;
+    }
+
+    /* ── Architecture diagram ──────────────────────────── */
+    .arch-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      margin: 0.6rem 0;
+      font-size: 0.82rem;
+    }
+    .arch-box {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.35rem 0.8rem;
+      background: var(--surface);
+      font-family: var(--font-ui);
+      font-size: 0.8rem;
+      text-align: center;
+    }
+    .arch-box.is   { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+    .arch-box.authsvc { border-color: #c06000; color: #8a4000; font-weight: 700; }
+    .arch-arrow { color: var(--muted); font-size: 1rem; }
+  </style>
+</head>
+<body>
+
+<div class="lesson-header">
+  <div class="breadcrumb">
+    <a href="../MISSION.md">OAuth &amp; Identity Course</a> › Module 6: Equisoft Applied ›
+    <a href="0029-capstone-web.html">Lesson 29</a> › Lesson 30
+  </div>
+  <h1>Module 6 Bridge — WorkSpace → Equisoft</h1>
+  <div class="meta">
+    <span>~25 minutes</span>
+    <span>Module 6 orientation</span>
+    <span>Prerequisite: <a href="0029-capstone-web.html">Modules 1–5 complete</a></span>
+  </div>
+</div>
+
+<p>
+  You built the WorkSpace system: Identity Server, two APIs, a web client, a background service.
+  The Equisoft platform is the same architecture with three differences in name, one difference
+  in the authorization layer, and one additional abstraction over claims.
+  This lesson maps the two systems onto each other so Lessons 1–11 become immediately actionable.
+</p>
+
+<div class="callout">
+  <strong>Standard OAuth + one Equisoft layer on top</strong>
+  Everything in Modules 1–5 applies to Equisoft unchanged.
+  The one thing Equisoft adds is the <strong>Authorization Service</strong> —
+  an HTTP decision service that translates roles into flat permission strings called
+  <strong>access keys</strong>. That is the new concept in Module 6.
+</div>
+
+<hr>
+
+<h2>The Direct Mapping</h2>
+
+<table class="map-table">
+  <thead>
+    <tr>
+      <th>WorkSpace (what you built)</th>
+      <th>Equisoft platform equivalent</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr class="section-head"><td colspan="2">Services</td></tr>
+    <tr>
+      <td>WorkSpace IS<br><small>Duende IS, port 5001</small></td>
+      <td><code>Applications.IdentityGateway</code> (IdG)<br><small>Duende IS, issues all tokens</small></td>
+    </tr>
+    <tr>
+      <td>Calendar API<br><small>JWT Bearer, scope policies</small></td>
+      <td><code>Services.AssistantManagement</code><br><small>JWT Bearer, calls Authorization Service</small></td>
+    </tr>
+    <tr>
+      <td>Reports Worker<br><small>Client Credentials, Duende.AccessTokenManagement</small></td>
+      <td>Any Equisoft background service / worker<br><small>Same pattern, same library</small></td>
+    </tr>
+    <tr>
+      <td>WorkSpace Web<br><small>OIDC login, SaveTokens = true</small></td>
+      <td>Any Equisoft SPA or MVC front-end<br><small>Same pattern</small></td>
+    </tr>
+    <tr>
+      <td><em>(no equivalent)</em></td>
+      <td><code>Services.Authorization</code><br><small>The Equisoft-specific authorization decision service — see below</small></td>
+    </tr>
+
+    <tr class="section-head"><td colspan="2">Concepts</td></tr>
+    <tr>
+      <td><code>tenant_id</code> claim</td>
+      <td><code>tenantId</code> claim in IdG tokens</td>
+    </tr>
+    <tr>
+      <td><code>role</code> claim</td>
+      <td><code>identityRole</code> claim in IdG tokens</td>
+    </tr>
+    <tr>
+      <td>Custom <code>IAuthorizationRequirement</code> handler</td>
+      <td>HTTP call to Authorization Service → access key → permit/deny</td>
+    </tr>
+    <tr>
+      <td><code>User.FindFirstValue("tenant_id")</code></td>
+      <td><code>IIdentityContext.TenantId</code> — Equisoft's claim-reading abstraction</td>
+    </tr>
+    <tr>
+      <td>Scope policy (<code>RequireClaim("scope", "calendar.read")</code>)</td>
+      <td>Scope policy + access key check (both layers applied)</td>
+    </tr>
+
+    <tr class="section-head"><td colspan="2">Configuration</td></tr>
+    <tr>
+      <td>Config.cs static class</td>
+      <td>IdG database (EF Core) — same objects, stored in SQL</td>
+    </tr>
+    <tr>
+      <td><code>AddDeveloperSigningCredential()</code></td>
+      <td>X.509 cert via <code>AddSigningCredential()</code> in production IdG</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr>
+
+<h2>The New Thing: Services.Authorization and Access Keys</h2>
+
+<p>
+  In the WorkSpace system, your Calendar API made authorization decisions locally
+  using <code>IAuthorizationRequirement</code> handlers. Equisoft externalizes this
+  into a dedicated service. Instead of a local handler, your API makes an HTTP call:
+</p>
+
+<div class="arch-row">
+  <div class="arch-box">Client<br><small>sends Bearer token</small></div>
+  <div class="arch-arrow">→</div>
+  <div class="arch-box">Your API<br><small>validates JWT</small></div>
+  <div class="arch-arrow">→</div>
+  <div class="arch-box authsvc">Services.Authorization<br><small>POST /api/v1/Authorize?key=…</small></div>
+  <div class="arch-arrow">→</div>
+  <div class="arch-box">200 / 403<br><small>permit / deny</small></div>
+</div>
+
+<p>
+  An <strong>access key</strong> is a dot-separated string that names a specific permission,
+  e.g. <code>shared.eapp.Lock</code>. The Authorization Service:
+</p>
+<ol>
+  <li>Reads the JWT's <code>identityRole</code> and <code>tenantId</code> claims</li>
+  <li>Looks up the role in its policy hierarchy</li>
+  <li>Checks whether that role has the requested access key</li>
+  <li>Returns 200 (permitted) or 403 (denied)</li>
+</ol>
+
+<h3>What this replaces vs. what it adds to</h3>
+
+<div class="authz-compare">
+  <div class="authz-panel">
+    <div class="panel-head">WorkSpace — local policy handler</div>
+    <pre><code>// In CalendarController
+var result = await _authz.AuthorizeAsync(
+    User, resource,
+    new EventOwnerRequirement());
+
+if (!result.Succeeded) return Forbid();</code></pre>
+  </div>
+  <div class="authz-panel">
+    <div class="panel-head">Equisoft — Authorization Service call</div>
+    <pre><code>// In AssistantManagement controller
+var permitted = await _authSvc.AuthorizeAsync(
+    accessToken: token,
+    key: "shared.eapp.Lock");
+
+if (!permitted) return Forbid();</code></pre>
+  </div>
+</div>
+
+<p>
+  The JWT Bearer validation step (<code>AddJwtBearer</code>, <code>[Authorize]</code>) is
+  <em>identical</em> in both systems — it comes first.
+  The Authorization Service is an additional layer that runs <em>after</em> JWT validation
+  for fine-grained business rules.
+</p>
+
+<hr>
+
+<h2>IIdentityContext — Equisoft's Claim Abstraction</h2>
+
+<p>
+  Where WorkSpace uses <code>User.FindFirstValue("tenant_id")</code> directly,
+  Equisoft services inject <code>IIdentityContext</code> — an interface that
+  wraps the claim-reading logic and is easier to mock in tests.
+</p>
+
+<div class="code-section">
+  <div class="code-title">WorkSpace pattern vs. Equisoft pattern</div>
+  <pre><code>// WorkSpace: direct claim access
+var tenantId = User.FindFirstValue("tenant_id");
+var role     = User.FindFirstValue("role");
+
+// Equisoft: IIdentityContext abstraction
+public class MyService
+{
+    private readonly IIdentityContext _identity;
+
+    public MyService(IIdentityContext identity) => _identity = identity;
+
+    public void DoWork()
+    {
+        var tenantId = _identity.TenantId;        // wraps "tenantId" claim
+        var role     = _identity.IdentityRole;     // wraps "identityRole" claim
+        var userId   = _identity.UserId;           // wraps "sub" claim
+    }
+}</code></pre>
+</div>
+
+<p>
+  The underlying OAuth/OIDC mechanics are unchanged — <code>IIdentityContext</code>
+  is simply a named wrapper around <code>HttpContext.User.FindFirstValue()</code>
+  with Equisoft's claim names hardcoded.
+</p>
+
+<hr>
+
+<h2>Reading Order for Lessons 1–11</h2>
+
+<p>
+  Now that Modules 1–5 are complete, Lessons 1–11 are best read in this order —
+  each maps cleanly to a Module you've already finished:
+</p>
+
+<ul class="reading-guide">
+  <li>
+    <span class="rg-num">L 1</span>
+    <div><strong>Ecosystem Overview</strong> — re-read with the WorkSpace mapping table above in mind.
+    IdG = WorkSpace IS. Authorization Service = the new layer.</div>
+  </li>
+  <li>
+    <span class="rg-num">L 2</span>
+    <div><strong>OAuth Flows</strong> — you now know these deeply from Lessons 12–17.
+    This lesson anchors them to Equisoft's actual redirect URIs and client IDs.</div>
+  </li>
+  <li>
+    <span class="rg-num">L 3</span>
+    <div><strong>Token Anatomy</strong> — you built this in Lesson 15. This lesson shows
+    the real Equisoft claim set: <code>identityRole</code>, <code>tenantId</code>, etc.</div>
+  </li>
+  <li>
+    <span class="rg-num">L 4</span>
+    <div><strong>Authorization Service</strong> — this is the new concept. Read it carefully;
+    it's the Equisoft-specific layer that Modules 1–5 have no direct equivalent for.</div>
+  </li>
+  <li>
+    <span class="rg-num">L 5</span>
+    <div><strong>Registering Clients</strong> — you did this in Lesson 19.
+    This lesson shows the Equisoft IdG database convention (lowercase service short-names).</div>
+  </li>
+  <li>
+    <span class="rg-num">L 6</span>
+    <div><strong>New API Service (End-to-End)</strong> — the Equisoft equivalent of your
+    Lesson 28 Calendar API. Read this as the implementation you'd do on day one.</div>
+  </li>
+  <li>
+    <span class="rg-num">L 7–11</span>
+    <div><strong>External Providers, Guest Auth, User Service, Tenant Setup, SSO</strong> —
+    advanced Equisoft patterns. Read after L4–L6 are solid.</div>
+  </li>
+</ul>
+
+<hr>
+
+<h2>Knowledge Check</h2>
+
+<div class="quiz" data-quiz="q30">
+
+  <div class="quiz-question" data-correct="b">
+    <p><strong>1.</strong> In Equisoft, a developer wants to know whether the current user
+    has permission to lock a record. Which service do they call?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q30-q0" value="a"> The Identity Gateway — it issues tokens and knows all user roles</label></li>
+      <li><label><input type="radio" name="q30-q0" value="b"> Services.Authorization with access key <code>shared.eapp.Lock</code></label></li>
+      <li><label><input type="radio" name="q30-q0" value="c"> The JWT Bearer middleware — it validates roles embedded in the token</label></li>
+      <li><label><input type="radio" name="q30-q0" value="d"> <code>IIdentityContext.IdentityRole</code> — it returns a boolean for each permission</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="c">
+    <p><strong>2.</strong> The <code>identityRole</code> claim in an Equisoft IdG token
+    is equivalent to which claim in the WorkSpace capstone?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q30-q1" value="a"> The <code>sub</code> claim — it uniquely identifies the user across all services</label></li>
+      <li><label><input type="radio" name="q30-q1" value="b"> The <code>tenant_id</code> claim — it scopes permissions to a specific organisation</label></li>
+      <li><label><input type="radio" name="q30-q1" value="c"> The <code>role</code> claim — the value differs by platform but the concept is the same</label></li>
+      <li><label><input type="radio" name="q30-q1" value="d"> The <code>scope</code> claim — it names what APIs the token can call</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="d">
+    <p><strong>3.</strong> A new API service needs to know the caller's tenant.
+    In the Equisoft codebase, which approach is preferred?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q30-q2" value="a"> Parse the raw JWT string from the Authorization header and decode it manually</label></li>
+      <li><label><input type="radio" name="q30-q2" value="b"> Call <code>Services.Authorization</code> — it returns the tenantId as part of the permit response</label></li>
+      <li><label><input type="radio" name="q30-q2" value="c"> Read <code>HttpContext.User.FindFirstValue("tenantId")</code> directly in the controller</label></li>
+      <li><label><input type="radio" name="q30-q2" value="d"> Inject <code>IIdentityContext</code> and read <code>.TenantId</code> — the abstraction is testable and consistent</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+  <div class="quiz-question" data-correct="a">
+    <p><strong>4.</strong> Which step in a request's lifecycle is the <em>same</em>
+    in both WorkSpace and Equisoft, despite Equisoft having the Authorization Service?</p>
+    <ul class="quiz-options">
+      <li><label><input type="radio" name="q30-q3" value="a"> JWT Bearer validation — <code>AddJwtBearer</code> and <code>[Authorize]</code> run first in both systems</label></li>
+      <li><label><input type="radio" name="q30-q3" value="b"> Role-to-permission translation — both use ASP.NET Core policy handlers for this step</label></li>
+      <li><label><input type="radio" name="q30-q3" value="c"> Token issuance — both use the same in-memory Config.cs client store</label></li>
+      <li><label><input type="radio" name="q30-q3" value="d"> Consent screen — both show users the requested scopes before granting access</label></li>
+    </ul>
+    <div class="quiz-feedback"></div>
+  </div>
+
+</div>
+
+<button class="quiz-btn" data-quiz-submit="q30">Check Answers</button>
+<div class="quiz-score"></div>
+
+<hr>
+
+<h2>Primary Source</h2>
+
+<p>
+  The foundation is standard OAuth 2.0 and Duende IS — everything in
+  <a href="https://docs.duendesoftware.com/identityserver/v7/" target="_blank">
+  docs.duendesoftware.com</a> applies to the IdG.
+  For the Equisoft-specific Authorization Service and <code>IIdentityContext</code>,
+  the canonical source is the internal codebase — specifically
+  <code>Services.AssistantManagement</code> as the reference implementation.
+</p>
+
+<hr>
+
+<h2>What's Next</h2>
+
+<p>
+  With this mapping in place, return to
+  <a href="0004-authorization-service.html">Lesson 4 — The Authorization Service</a>
+  and
+  <a href="0006-new-api-service.html">Lesson 6 — New API Service</a>
+  as your primary applied references — they show the exact Equisoft pattern
+  you'll use on your first day writing production code.
+</p>
+
+<div class="callout">
+  <strong>Ask your teacher</strong>
+  Want to trace exactly what happens at the Authorization Service when a request comes in?
+  Wondering how to test code that calls <code>Services.Authorization</code> without a
+  running instance? Ask and I'll walk through it.
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+  window.quizExplanations = {
+    'q30': {
+      0: {
+        a: "The Identity Gateway issues tokens — it does not answer authorization questions about specific actions. Token issuance and permission decisions are separate responsibilities.",
+        b: "Correct. Services.Authorization is the Equisoft permission decision service. You call it with the user's access token and the specific access key (e.g. shared.eapp.Lock). It returns 200 or 403.",
+        c: "JWT Bearer middleware validates the token's structure, expiry, and signature. It does not know about Equisoft-specific business permissions like 'can lock a record'.",
+        d: "IIdentityContext.IdentityRole returns the role string from the token — not a boolean permission check. A role must be resolved to permissions via the Authorization Service."
+      },
+      1: {
+        a: "sub is the stable user identifier — it maps to SubjectId in both systems, not identityRole.",
+        b: "tenant_id (WorkSpace) maps to tenantId (Equisoft) — a different claim. identityRole maps to role.",
+        c: "Correct. Both are role claims — the mechanism is identical (baked into the JWT by IProfileService / the equivalent Equisoft enrichment). Only the claim name differs: role vs. identityRole.",
+        d: "scope names which APIs can be called, not which business role the user holds. These are different claim types."
+      },
+      2: {
+        a: "Manual JWT decoding bypasses the security and claim-population work the middleware already does. Never do this in a service.",
+        b: "Services.Authorization answers permission questions (is this role allowed to do X?) — it does not return tenant metadata.",
+        c: "Reading directly from HttpContext works but is not preferred in Equisoft services — it couples the code to raw claim names and is harder to test.",
+        d: "Correct. IIdentityContext is the preferred abstraction. It reads the tenantId claim internally, keeps controllers clean of claim-name strings, and can be mocked in unit tests."
+      },
+      3: {
+        a: "Correct. JWT Bearer validation (AddJwtBearer, JWKS fetch, exp/iss/aud checks, [Authorize]) runs first and identically in both systems. The Authorization Service is an additional step that happens after this, not instead of it.",
+        b: "In WorkSpace, local IAuthorizationRequirement handlers do role-to-permission translation. In Equisoft, Services.Authorization does it via HTTP. These are not the same step.",
+        c: "WorkSpace uses in-memory Config.cs; Equisoft IdG uses an EF Core database. Both are Duende IS, but the storage backend differs.",
+        d: "Consent screens depend on the RequireConsent client setting. Internal Equisoft services typically set RequireConsent = false. This is not universally the same."
+      }
+    }
+  };
+</script>
+
+</body>
+</html>
